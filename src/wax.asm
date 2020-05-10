@@ -167,18 +167,30 @@ AsmAbs:     jsr GetOperand
             jsr OpLookup        ;   a relative branch.
             bcs AsmRel
             lda #ABSOLUTE
-            jsr SetMode
+            ldy OPERAND+1       ; Optimize to zero-page: if high byte of
+            bne variant         ;   operand is 0, then
+            and #$e0            ;   mask away bit 4 for a zero-page mode
+            tax                 ;   and stash it in X
+            jsr SetMode         ; Test out zero-page mode and make sure that
+            jsr OpLookup        ;   it's supported by this instruction;
+            bcs abs_write       ;   if so, move along. Otherwise, bring us back
+            txa                 ;   to the non-zero-page version (JMP, JSR)
+            ora #$10            ;   by restoring bit 4
+variant:    jsr SetMode
             jsr OpLookup
             bcc AsmFail
-            ldy #$00
+abs_write:  ldy #$00
             sta (TARGET),y
             iny
             lda OPERAND
             sta (TARGET),y
+            lda MNEMONIC+1      ; If this is a zero-page mode, don't write
+            and #$10            ;   the third byte
+            beq abs_r           ;   ,,
             iny
             lda OPERAND+1
             sta (TARGET),Y
-            jmp Return            
+abs_r:      jmp Return            
 
 AsmInd:     jmp Return        
 
@@ -200,8 +212,7 @@ GetOperand: tya
             bcs counted         ;   count is over
             iny
             bne loop
-counted:    sty $00
-            stx BUFPTR          ; Backtrack the buffer pointer
+counted:    stx BUFPTR          ; Backtrack the buffer pointer
             cpy #$04            ; If there were four characters found, get first
             bne found1          ;   two characters again and store the composite
             jsr Buff2Byte       ;   value in the high byte of the operand
