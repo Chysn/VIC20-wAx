@@ -24,7 +24,7 @@ ZEROPAGE_X  = $20
 ZEROPAGE_Y  = $40
 IMMEDIATE   = $60
 IMPLIED     = $70
-INDIRECT    = $80
+INDIRECT    = $90
 INDIRECT_X  = $a0
 INDIRECT_Y  = $c0
 RELATIVE    = $b0
@@ -52,12 +52,8 @@ Install:    lda #<Assemble
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;              
 Assemble:   jsr CHRGET
             cmp #WCHAR
-            beq Prepare
-            jsr GONE+3          ; +3 because jsr CHRGET is done
-
-; Save zero-page working space as a courtesy to BASIC
-;
-Prepare:
+            beq GetTarget
+            jmp GONE+3          ; +3 because jsr CHRGET is done
 
 ; Get target address from the first four characters after the wedge
 ;
@@ -109,6 +105,9 @@ ch_ind:     cmp #"("            ; ( indicates indirect mode
             bne ch_imp
             jmp AsmInd
 ch_imp:     cmp #QUOTE          ; " indicates implied mode
+            bne ch_acc
+            jmp AsmImp
+ch_acc:     cmp #"A"            ; A indicates accumulator mode
             bne ch_abs
             jmp AsmImp
 ch_abs:     cmp #"$"            ; $ indicates absolute mode
@@ -128,21 +127,25 @@ Return:     jsr CHRGET
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ADDRESSING MODE HANDLERS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Assemble Immediate
 AsmImm:     jsr CHRGET
             cmp #"$"
             bne AsmFail
+            jsr GetOperand
             lda #IMMEDIATE
             jsr SetMode
             jsr OpLookup
             bcc AsmFail
             ldy #$00
             sta (TARGET),y
-            jsr GetOperand
             lda OPERAND
             iny
             sta (TARGET),y
             jmp Return
-            
+     
+; Assemble Implied
+; And, because accumulator mode has a syntactical similarity, this also
+; handles that mode            
 AsmImp:     lda #IMPLIED
             jsr SetMode
             jsr OpLookup
@@ -151,6 +154,8 @@ AsmImp:     lda #IMPLIED
             sta (TARGET),Y
             jmp Return    
 
+; Assemble Relative
+; Dispatched from from AsmAbs
 AsmRel:     ldy #$00            ; Assemble the mnemonic
             sta (TARGET),y      ; ,,
             lda OPERAND         ; Get the instruction operand
@@ -162,13 +167,16 @@ AsmRel:     ldy #$00            ; Assemble the mnemonic
             sta (TARGET),y
             jmp Return
             
+; Assemble Asbolute
+; And, because relative mode has a syntactical similarity, this also checks
+; for availablity of that mode            
 AsmAbs:     jsr GetOperand
             lda #RELATIVE       ; See if this mnemonic has a relative
             jsr SetMode         ;   opcode associated with it. If so, it's
             jsr OpLookup        ;   a relative branch.
             bcs AsmRel
             lda #ABSOLUTE       ; Set the starting addressing mode
-            jsr CheckForXY      ; Modify the addressing mode if X or Y are found
+modify:     jsr CheckForXY      ; Modify the addressing mode if X or Y are found
             ldy OPERAND+1       ; Optimize to zero-page: if high byte of
             bne variant         ;   operand is 0, then
             and #$e0            ;   mask away bit 4 for a zero-page mode
@@ -180,7 +188,8 @@ AsmAbs:     jsr GetOperand
             ora #$10            ;   by restoring bit 4
 variant:    jsr SetMode
             jsr OpLookup
-            bcc AsmFail
+            bcs abs_write
+            jmp AsmFail
 abs_write:  ldy #$00
             sta (TARGET),y
             iny
@@ -194,7 +203,16 @@ abs_write:  ldy #$00
             sta (TARGET),Y
 abs_r:      jmp Return            
 
-AsmInd:     jmp Return        
+; Assemble Indirect
+; Mostly the same as absolute, so this taps into AsmAbs at the appropriate
+; point
+AsmInd:     jsr CHRGET
+            cmp #"$"
+            beq ind_op
+            jmp AsmFail
+ind_op:     jsr GetOperand    
+            lda #INDIRECT
+            jmp modify
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -283,10 +301,10 @@ OpLookup:   lda #<LangTable
             sta WORK+1
 -loop:      ldy #$00
             lda (WORK),y
-            cmp MNEMONIC
-            bne next
             cmp #$ff
             beq fail
+            cmp MNEMONIC
+            bne next
             iny
             lda (WORK),y
             cmp MNEMONIC+1
