@@ -55,12 +55,12 @@ Assemble:   jsr CHRGET
             beq Prepare
             jmp GONE+3          ; +3 because jsr CHRGET is done
 
-Prepare:    ldx #$00
--loop:      lda WORK,x
-            pha
-            inx
-            cpx #$08
-            bne loop
+Prepare:    ldx #$00            ; wAx is to be zeropage-neutral, so preserve
+-loop:      lda WORK,x          ;   its workspace on the stack. When this
+            pha                 ;   routine is done, put the data back
+            inx                 ;   ,,
+            cpx #$08            ;   ,,
+            bne loop            ;   ,,
 
 ; Get target address from the first four characters after the wedge
 ;
@@ -106,27 +106,30 @@ GetMnemon:  jsr CHRGET          ; Quote is required because of keywords
 ; * If nothing, then it's IMPLIED (which subsumes ACCCUMULATOR)          
 GetAddMode: jsr CHRGET
 ch_imm:     cmp #"#"            ; # indicates immediate mode
-            bne ch_ind
+            bne ch_ind          ;   of form LDA #$23
             jmp AsmImm
 ch_ind:     cmp #"("            ; ( indicates indirect mode
-            bne ch_imp
+            bne ch_imp          ;   of form LDA ($FX),Y
             jmp AsmInd
 ch_imp:     cmp #QUOTE          ; " indicates implied mode
-            bne ch_acc
+            bne ch_acc          ;   of form INY
             jmp AsmImp
 ch_acc:     cmp #"A"            ; A indicates accumulator mode
-            bne ch_abs
+            bne ch_abs          ;   of form ROR A
             jmp AsmImp
 ch_abs:     cmp #"$"            ; $ indicates absolute mode
-            bne AsmFail
+            bne AsmFail         ;   of form JSR $FFD2
             jmp AsmAbs
 
-; Opcode not found or formatting is invalid
+; Assembly Fail
+; Invalid opcode or formatting
+; Falls through to Return
 AsmFail     lda #"?"
-            jsr CHROUT
+            jsr CHROUT          
             
-; Return the zero-page working space to its original state
-;      
+; Return from Wedge
+; Restore working space to its original state, then continue
+; to IGONE
 Return:     ldx #$07
 -loop:      pla
             sta WORK,x
@@ -140,43 +143,43 @@ readout:    jsr CHRGET
 ; ADDRESSING MODE HANDLERS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Assemble Immediate
-AsmImm:     jsr CHRGET
-            cmp #"$"
-            bne AsmFail
-            jsr GetOperand
-            lda #IMMEDIATE
-            jsr SetMode
-            jsr OpLookup
-            bcc AsmFail
-            ldy #$00
-            sta (TARGET),y
-            lda OPERAND
-            iny
-            sta (TARGET),y
+AsmImm:     jsr CHRGET          ; Immediate assembly starts with #, so the
+            cmp #"$"            ;   $ hasn't been processed yet
+            bne AsmFail         ; Error if format is invalid
+            jsr GetOperand      ; ,,
+            lda #IMMEDIATE      ; Set the addressing mode
+            jsr SetMode         ; ,,
+            jsr OpLookup        ; Look up the opcode based on addressing mode
+            bcc AsmFail         ; Error if not found
+            ldy #$00            ; Store the opcode
+            sta (TARGET),y      ; ,,
+            lda OPERAND         ; All immediate mode instructions use a single-
+            iny                 ;   byte operand, so fetch that and put it
+            sta (TARGET),y      ;   after the opcode
             jmp Return
      
 ; Assemble Implied
 ; And, because accumulator mode has a syntactical similarity, this also
 ; handles that mode            
-AsmImp:     lda #IMPLIED
-            jsr SetMode
-            jsr OpLookup
-            bcc AsmFail
-            ldy #$00
-            sta (TARGET),Y
+AsmImp:     lda #IMPLIED        ; Set the addressing mode
+            jsr SetMode         ; ,,
+            jsr OpLookup        ; Look up the opcode based on addressing mode
+            bcc AsmFail         ; Error if not found
+            ldy #$00            ; Store the opcode
+            sta (TARGET),Y      ; ,,
             jmp Return    
 
 ; Assemble Relative
 ; Dispatched from from AsmAbs
-AsmRel:     ldy #$00            ; Assemble the mnemonic
+AsmRel:     ldy #$00            ; Store the opcode
             sta (TARGET),y      ; ,,
             lda OPERAND         ; Get the instruction operand
             sec                 ; Subtract the target assembly address
             sbc TARGET          ;   from the instruction target to
             iny                 ;   get the relative branch's operand.
             sec                 
-            sbc #$02            ; Offset by 2 to account for the instruction
-            sta (TARGET),y
+            sbc #$02            ; Offset by 2 to account for the instruction address
+            sta (TARGET),y      ; Save the operand; no range checking is done yet
             jmp Return
             
 ; Assemble Asbolute
@@ -198,33 +201,35 @@ modify:     jsr CheckForXY      ; Modify the addressing mode if X or Y are found
             bcs abs_write       ;   if so, move along. Otherwise, bring us back
             txa                 ;   to the non-zero-page version (JMP, JSR)
             ora #$10            ;   by restoring bit 4
-variant:    jsr SetMode
-            jsr OpLookup
-            bcs abs_write
-            jmp AsmFail
-abs_write:  ldy #$00
-            sta (TARGET),y
+variant:    jsr SetMode         ; Set the non-zeropage addressing mode
+            jsr OpLookup        ; Look up the opcode
+            bcs abs_write       ; Error if not found
+            jmp AsmFail         ; ,,
+abs_write:  ldy #$00            ; Store the opcode
+            sta (TARGET),y      ; ,,
             iny
-            lda OPERAND
-            sta (TARGET),y
-            lda MNEMONIC+1      ; If this is a zero-page mode, don't write
-            and #$10            ;   the third byte
+            lda OPERAND         ; Store the low byte of the operand, which all
+            sta (TARGET),y      ;   absolute instructions use
+            lda MNEMONIC+1      ; If this is a zero-page mode, don't store
+            and #$10            ;   the high byte
             beq abs_r           ;   ,,
             iny
-            lda OPERAND+1
-            sta (TARGET),Y
+            lda OPERAND+1       ; Store the high byte of the operand, if needed
+            sta (TARGET),Y      ; ,,
 abs_r:      jmp Return            
 
 ; Assemble Indirect
 ; Mostly the same as absolute, so this taps into AsmAbs at the appropriate
 ; point
-AsmInd:     jsr CHRGET
-            cmp #"$"
-            beq ind_op
-            jmp AsmFail
-ind_op:     jsr GetOperand    
-            lda #INDIRECT
-            jmp modify
+AsmInd:     jsr CHRGET          ; Indirect assembly starts with open parents, so
+            cmp #"$"            ;   make sure it's followed by $
+            beq ind_op          ; Error if format is invalid
+            jmp AsmFail         ; ,,
+ind_op:     jsr GetOperand      ; Get the operand
+            lda #INDIRECT       ; Set starting mode to indirect. This can be 
+            jmp modify          ;   modifed later to X or Y indirect. From this
+                                ;   point, everything is the same as the
+                                ;   absolute mode code, so head over there
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -249,7 +254,7 @@ counted:    stx BUFPTR          ; Backtrack the buffer pointer
             beq found1          ; ,,
             cpy #$04            ; ,,
             beq found2          ; ,,
-go_fail:    lda #$00            ; If any invalid number of hex digits were
+go_fail:    lda #$ff            ; If any invalid number of hex digits were
             sta MNEMONIC        ;   provided, then corrupt the mnemonic to
             beq getop_r         ;   cause an error indicator
 found2:     jsr Buff2Byte       ; Four characters were found; Put the byte value
@@ -312,23 +317,23 @@ SetMode:    pha                 ; Clear out the previous addressing
 ; Returns the opcode in A
 ; Sets the Carry flag if an opcode was found, and clears the Carry flag
 ; if the search failed.
-OpLookup:   lda #<LangTable
-            sta WORK
-            lda #>LangTable
-            sta WORK+1
--loop:      ldy #$00
-            lda (WORK),y
-            cmp #$ff
-            beq lu_fail
-            cmp MNEMONIC
-            bne next
-            iny
-            lda (WORK),y
-            cmp MNEMONIC+1
-            bne next
-            iny 
-            lda (WORK),y
-            sec
+OpLookup:   lda #<LangTable     ; Reset the WORK pointer pair as the pointer to
+            sta WORK            ;   the beginning of the 6502 language table
+            lda #>LangTable     ;   ,,
+            sta WORK+1          ;   ,,
+-loop:      ldy #$00            ; Get the first byte of the table, which
+            lda (WORK),y        ;   contains the low encoded mnemonic byte
+            cmp #$ff            ; If we hit $ff, then the encoding mnemonic
+            beq lu_fail         ;   was not found. Clear carry below to fail
+            cmp MNEMONIC        ; If the first mnemonic byte does not match,
+            bne next            ;   try the next table entry
+            iny                 ; Now, check the second byte, which is partially
+            lda (WORK),y        ;   mnemonic, and partially addressing mode
+            cmp MNEMONIC+1      ;   ,,
+            bne next            ; If this doesn't match, try the next entry
+            iny                 ; We have a match! Next task is to get the
+            lda (WORK),y        ;   opcode, which is the third byte in the table
+            sec                 ; Set the Carry flag to indicate succcess
             rts
 next:       clc                 ; Advance three bytes into the table
             lda #$03            ; ,,
@@ -337,7 +342,7 @@ next:       clc                 ; Advance three bytes into the table
             bcc loop            ; ,,
             inc WORK+1          ; ,,
             bne loop            ; ,,
-lu_fail:    clc
+lu_fail:    clc                 ; Clear the Carry flag to indicate failure
             rts
 
 ; Check Instruction for X or Y
