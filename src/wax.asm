@@ -52,8 +52,15 @@ Install:    lda #<Assemble
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;              
 Assemble:   jsr CHRGET
             cmp #WCHAR
-            beq GetTarget
+            beq Prepare
             jmp GONE+3          ; +3 because jsr CHRGET is done
+
+Prepare:    ldx #$00
+-loop:      lda WORK,x
+            pha
+            inx
+            cpx #$08
+            bne loop
 
 ; Get target address from the first four characters after the wedge
 ;
@@ -120,8 +127,13 @@ AsmFail     lda #"?"
             
 ; Return the zero-page working space to its original state
 ;      
-Return:     jsr CHRGET          
-            bne Return
+Return:     ldx #$07
+-loop:      pla
+            sta WORK,x
+            dex
+            bpl loop
+readout:    jsr CHRGET
+            bne readout            
             jmp GONE+3          ; Continue parsing with IGONE
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
