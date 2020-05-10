@@ -37,7 +37,7 @@ OPERAND     = $b0               ; Operand storage
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; INSTALLER
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-Install: 	lda #<Assemble
+Install:    lda #<Assemble
             sta IGONE
             lda #>Assemble
             sta IGONE+1
@@ -161,9 +161,7 @@ AsmRel:     ldy #$00            ; Assemble the mnemonic
             sta (TARGET),y
             jmp Return
             
-AsmAbs:     cmp #$24            ; Check for $
-            bne AsmFail
-            jsr GetOperand
+AsmAbs:     jsr GetOperand
             lda #RELATIVE       ; See if this mnemonic has a relative
             jsr SetMode         ;   opcode associated with it. If so, it's
             jsr OpLookup        ;   a relative branch.
