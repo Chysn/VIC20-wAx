@@ -1,11 +1,14 @@
 ; wAx - Wedge Assembler
 * = $a000
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; LABEL DEFINITIONS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; Configuration
 WCHAR   = $24                   ; Wedge character $
 QUOTE   = $22                   ; Quote character
 
-; System Resources
+; System resources
 IGONE       = $0308             ; Vector to GONE
 GONE        = $c7e4
 CHRGET      = $0073
@@ -16,24 +19,27 @@ BUFPTR      = $7a               ; Pointer to buffer
 
 ; Constants
 ; Addressing mode encodings
-ABSOLUTE    = $10
-ABSOLUTE_X  = $30
-ABSOLUTE_Y  = $50
-ZEROPAGE    = $00
-ZEROPAGE_X  = $20
-ZEROPAGE_Y  = $40
-IMMEDIATE   = $60
-IMPLIED     = $70
-INDIRECT    = $90
-INDIRECT_X  = $a0
-INDIRECT_Y  = $c0
-RELATIVE    = $b0
+ABSOLUTE    = $10               ; e.g., JSR $FFD2
+ABSOLUTE_X  = $30               ; e.g., STA $1E00,X
+ABSOLUTE_Y  = $50               ; e.g., LDA $8000,Y
+ZEROPAGE    = $00               ; e.g., BIT $A2
+ZEROPAGE_X  = $20               ; e.g., CMP $00,X
+ZEROPAGE_Y  = $40               ; e.g., LDX $FA,Y
+IMMEDIATE   = $60               ; e.g., INY
+IMPLIED     = $70               ; e.g., LDA #$2D
+INDIRECT    = $90               ; e.g., JMP ($0306)
+INDIRECT_X  = $a0               ; e.g., STA ($1E,X)
+INDIRECT_Y  = $c0               ; e.g., CMP ($55),Y
+RELATIVE    = $b0               ; e.g., BCC $181E
 
-; Assembler Workspace
+; Other constant
+TABLE_END   = $ff               ; Indicates the end of mnemonic table
+
+; Assembler workspace
 WORK        = $aa               ; Temporary workspace (2 bytes)
-TARGET      = $ac               ; Target assembly address (2 bytes)
-MNEMONIC    = $ae               ; Mneumonic/addressing mode encoding (2 bytes)
-OPERAND     = $b0               ; Operand storage
+MNEMONIC    = $ac               ; Mneumonic/addressing mode encoding (2 bytes)
+TARGET      = $ae               ; Target assembly address (2 bytes)
+OPERAND     = $b0               ; Operand storage (2 bytes)
                             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; INSTALLER
@@ -128,15 +134,13 @@ AsmFail     lda #"?"
             jsr CHROUT          
             
 ; Return from Wedge
-; Restore working space to its original state, then continue
-; to IGONE
-Return:     ldx #$07
--loop:      pla
-            sta WORK,x
-            dex
-            bpl loop
-readout:    jsr CHRGET
-            bne readout            
+Return:     ldx #$07            ; Restore working space to its original state
+-loop:      pla                 ;   from the stack (see Prepare)
+            sta WORK,x          ;   ,,
+            dex                 ;   ,,
+            bpl loop            ;   ,,
+readout:    jsr CHRGET          ; Read through any extra nonzero bytes in the
+            bne readout         ;   buffer, to prevent ?SYNTAX ERROR
             jmp GONE+3          ; Continue parsing with IGONE
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -254,7 +258,7 @@ counted:    stx BUFPTR          ; Backtrack the buffer pointer
             beq found1          ; ,,
             cpy #$04            ; ,,
             beq found2          ; ,,
-go_fail:    lda #$ff            ; If any invalid number of hex digits were
+go_fail:    lda #TABLE_END      ; If any invalid number of hex digits were
             sta MNEMONIC        ;   provided, then corrupt the mnemonic to
             beq getop_r         ;   cause an error indicator
 found2:     jsr Buff2Byte       ; Four characters were found; Put the byte value
@@ -538,6 +542,6 @@ LangTable:  .byte $87,$60,$69   ; ADC #oper
             .byte $16,$73,$8a   ; TXA
             .byte $3a,$73,$9a   ; TXS
             .byte $36,$73,$98   ; TYA
-            .byte $ff           ; Not found
+            .byte TABLE_END     ; End of 6502 table
 
 Intro:      .asc $0d,"WAX ON",$00
