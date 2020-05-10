@@ -3,6 +3,7 @@
 
 ; Configuration
 WCHAR   = $24                   ; Wedge character $
+QUOTE   = $22                   ; Quote character
 
 ; System Resources
 IGONE       = $0308             ; Vector to GONE
@@ -24,8 +25,8 @@ ZEROPAGE_Y  = $40
 IMMEDIATE   = $60
 IMPLIED     = $70
 INDIRECT    = $80
-INDIRECT_X  = $90
-INDIRECT_Y  = $a0
+INDIRECT_X  = $a0
+INDIRECT_Y  = $c0
 RELATIVE    = $b0
 
 ; Assembler Workspace
@@ -107,7 +108,7 @@ ch_imm:     cmp #"#"            ; # indicates immediate mode
 ch_ind:     cmp #"("            ; ( indicates indirect mode
             bne ch_imp
             jmp AsmInd
-ch_imp:     cmp #$22            ; " indicates implied mode
+ch_imp:     cmp #QUOTE          ; " indicates implied mode
             bne ch_abs
             jmp AsmImp
 ch_abs:     cmp #"$"            ; $ indicates absolute mode
@@ -166,7 +167,8 @@ AsmAbs:     jsr GetOperand
             jsr SetMode         ;   opcode associated with it. If so, it's
             jsr OpLookup        ;   a relative branch.
             bcs AsmRel
-            lda #ABSOLUTE
+            lda #ABSOLUTE       ; Set the starting addressing mode
+            jsr CheckForXY      ; Modify the addressing mode if X or Y are found
             ldy OPERAND+1       ; Optimize to zero-page: if high byte of
             bne variant         ;   operand is 0, then
             and #$e0            ;   mask away bit 4 for a zero-page mode
@@ -302,6 +304,38 @@ next:       clc                 ; Advance three bytes into the table
             bne loop            ; ,,
 fail:       clc
             rts
+
+; Check Instruction for X or Y
+; A starting addressing mode is provided in A. If the instruction contains ad
+; comma followed by X or Y, then increase the addressing mode by 2 (for X) or
+; 4 (for Y).            
+CheckForXY: tay
+            ldx BUFPTR          ; Save buffer, for when we need to backtrack
+-loop:      jsr CHRGET
+            cmp #QUOTE          ; Quote means the search is done
+            beq check_done      ; ,,
+            cmp #$00            ; As does 0
+            beq check_done      ; ,,
+            cmp #"X"            ; As does X, but modify the mode
+            beq found_x         ; ,,
+            cmp #"Y"            ; As does Y, but modify the mode
+            beq found_y         ; ,,
+            inx                 ; Save this buffer position and
+            bne loop            ;   search again
+found_y:    jsr ModMode2        ; Add 4 to mode if Y is found
+found_x:    jsr ModMode2        ; Add 2 to mode if X is found
+check_done: tya
+            stx BUFPTR          ; Restore buffer to last position
+            rts           
+
+; Modify Mode by 2
+; Add 2 to the addressing mode to modify for indexing. Used in conjunction
+; with CheckForXY            
+ModMode2:   tya
+            clc
+            adc #$20
+            tay
+            rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
@@ -320,16 +354,16 @@ LangTable:  .byte $87,$60,$69   ; ADC #oper
             .byte $87,$10,$6d   ; ADC oper
             .byte $87,$30,$7d   ; ADC oper,X
             .byte $87,$50,$79   ; ADC oper,Y
-            .byte $87,$90,$61   ; ADC (oper,X)
-            .byte $87,$a0,$71   ; ADC (oper),Y
+            .byte $87,$a0,$61   ; ADC (oper,X)
+            .byte $87,$c0,$71   ; ADC (oper),Y
             .byte $c9,$61,$29   ; AND #oper
             .byte $c9,$01,$25   ; AND oper
             .byte $c9,$21,$35   ; AND oper,X
             .byte $c9,$11,$2d   ; AND oper
             .byte $c9,$31,$3d   ; AND oper,X
             .byte $c9,$51,$39   ; AND oper,Y
-            .byte $c9,$91,$21   ; AND (oper,X)
-            .byte $c9,$a1,$31   ; AND (oper),Y
+            .byte $c9,$a1,$21   ; AND (oper,X)
+            .byte $c9,$c1,$31   ; AND (oper),Y
             .byte $79,$72,$0a   ; ASL A
             .byte $79,$02,$06   ; ASL oper
             .byte $79,$22,$16   ; ASL oper,X
@@ -355,8 +389,8 @@ LangTable:  .byte $87,$60,$69   ; ADC #oper
             .byte $c3,$11,$cd   ; CMP oper
             .byte $c3,$31,$dd   ; CMP oper,X
             .byte $c3,$51,$d9   ; CMP oper,Y
-            .byte $c3,$91,$c1   ; CMP (oper,X)
-            .byte $c3,$a1,$d1   ; CMP (oper),Y
+            .byte $c3,$a1,$c1   ; CMP (oper,X)
+            .byte $c3,$c1,$d1   ; CMP (oper),Y
             .byte $34,$62,$e0   ; CPX #oper
             .byte $34,$02,$e4   ; CPX oper
             .byte $34,$12,$ec   ; CPX oper
@@ -375,8 +409,8 @@ LangTable:  .byte $87,$60,$69   ; ADC #oper
             .byte $09,$12,$4d   ; EOR oper
             .byte $09,$32,$5d   ; EOR oper,X
             .byte $09,$52,$59   ; EOR oper,Y
-            .byte $09,$92,$41   ; EOR (oper,X)
-            .byte $09,$a2,$51   ; EOR (oper),Y
+            .byte $09,$a2,$41   ; EOR (oper,X)
+            .byte $09,$c2,$51   ; EOR (oper),Y
             .byte $cf,$01,$e6   ; INC oper
             .byte $cf,$21,$f6   ; INC oper,X
             .byte $cf,$11,$ee   ; INC oper
@@ -384,7 +418,7 @@ LangTable:  .byte $87,$60,$69   ; ADC #oper
             .byte $fa,$71,$e8   ; INX
             .byte $fb,$71,$c8   ; INY
             .byte $ca,$11,$4c   ; JMP oper
-            .byte $ca,$81,$6c   ; JMP (oper)
+            .byte $ca,$91,$6c   ; JMP (oper)
             .byte $8e,$12,$20   ; JSR oper
             .byte $8e,$60,$a9   ; LDA #oper
             .byte $8e,$00,$a5   ; LDA oper
@@ -392,8 +426,8 @@ LangTable:  .byte $87,$60,$69   ; ADC #oper
             .byte $8e,$10,$ad   ; LDA oper
             .byte $8e,$30,$bd   ; LDA oper,X
             .byte $8e,$50,$b9   ; LDA oper,Y
-            .byte $8e,$90,$a1   ; LDA (oper,X)
-            .byte $8e,$a0,$b1   ; LDA (oper),Y
+            .byte $8e,$a0,$a1   ; LDA (oper,X)
+            .byte $8e,$c0,$b1   ; LDA (oper),Y
             .byte $bd,$60,$a2   ; LDX #oper
             .byte $bd,$00,$a6   ; LDX oper
             .byte $bd,$40,$b6   ; LDX oper,Y
@@ -416,8 +450,8 @@ LangTable:  .byte $87,$60,$69   ; ADC #oper
             .byte $51,$12,$0d   ; ORA oper
             .byte $51,$32,$1d   ; ORA oper,X
             .byte $51,$52,$19   ; ORA oper,Y
-            .byte $51,$92,$01   ; ORA (oper,X)
-            .byte $51,$a2,$11   ; ORA (oper),Y
+            .byte $51,$a2,$01   ; ORA (oper,X)
+            .byte $51,$c2,$11   ; ORA (oper),Y
             .byte $12,$71,$48   ; PHA
             .byte $30,$71,$08   ; PHP
             .byte $92,$71,$68   ; PLA
@@ -440,8 +474,8 @@ LangTable:  .byte $87,$60,$69   ; ADC #oper
             .byte $59,$10,$ed   ; SBC oper
             .byte $59,$30,$fd   ; SBC oper,X
             .byte $59,$50,$f9   ; SBC oper,Y
-            .byte $59,$90,$e1   ; SBC (oper,X)
-            .byte $59,$a0,$f1   ; SBC (oper),Y
+            .byte $59,$a0,$e1   ; SBC (oper,X)
+            .byte $59,$c0,$f1   ; SBC (oper),Y
             .byte $b9,$70,$38   ; SEC
             .byte $bb,$70,$f8   ; SED
             .byte $c5,$70,$78   ; SEI
@@ -450,8 +484,8 @@ LangTable:  .byte $87,$60,$69   ; ADC #oper
             .byte $95,$12,$8d   ; STA oper
             .byte $95,$32,$9d   ; STA oper,X
             .byte $95,$52,$99   ; STA oper,Y
-            .byte $95,$92,$81   ; STA (oper,X)
-            .byte $95,$a2,$91   ; STA (oper),Y
+            .byte $95,$a2,$81   ; STA (oper,X)
+            .byte $95,$c2,$91   ; STA (oper),Y
             .byte $c4,$02,$86   ; STX oper
             .byte $c4,$42,$96   ; STX oper,Y
             .byte $c4,$12,$8e   ; STX oper
