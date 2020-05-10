@@ -121,7 +121,7 @@ ch_abs:     cmp #"$"            ; $ indicates absolute mode
             bne AsmFail
             jmp AsmAbs
 
-; Opcode not found or formatting is invali
+; Opcode not found or formatting is invalid
 AsmFail     lda #"?"
             jsr CHROUT
             
@@ -245,13 +245,18 @@ GetOperand: tya
             iny
             bne loop
 counted:    stx BUFPTR          ; Backtrack the buffer pointer
-            cpy #$04            ; If there were four characters found, get first
-            bne found1          ;   two characters again and store the composite
-            jsr Buff2Byte       ;   value in the high byte of the operand
-            sta OPERAND+1       ;   ,,
+            cpy #$02            ; Y can be 2 (one byte) or 4 (two bytes)
+            beq found1          ; ,,
+            cpy #$04            ; ,,
+            beq found2          ; ,,
+go_fail:    lda #$00            ; If any invalid number of hex digits were
+            sta MNEMONIC        ;   provided, then corrupt the mnemonic to
+            beq getop_r         ;   cause an error indicator
+found2:     jsr Buff2Byte       ; Four characters were found; Put the byte value
+            sta OPERAND+1       ;   of two in the high byte of the operand
 found1:     jsr Buff2Byte       ; Get two characters for the operand low byte
             sta OPERAND         ; ,,
-            pla
+getop_r:    pla
             tay
             rts                                
             
@@ -314,7 +319,7 @@ OpLookup:   lda #<LangTable
 -loop:      ldy #$00
             lda (WORK),y
             cmp #$ff
-            beq fail
+            beq lu_fail
             cmp MNEMONIC
             bne next
             iny
@@ -332,7 +337,7 @@ next:       clc                 ; Advance three bytes into the table
             bcc loop            ; ,,
             inc WORK+1          ; ,,
             bne loop            ; ,,
-fail:       clc
+lu_fail:    clc
             rts
 
 ; Check Instruction for X or Y
@@ -352,8 +357,8 @@ CheckForXY: tay
             beq found_y         ; ,,
             inx                 ; Save this buffer position and
             bne loop            ;   search again
-found_y:    jsr ModMode2        ; Add 4 to mode if Y is found
-found_x:    jsr ModMode2        ; Add 2 to mode if X is found
+found_y:    jsr ModMode2        ; Add $40 to mode if Y is found
+found_x:    jsr ModMode2        ; Add $20 to mode if X is found
 check_done: tya
             stx BUFPTR          ; Restore buffer to last position
             rts           
