@@ -14,6 +14,7 @@ A_BUFFER    = $0248             ; Assembly buffer
 
 ; System resources
 IGONE       = $0308             ; Vector to GONE
+CBINV       = $0316             ; BRK vector
 GONE        = $c7e4
 CHRGET      = $0073
 BUF         = $0200             ; Input buffer
@@ -21,6 +22,7 @@ PRTSTR      = $cb1e             ; Print from data (Y,A)
 CHROUT      = $ffd2
 BUFPTR      = $7a               ; Pointer to buffer
 CHARAC      = $07               ; Temporary character
+CURLIN      = $39               ; Current BASIC line number
 
 ; Constants
 ; Addressing mode encodings
@@ -33,21 +35,23 @@ ABSOLUTE_Y  = $60               ; e.g., LDA $8000,Y
 ZEROPAGE    = $70               ; e.g., BIT $A2
 ZEROPAGE_X  = $80               ; e.g., CMP $00,X
 ZEROPAGE_Y  = $90               ; e.g., LDX $FA,Y
-IMMEDIATE   = $a0               ; e.g., INY
-IMPLIED     = $b0               ; e.g., LDA #$2D
+IMMEDIATE   = $a0               ; e.g., LDA #$2D
+IMPLIED     = $b0               ; e.g., INY
 RELATIVE    = $c0               ; e.g., BCC $181E
 
 ; Other constant
 TABLE_END   = $ff               ; Indicates the end of mnemonic table
 
 ; Assembler workspace
-WORK        = $a7               ; Temporary workspace (2 bytes)
-MODE        = $a9               ; Current mode (ACHAR, DCHAR)
-BUFFER      = $aa               ; Buffer index
-INSTDATA    = $ab               ; Instruction data (mnemonic/addressing mdoe)
-PRGCTR      = $ad               ; PRGCTR assembly address (2 bytes)
-OPCODE      = $af               ; Assembly target for hypotesting
-OPERAND     = $b0               ; Operand storage (2 bytes)
+WORK        = $a4               ; Temporary workspace (2 bytes)
+LANG_PTR    = $a6               ; Language Pointer (2 bytes)
+FUNCTION    = $a8               ; Current function (ACHAR, DCHAR)
+BUFFER      = $a9               ; Buffer index
+INSTDATA    = $aa               ; Instruction data (2 bytes)
+PRGCTR      = $ac               ; PRGCTR assembly address (2 bytes)
+OPCODE      = $ae               ; Assembly target for hypotesting
+OPERAND     = $af               ; Operand storage (2 bytes)
+RB_OPERAND  = $b1               ; Hypothetical relative branch operand
                             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; INSTALLER
@@ -56,6 +60,12 @@ Install:    lda #<Scan
             sta IGONE
             lda #>Scan
             sta IGONE+1
+            
+            lda #<Break
+            sta CBINV
+            lda #>Break
+            sta CBINV+1
+            
             lda #<Intro
             ldy #>Intro
             jsr PRTSTR
@@ -76,7 +86,7 @@ Prepare:    tay                 ; Y = the wedge character for function dispatch
 -loop:      lda WORK,x          ;   its workspace on the stack. When this
             pha                 ;   routine is done, put the data back
             inx                 ;   ,,
-            cpx #$0a            ;   ,,
+            cpx #$0e            ;   ,,
             bne loop            ;   ,,
 
 ; Get PRGCTR address from the first four characters after the wedge
@@ -87,7 +97,7 @@ GetAddr:    jsr Buff2Byte       ; Convert 2 characters to a byte
 
 ; Dispatch Functions
 ; Based on the wedge character detected
-Dispatch:   sty MODE            ; Store the mode (to normalize spaces in buffer)
+Dispatch:   sty FUNCTION            ; Store the mode (to normalize spaces in buffer)
             cpy #DCHAR          ; Dispatch Disassembler
             beq Disp_Dasm
             cpy #ACHAR          ; Dispatch Assembler
@@ -95,14 +105,12 @@ Dispatch:   sty MODE            ; Store the mode (to normalize spaces in buffer)
             
 ; Dispatch Disassembler            
 Disp_Dasm:  ldx #DA_LINES       ; Show this many lines of code
--loop:      lda #$00            ; Reset the buffer index
-            sta BUFFER          ; ,,
-            txa
+-loop:      txa
             pha
             jsr Disasm          ; Disassmble the code at the program counter
-            lda #<DA_BUFFER     ; Print the line
-            ldy #>DA_BUFFER     ; ,,
-            jsr PRTSTR          ; ,,
+            jsr PrintBuff       ; Display the buffer
+            lda #$0d            ; Carriage return after each instruction
+            jsr CHROUT          ; ,,
             pla                 ; Restore X
             tax                 ; ,,
             dex
@@ -116,13 +124,13 @@ Disp_Asm:   lda #$00            ; Reset the buffer index
             cmp #QUOTE          ;   be a double quote
             bne AsmFail
 -loop       jsr CHRGET          ; Transcribe characters to the assembler buffer
-            ldx BUFFER          ;   until either a $ sign (indicating an
-            sta A_BUFFER,x      ;   operand), or a $00 (indicating running out
-            inc BUFFER          ;   of text) is encountered
-            cmp #"$"            ; Look for a dollar sign   
-            beq continue        ;   OK to continue if found
-            cmp #$00            ; Bail if 0
-            beq AsmFail         ; ,,
+            cmp #QUOTE          ;   until either a dollar sign or quote is
+            beq test            ;   found. The dollar sign moves to operand
+            jsr Transcribe      ;   parsing, while the quote moves right to
+            cmp #"$"            ;   hypotesting, as it is implied/acc mode
+            beq continue        ;   ,,
+            cmp #$00            ; $00 means we ran out of characters,  
+            beq AsmFail         ;   so fail
             bne loop
 continue:   jsr GetOperand      ; Once $ is found, then grab the operand
 -loop       jsr CHRGET
@@ -130,16 +138,16 @@ continue:   jsr GetOperand      ; Once $ is found, then grab the operand
             beq test            ; ,,
             cmp #$00            ; Or fail if there's no closing quote         
             beq AsmFail         ; ,,
-            ldx BUFFER
-            sta A_BUFFER,x
-            inc BUFFER
+            jsr Transcribe
             jmp loop
-test:       jsr Hypotest        ; Line is done; hypothesis test for a match
+test:       lda #$00            ; End the buffer with a $00
+            jsr Transcribe      ; ,,
+            jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc AsmFail
             ldy #$00            ; A match was found. Transcribe the good code
             lda OPCODE          ;   to the program counter. The number of bytes
-            sta (PRGCTR),y      ;   to transcribe is stored in the MODE memory
-            ldx MODE            ;   location.
+            sta (PRGCTR),y      ;   to transcribe is stored in the FUNCTION memory
+            ldx FUNCTION        ;   location.
             cpx #$02            ;
             bcc Return
             lda OPERAND         ; Store the low operand byte, if indicated
@@ -150,6 +158,7 @@ test:       jsr Hypotest        ; Line is done; hypothesis test for a match
             lda OPERAND+1       ; Store the high operand byte, if indicated
             iny
             sta (PRGCTR),y
+            lda CURLIN+1
             jmp Return
             
 ; Assembly Fail
@@ -159,7 +168,7 @@ AsmFail     lda #"?"
             jsr CHROUT             
             
 ; Return from Wedge
-Return:     ldx #$0a            ; Restore working space to its original state
+Return:     ldx #$0d            ; Restore working space to its original state
 -loop:      pla                 ;   from the stack (see Prepare)
             sta WORK,x          ;   ,,
             dex                 ;   ,,
@@ -171,8 +180,10 @@ readout:    jsr CHRGET          ; Read through any extra nonzero bytes in the
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DISASSEMBLER COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Disasm:     lda #ACHAR          ; If we're in Assembler mode, don't include
-            cmp MODE            ; the address in the buffer
+Disasm:     lda #$00            ; Reset the buffer index
+            sta BUFFER          ; ,,
+            lda #ACHAR          ; If we're in Assembler mode, don't include
+            cmp FUNCTION        ; the address in the buffer
             beq op_start        ; ,,
             jsr HexPrefix       ; $
             lda PRGCTR+1        ; Show the address
@@ -184,10 +195,8 @@ op_start:   ldy #$00            ; Get the opcode
             lda (PRGCTR),y      ;   ,,
             jsr Lookup          ; Look it up
             jsr Mnemonic
-            lda #$0d            ; Write $0d, $00 to the buffer for printing
+            lda #$00            ; Write $00 to the buffer for printing
             jsr BuffWrt         ;   purposes
-            lda #$00            ;   ,,
-            jsr BuffWrt         ;   ,,
             jsr NextValue       ; Advance to the next line of code
             rts
             
@@ -328,14 +337,17 @@ ind_y:      lda #")"
 GetOperand: ldy #$00            ; Valid number count
             sty OPERAND         ; Initialize operand
             sty OPERAND+1       ; ,,
-            ldx BUFPTR          ; Save the buffer pointer for backtracking
--loop:      jsr CHRGET          ; Count the number of hexadecimal characters
-            jsr Char2Nyb        ;   available in the buffer
-            cmp #$10            ; Once we reach a non-hex character, the
+            lda BUFPTR          ; Save the buffer pointer for backtracking
+            pha
+-loop:      jsr CHRGET          ; Count number of hex characters in the buffer
+            jsr Char2Nyb        ; ,,
+            cmp #TABLE_END      ; Once we reach a non-hex character, the
             bcs counted         ;   count is over
             iny
             bne loop
-counted:    cpy #$02            ; Y can be 2 (one byte) or 4 (two bytes)
+counted:    pla                 ; Backtrack to read and store the hex digits
+            sta BUFPTR          ; ,,
+            cpy #$02            ; Y can be 2 (one byte) or 4 (two bytes)
             beq found1          ; ,,
             cpy #$04            ; ,,
             bne getop_r         ; ,,
@@ -343,8 +355,12 @@ found2:     jsr Buff2Byte       ; Four characters were found; Put the byte value
             sta OPERAND+1       ;   of two in the high byte of the operand
 found1:     jsr Buff2Byte       ; Get two characters for the operand low byte
             sta OPERAND         ; ,,
-getop_r:    stx BUFPTR          ; Backtrack the buffer pointer
-            rts    
+            sec                 ; Subtract the program counter address
+            sbc PRGCTR          ;   from the instruction target to
+            sec                 ;   get the relative branch's operand.
+            sbc #$02            ; Offset by 2 to account for the instruction
+            sta RB_OPERAND      ; Save the hypothetical relative branch operand
+getop_r:    rts    
 
 ; Hypothesis Test
 ; Search through
@@ -353,44 +369,53 @@ Hypotest:   lda PRGCTR+1        ; Save the program counter from the assembler
             lda PRGCTR
             pha
             jsr ResetLang       ; Reset language table
-reset:      lda OPCODE          ; Write code to OPCODE for hypotesting
+reset:      lda #OPCODE         ; Write location to PC for hypotesting
             sta PRGCTR          ; ,,
-            lda #$00            ; ,,
-            sta PRGCTR+1        ; ,,
-            ldy #$00
-            sty BUFFER          ; Initialize the buffer index
-            lda (WORK),y        ; A is this language entry's opcode
+            ldy #$00            ; Set the program counter high byte
+            sty PRGCTR+1        ; ,,
+            lda (LANG_PTR),y    ; A is this language entry's opcode
             cmp #TABLE_END      ; If the table has ended, leave the
             beq bad_code        ;   hypotesting routine
             sta OPCODE          ; Store it in the hypotesting location
             jsr Disasm          ; Disassemble using the opcode
-            ldy BUFFER
--loop:      lda DA_BUFFER,y     ; Compare the assembly the the disassembly
+            lda INSTDATA+1      ; This is a relative branch instruction, and
+            and #$f0            ;   these are handled differently. See below
+            cmp #RELATIVE       ;   ,,
+            beq test_rel        ;   ,,
+            ldy #$00
+-loop:      lda DA_BUFFER,y     ; Compare the assembly with the disassembly
             cmp A_BUFFER,y      ;   in the buffer
             bne differ          ; If any bytes don't match, then quit
-            dey
-            bpl loop            ; Loop until the buffer is done
-match:      pla                 ; At this point there's a match, and the hypo-
-            sta WORK            ;   test location contains the code we want.
-            pla                 ;   Restore the original program counter to
-            sta WORK+1          ;   the workspace
-            lda PRGCTR          ; Substract the original program counter from
-            sec                 ;   the assembly program counter to get the
-            sbc WORK            ;   number of bytes to transcribe on return
-            sta MODE            ;   ,,
-            lda WORK            ; Now, return the program counter to its
-            sta PRGCTR          ;   original state for the assembler to
-            lda WORK+1          ;   use as its starting write point
+            iny
+            cpy BUFFER
+            bne loop            ; Loop until the buffer is done
+match:      lda PRGCTR          ; Set the FUNCTION location to the number of
+            sec                 ;   bytes that need to be transcribed
+            sbc #OPCODE         ;   ,,
+            sta FUNCTION        ;   ,,
+            pla                 ; Restore the program counter so that the
+            sta PRGCTR          ;   instruction is transcribed to the
+            pla                 ;   right place
             sta PRGCTR+1        ;   ,,
             sec                 ; Set Carry flag to indicate success
             rts
 differ:     jsr AdvLang         ; Advance the counter
             jmp reset
+test_rel:   ldy #$02            ; Here, relative branching instructions are
+-loop:      lda DA_BUFFER,y     ;   handled. Only the first three characters
+            cmp A_BUFFER,y      ;   are compared. If there's a match on the
+            bne differ          ;   instruction name, then move the computed
+            dey                 ;   relative operand into the regular operand
+            bpl loop            ;   low byte, and then treat this as a regular
+            lda RB_OPERAND      ;   match after that
+            sta OPERAND         ;   ,,
+            jmp match           ;   ,,
 bad_code:   pla                 ; Pull the program counter off the stack, but
             pla                 ;   there's no need to do anything with it
             clc                 ;   because we're giving up.
             rts
             
+                        
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
@@ -398,7 +423,7 @@ bad_code:   pla                 ; Pull the program counter off the stack, but
 Lookup:     sta INSTDATA        ; Store the requested opcode for lookup
             jsr ResetLang       ; Reset language table
 -loop:      ldy #$00            ; Look at the first of three bytes in a table
-            lda (WORK),y
+            lda (LANG_PTR),y
             cmp #TABLE_END
             beq not_found
             cmp INSTDATA
@@ -408,36 +433,37 @@ Lookup:     sta INSTDATA        ; Store the requested opcode for lookup
 not_found:  clc                 ; Opcode not found; clear Carry flag to
             rts                 ;   indicate unknown opcode
 found:      iny                 ; The opcode has been found; store the
-            lda (WORK),y        ;   mnemonic and addressing mode information
+            lda (LANG_PTR),y    ;   mnemonic and addressing mode information
             sta INSTDATA        ;   to draw the instruction
             iny                 ;   ,,
-            lda (WORK),y        ;   ,,
+            lda (LANG_PTR),y    ;   ,,
             sta INSTDATA+1      ;   ,,
             sec                 ; Set Carry flag to indicate successful lookup
             rts   
             
 ; Reset Language Table            
 ResetLang:  lda #<LangTable
-            sta WORK
+            sta LANG_PTR
             lda #>LangTable
-            sta WORK+1
+            sta LANG_PTR+1
             rts
             
 ; Advance Language Table
 ; to next entry
 AdvLang:    lda #$03
             clc
-            adc WORK
-            sta WORK
+            adc LANG_PTR
+            sta LANG_PTR
             lda #$00
-            adc WORK+1
-            sta WORK+1 
+            adc LANG_PTR+1
+            sta LANG_PTR+1 
             rts
 
 ; Buffer to Byte
 ; Y is the index of the first character of the byte in the text
 ; buffer, to be returned as a byte in the Accumulator
 Buff2Byte:  jsr CHRGET
+            jsr Transcribe
             jsr Char2Nyb        ; The first nybble at the index is
             asl                 ;   the high one, multipled by 16
             asl                 ;   ,,
@@ -445,24 +471,22 @@ Buff2Byte:  jsr CHRGET
             asl                 ;   ,,
             sta WORK
             jsr CHRGET          ; Get the next character, which is
+            jsr Transcribe
             jsr Char2Nyb        ;   the low nybble, and combine the
             ora WORK            ;   nybbles
             rts
        
 ; Character to Nybble
-; Y is the index of the character in the text buffer, to be converted
-; into a nybble.
-Char2Nyb:   cmp #$41            ; Is this a letter?
-            bcs IsLetter
-            sbc #$2f            ; If it's a number, subtract 48 ("0")
-                                ; $2f is subtracted here because I know
-                                ; that the carry flag is clear, and $2f
-                                ; compensates for that
+; A is the character in the text buffer to be converted into a nybble
+Char2Nyb:   ldx #$0f
+-loop:      cmp HexDigit,x
+            beq found_dig
+            dex
+            bpl loop
+            lda #TABLE_END
             rts
-IsLetter:   sbc #$37            ; If it's a letter, subtract 55 from the
-                                ; letter, because we want "F" (70) to return
-                                ; 15 and "A" (65) to return 10, etc.
-            rts 
+found_dig:  txa
+            rts            
 
 ; Next Program Counter
 ; Advance Program Counter by one byte, and return its value
@@ -484,7 +508,7 @@ Space:      lda #" "
             rts
 
 ; Show Hex Byte
-Hex:        tay
+Hex:        pha
             lsr
             lsr
             lsr
@@ -492,7 +516,7 @@ Hex:        tay
             tax
             lda HexDigit,x
             jsr BuffWrt
-            tya
+            pla
             and #$0f
             tax
             lda HexDigit,x
@@ -517,7 +541,7 @@ Param_16:   jsr HexPrefix
             
 BuffWrt:    sta CHARAC          ; Save temporary character
             lda #ACHAR          ; If wAx is in Assembler mode, then
-            cmp MODE            ;   ignore spaces in the buffer
+            cmp FUNCTION        ;   ignore spaces in the buffer
             bne write_ok        ;   ,,
             lda #" "            ;   ,,
             cmp CHARAC          ;   ,,
@@ -534,7 +558,49 @@ write_ok:   tya                 ; Save registers
             tax                 ; ,,
             pla                 ; ,,
             tay                 ; ,,
-write_r:    rts      
+write_r:    rts 
+
+; Transcribe to Buffer
+; Add A to assembler buffer, and advance buffer counter
+Transcribe: ldx BUFFER
+            sta A_BUFFER,x
+            inc BUFFER
+            rts 
+            
+PrintBuff:  lda #$00            ; End the buffer with 0
+            jsr BuffWrt         ; ,,
+            lda #<DA_BUFFER     ; Print the line
+            ldy #>DA_BUFFER     ; ,,
+            jsr PRTSTR          ; ,,
+            rts            
+            
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; BREAK ROUTINE
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Break:      pha                 ; Right to left in the table: Accumulator
+            tya                 ; Y
+            pha
+            txa                 ; X
+            pha
+            tsx                 ; Stack
+            txa
+            clc                 ; For the stack register, compensate for the
+            adc #$04            ;   four bytes that the report used
+            pha
+            php                 ; Processor status
+            lda #$00            ; Clear the buffer
+            sta BUFFER
+            lda #<Registers     ; Print register indicator bar
+            ldy #>Registers     ; ,,
+            jsr PRTSTR          ; ,,
+            ldy #$05            ; Pull five values off the stack and add
+-loop:      pla                 ;   each one to the buffer
+            jsr Hex             ;   ,,
+            jsr Space           ;   ,,
+            dey                 ;   ,,
+            bne loop            ;   ,,
+            jsr PrintBuff       ; Print the buffer
+            jmp ($C002)
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
@@ -564,7 +630,7 @@ LangTable:  .byte $69,$09,$a1   ; ADC #oper
             .byte $39,$06,$62   ; AND oper,Y
             .byte $21,$06,$22   ; AND (oper,X)
             .byte $31,$06,$32   ; AND (oper),Y
-            .byte $0a,$00,$a6   ; ASL A
+            .byte $0a,$00,$b6   ; ASL A
             .byte $06,$00,$76   ; ASL oper
             .byte $16,$00,$86   ; ASL oper,X
             .byte $0e,$00,$46   ; ASL oper
@@ -639,7 +705,7 @@ LangTable:  .byte $69,$09,$a1   ; ADC #oper
             .byte $b4,$1b,$8e   ; LDY oper,X
             .byte $ac,$1b,$4e   ; LDY oper
             .byte $bc,$1b,$5e   ; LDY oper,X
-            .byte $4a,$0e,$a9   ; LSR A
+            .byte $4a,$0e,$b9   ; LSR A
             .byte $46,$0e,$79   ; LSR oper
             .byte $56,$0e,$89   ; LSR oper,X
             .byte $4e,$0e,$49   ; LSR oper
@@ -657,12 +723,12 @@ LangTable:  .byte $69,$09,$a1   ; ADC #oper
             .byte $08,$17,$b7   ; PHP
             .byte $68,$0d,$b0   ; PLA
             .byte $28,$0d,$b7   ; PLP
-            .byte $2a,$2d,$a6   ; ROL A
+            .byte $2a,$2d,$b6   ; ROL A
             .byte $26,$2d,$76   ; ROL oper
             .byte $36,$2d,$86   ; ROL oper,X
             .byte $2e,$2d,$46   ; ROL oper
             .byte $3e,$2d,$56   ; ROL oper,X
-            .byte $6a,$2d,$a9   ; ROR A
+            .byte $6a,$2d,$b9   ; ROR A
             .byte $66,$2d,$79   ; ROR oper
             .byte $76,$2d,$89   ; ROR oper,X
             .byte $6e,$2d,$49   ; ROR oper
@@ -705,3 +771,4 @@ Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
 Char3:      .asc "ACDEIKLPQRSTVXY"
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
+Registers:  .asc $0d,"P: S: X: Y: A:",$0d,$00
