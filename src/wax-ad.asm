@@ -1,16 +1,32 @@
-; wAx - Wedge Assembler/Disassembler
-* = $a000
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+;                                      wAx
+;                            Integrated Monitor Tools
+;                             (c)2020, Jason Justian
+;                  
+; Release 1 - May 13, 2020
+; Assembled with XA
+;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+; This software is released under the Creative Commons
+; Attribution-NonCommercial 4.0 International
+; License. The license should be included with this file.
+; If not, please see: 
+;
+; https://creativecommons.org/licenses/by-nc/4.0/legalcode.txt* = $a000
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; LABEL DEFINITIONS
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
+* = $a000 
 ; Configuration
 ACHAR       = $40               ; Wedge character @ for assembly
 DCHAR       = $24               ; Wedge character $ for disassembly
 MCHAR       = $26               ; Wedge character & for memory dump
 BCHAR       = $21               ; Wedge character ! for breakpoint
 QUOTE       = $22               ; Quote character
-DA_LINES    = $10               ; Disassemble this many lines of code
+DI_LINES    = $10               ; Disassemble this many lines of code
 DA_BUFFER   = $0230             ; Disassembly buffer
 A_BUFFER    = $0248             ; Assembly buffer
 
@@ -24,7 +40,6 @@ PRTSTR      = $cb1e             ; Print from data (Y,A)
 CHROUT      = $ffd2
 BUFPTR      = $7a               ; Pointer to buffer
 CHARAC      = $07               ; Temporary character
-CURLIN      = $39               ; Current BASIC line number
 
 ; Constants
 ; Addressing mode encodings
@@ -58,32 +73,23 @@ RB_OPERAND  = $b1               ; Hypothetical relative branch operand
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; INSTALLER
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-Install:    lda #<Scan
-            sta IGONE
-            lda #>Scan
-            sta IGONE+1
-            
-            lda #<Break
-            sta CBINV
-            lda #>Break
-            sta CBINV+1
-            
-            lda #<Intro
-            ldy #>Intro
-            jsr PRTSTR
+Install:    jsr SetupVec        ; Set up vectors
+            lda #<Intro         ; Announce that wAx is on
+            ldy #>Intro         ; ,,
+            jsr PRTSTR          ; ,,            
             rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MAIN PROGRAM
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;              
 Scan:       jsr CHRGET
-            cmp #DCHAR          ; Disassemble with $
+            cmp #MCHAR          ; Memory Dump with &
             beq Prepare
-            cmp #ACHAR          ; Assemble with @
+            cmp #BCHAR          ; Breakpoint Manager with !
             beq Prepare
-            cmp #MCHAR          ; Memory dump with &
+            cmp #ACHAR          ; Assembler with @
             beq Prepare
-            cmp #BCHAR          ; Breakpoint with !
+            cmp #DCHAR          ; Disassembler with $
             beq Prepare
             jmp GONE+3          ; +3 because jsr CHRGET is done
 
@@ -103,43 +109,55 @@ GetAddr:    jsr Buff2Byte       ; Convert 2 characters to a byte
 
 ; Dispatch Functions
 ; Based on the wedge character detected
-Dispatch:   sty FUNCTION            ; Store the mode (to normalize spaces in buffer)
-            cpy #DCHAR          ; Dispatch Disassembler
-            beq Disp_Dasm
+Dispatch:   sty FUNCTION        ; Store the mode (to normalize spaces in buffer)
+            cpy #MCHAR          ; Dispatch Memory Dump
+            beq Disp_Mem
+            cpy #BCHAR          ; Dispatch Breakpoint Manager
+            beq Disp_BP
             cpy #ACHAR          ; Dispatch Assembler
             beq Disp_Asm
-            cpy #MCHAR          ; Dispatch Memory dump
-            beq Disp_Mem
-            cpy #BCHAR          ; Dispatch Breakpoint
-            
-;Disp_BP:   jmp SetBreak            
-            
+            ; Fall through to Disp_Dasm
+                        
 ; Dispatch Disassembler            
-Disp_Dasm:  ldx #DA_LINES       ; Show this many lines of code
+Disp_Dasm:  ldx #DI_LINES       ; Show this many lines of code
 -loop:      txa
             pha
             jsr Disasm          ; Disassmble the code at the program counter
             jsr PrintBuff       ; Display the buffer
             lda #$0d            ; Carriage return after each instruction
             jsr CHROUT          ; ,,
-            pla                 ; Restore X
+            pla                 ; Restore iterator
             tax                 ; ,,
             dex
             bne loop
             jmp Return    
             
 ; Dispatch Memory Dump            
-Disp_Mem:   ldx #DA_LINES       ; Show this many groups of four
+Disp_Mem:   ldx #DI_LINES       ; Show this many groups of four
 -loop:      txa
             pha
-            jsr Memory
-            jsr PrintBuff
-            pla
-            tax
+            jsr Memory          ; Dump memory at the program counter
+            jsr PrintBuff       ; Display the buffer
+            pla                 ; Restore iterator
+            tax                 ; ,,
             dex
             bne loop
-            jmp Return                    
-            
+            jmp Return  
+                              
+; Dispatch Breakpoint Manager     
+Disp_BP:    jsr ClearBP         ; Clear the old breakpoint, if it exists          
+            lda PRGCTR          ; Add a new breakpoint at the program counter
+            sta Breakpoint      ; ,,
+            lda PRGCTR+1        ; ,,
+            sta Breakpoint+1    ; ,,
+            ldy #$00            ; Get the previous code
+            lda (PRGCTR),y      ; Stash it in the Breakpoint data structure,
+            sta Breakpoint+2    ;   to be restored on the next break
+            lda #$00            ; BRK instruction
+            sta (PRGCTR),y      ;   goes into the breakpoint location
+            jsr SetupVec        ; Make sure that the BRK handler is on
+            jmp Return 
+                        
 ; Dispatch Assembler
 Disp_Asm:   lda #$00            ; Reset the buffer index
             sta BUFFER          ; ,,
@@ -181,7 +199,6 @@ test:       lda #$00            ; End the buffer with a $00
             lda OPERAND+1       ; Store the high operand byte, if indicated
             iny
             sta (PRGCTR),y
-            lda CURLIN+1
             jmp Return
             
 ; Assembly Fail
@@ -221,18 +238,18 @@ op_start:   ldy #$00            ; Get the opcode
             rts
             
 ; Write Mnemonic and Parameters
-Mnemonic:   bcc unknown
-            ldx INSTDATA
-            lda Tuplet,x
-            jsr BuffWrt
-            lda Tuplet+1,x
-            jsr BuffWrt
-            lda INSTDATA+1
-            and #$0f
-            tax
-            lda Char3,x
-            jsr BuffWrt
-            jsr Parameter
+Mnemonic:   bcc unknown         ; Carry clear indicates an unknown opcode
+            ldx INSTDATA        ; Get the index to the first two characters
+            lda Tuplet,x        ;   of the mnemonic and write to buffer
+            jsr BuffWrt         ;   ,,
+            lda Tuplet+1,x      ;   ,,
+            jsr BuffWrt         ;   ,,
+            lda INSTDATA+1      ; Get the addressing mode
+            and #$0f            ; ,,
+            tax                 ; ,,
+            lda Char3,x         ; Get the index to the third character of
+            jsr BuffWrt         ;   the mnemonic and write to buffer
+            jsr Parameter       ; Write the parameter to the buffer
             rts
 unknown:    lda #"?"
             jsr BuffWrt
@@ -241,8 +258,8 @@ unknown:    lda #"?"
 ; Parameter Display
 ; Dispatch display routines based on addressing mode
 Parameter:  lda INSTDATA+1
-            and #$f0            ; Isolate addressing mode
-            cmp #IMPLIED
+            and #$f0            ; Isolate addressing mode from data table
+            cmp #IMPLIED        ; Handle each addressing mode with a subroutine
             beq DisImp
             pha
             jsr Space           ; There's a space after all other mnemonics
@@ -288,11 +305,11 @@ DisRel:     jsr HexPrefix
             ora #$ff            ; Extend the sign out to 16 bits, if negative
 sign:       sta WORK+1          ; Set the high byte to either $00 or $ff
             lda WORK
-            sec
-            adc PRGCTR
-            sta WORK
-            lda WORK+1
-            adc PRGCTR+1
+            sec                 ; sec here before adc is not a mistake; I need
+            adc PRGCTR          ;   to account for the instruction address
+            sta WORK            ;   (see above)
+            lda WORK+1          ;
+            adc PRGCTR+1        ;
             jsr Hex             ; No need to save the high byte, just show it
             lda WORK            ; Show the low byte of the computed address
             jsr Hex             ; ,,
@@ -464,42 +481,27 @@ Memory:     lda #$00
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BREAKPOINT COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Set the breakpoint
-SetBreak:   jsr ClearBP         ; Clear the old breakpoint, if it exists          
-            lda PRGCTR          ; Add a new breakpoint at the program counter
-            sta Breakpoint      ; ,,
-            lda PRGCTR+1        ; ,,
-            sta Breakpoint+1    ; ,,
-            ldy #$00            ; Get the previous code
-            lda (PRGCTR),y      ; Stash it in the Breakpoint data structure,
-            sta Breakpoint+2    ;   to be restored on the next break
-            lda #$00            ; BRK instruction
-            sta (PRGCTR),y      ;   goes into the breakpoint location
-            jsr Install         ; Make sure that the BRK handler is on
-            jmp Return     
-            
-Break:      pha                 ; Right to left in the table: Accumulator
-            tya                 ; Y
-            pha
-            txa                 ; X
-            pha
-            tsx                 ; Stack
-            txa
-            clc                 ; For the stack register, compensate for the
-            adc #$04            ;   four bytes that the report used
-            pha
-            php                 ; Processor status
-            lda #$00            ; Clear the buffer
+Break:      lda #$00
             sta BUFFER
             lda #<Registers     ; Print register indicator bar
             ldy #>Registers     ; ,,
             jsr PRTSTR          ; ,,
-            ldy #$05            ; Pull five values off the stack and add
--loop:      pla                 ;   each one to the buffer
-            jsr Hex             ;   ,,
+            ldy #$04            ; Pull four values off the stack and add
+-loop:      pla                 ;   each one to the buffer. These values came
+            jsr Hex             ;   from the hardware IRQ, and are Y,X,A,P.
             jsr Space           ;   ,,
             dey                 ;   ,,
             bne loop            ;   ,,
+            tsx                 ; Stack pointer
+            txa                 ; ,,
+            jsr Hex             ; ,,
+            jsr Space           ; ,,
+            pla                 ; Program counter low
+            tax
+            pla                 ; Program counter high
+            jsr Hex             ; High to buffer
+            txa                 ; ,, 
+            jsr Hex             ; Low to buffer with no space
             jsr PrintBuff       ; Print the buffer
             jsr ClearBP         ; Reset the Breakpoint data
             jmp ($C002)    
@@ -554,7 +556,7 @@ ResetLang:  lda #<LangTable
             
 ; Advance Language Table
 ; to next entry
-AdvLang:    lda #$03
+AdvLang:    lda #$03            ; Each language entry is three bytes
             clc
             adc LANG_PTR
             sta LANG_PTR
@@ -582,13 +584,12 @@ Buff2Byte:  jsr CHRGET
        
 ; Character to Nybble
 ; A is the character in the text buffer to be converted into a nybble
-Char2Nyb:   ldx #$0f
--loop:      cmp HexDigit,x
-            beq found_dig
-            dex
-            bpl loop
-            lda #TABLE_END
-            rts
+Char2Nyb:   ldx #$0f            ; Iterate through the HexDigit table
+-loop:      cmp HexDigit,x      ;   until the specified character is found
+            beq found_dig       ;   ,,
+            dex                 ;   ,,
+            bpl loop            ;   ,,
+            ldx #TABLE_END      ; If it's not found, set an error value
 found_dig:  txa
             rts            
 
@@ -620,7 +621,7 @@ Address:    lda PRGCTR+1        ; Show the address
             rts
 
 ; Show Hex Byte
-Hex:        pha
+Hex:        pha                 ; Show the high nybble first
             lsr
             lsr
             lsr
@@ -684,7 +685,19 @@ PrintBuff:  lda #$00            ; End the buffer with 0
             lda #<DA_BUFFER     ; Print the line
             ldy #>DA_BUFFER     ; ,,
             jsr PRTSTR          ; ,,
-            rts            
+            rts 
+                
+; Set Up Vectors
+; Used by installation, and also by the breakpoint manager                    
+SetupVec:   lda #<Scan          ; Intercept GONE to process wedge
+            sta IGONE           ;   commands
+            lda #>Scan          ;   ,,
+            sta IGONE+1         ;   ,,
+            lda #<Break         ; Set the BRK interrupt vector
+            sta CBINV           ; ,,
+            lda #>Break         ; ,,
+            sta CBINV+1         ; ,,
+            rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
@@ -855,5 +868,5 @@ Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
 Char3:      .asc "ACDEIKLPQRSTVXY"
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
-Registers:  .asc $0d,"P: S: X: Y: A:",$0d,$00
+Registers:  .asc $0d,"BRK",$0d,"Y: X: A: P: S: PC::",$0d,$00
 Breakpoint: .asc $00,$00,$00
