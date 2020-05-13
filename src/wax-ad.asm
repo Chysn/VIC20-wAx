@@ -822,6 +822,7 @@ Tok2Key:    tya                 ; Save the index registers for use here
             tax                 ; X = the number of characters to move up
             sty WORK            ; Stop point backwards, start point for write
             stx WORK+2          ; Number of characters to move
+            dex                 ;   but -1 because the token is already one
 -moveup:    ldy #$2e            ; wAx input buffer end
 -loop:      lda BUF,y           ; Copy character from low to high
             sta BUF+1,y         ; ,,
