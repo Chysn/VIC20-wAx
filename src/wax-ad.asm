@@ -175,9 +175,6 @@ Disp_Asm:   jsr Detokenize      ; Remove AND, OR, and DEF from the buffer
             jsr ClearBP         ;   ,,
 asm_start:  lda #$00            ; Reset the buffer index
             sta BUFFER          ; ,,
-            jsr CHRGET          ; The first character after the address must
-            cmp #QUOTE          ;   be a double quote
-            bne asm_r
 -loop       jsr CHRGET          ; Transcribe characters to the assembler buffer
             cmp #QUOTE          ;   until either a dollar sign, quote, or $00 is
             beq test            ;   found. The dollar sign moves to operand
@@ -234,7 +231,7 @@ nextline:   lda CURLIN+1        ; If an assembly command is performed in
 -loop:      lda DA_BUFFER,y
             sta KEYBUFF,y
             iny
-            cpy #$07
+            cpy #$06
             bne loop
             sty KBSIZE
 asm_r:      jmp Return
@@ -800,11 +797,13 @@ search:     lda BUF,y           ; Get character in buffer
             bpl next_char       ; If not a token, move along
             beq detoken_r       ; If $00, then done
             ldx #$00
--loop:      cmp Token,x         ; Search the Token table for the found
-            bne next_tok        ;   token.
+-loop:      cmp #TABLE_END      ; Reached the end of the Token table?
+            beq next_char       ;   If so, go to next character
+            cmp Token,x         ; Search the Token table for the found
+            bne next_tok        ;   token
             jsr Tok2Key         ; This is the right one; convert to keyword
+            jmp next_char       ; Detokenized; go to the next character
 next_tok:   inx
-            lda #TABLE_END
             bne loop
 next_char:  iny
             bne search
@@ -824,8 +823,8 @@ Tok2Key:    tya                 ; Save the index registers for use here
             sty WORK            ; Stop point backwards, start point for write
             stx WORK+2          ; Number of characters to move
 -moveup:    ldy #$2e            ; wAx input buffer end
--loop:      lda BUF+1,y         ; Copy character from high to low
-            sta BUF,y           ; ,,
+-loop:      lda BUF,y           ; Copy character from low to high
+            sta BUF+1,y         ; ,,
             dey                 ; Work downward until we get back to the
             cpy WORK            ;   original buffer index
             bne loop            ;   ,,
