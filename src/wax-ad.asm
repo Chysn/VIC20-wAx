@@ -40,6 +40,9 @@ PRTSTR      = $cb1e             ; Print from data (Y,A)
 CHROUT      = $ffd2
 BUFPTR      = $7a               ; Pointer to buffer
 CHARAC      = $07               ; Temporary character
+CURLIN      = $39
+KEYBUFF     = $0277             ; Keyboard buffer and size, for automatically
+KBSIZE      = $c6               ;   advancing the assembly address
 
 ; Constants
 ; Addressing mode encodings
@@ -64,8 +67,8 @@ WORK        = $a4               ; Temporary workspace (2 bytes)
 LANG_PTR    = $a6               ; Language Pointer (2 bytes)
 FUNCTION    = $a8               ; Current function (ACHAR, DCHAR)
 BUFFER      = $a9               ; Buffer index
-INSTDATA    = $aa               ; Instruction data (2 bytes)
-PRGCTR      = $ac               ; PRGCTR assembly address (2 bytes)
+PRGCTR      = $aa               ; PRGCTR assembly address (2 bytes)
+INSTDATA    = $ac               ; Instruction data (2 bytes)
 OPCODE      = $ae               ; Assembly target for hypotesting
 OPERAND     = $af               ; Operand storage (2 bytes)
 RB_OPERAND  = $b1               ; Hypothetical relative branch operand
@@ -124,12 +127,15 @@ Disp_Dasm:  ldx #DI_LINES       ; Show this many lines of code
             pha
             jsr Disasm          ; Disassmble the code at the program counter
             jsr PrintBuff       ; Display the buffer
+            lda #$92            ; Reverse off after each instruction
+            jsr CHROUT          ; ,,
             lda #$0d            ; Carriage return after each instruction
             jsr CHROUT          ; ,,
             pla                 ; Restore iterator
             tax                 ; ,,
             dex
             bne loop
+            jsr EnableBP        ; Re-enable breakpoint, if necessary
             jmp Return    
             
 ; Dispatch Memory Dump            
@@ -159,26 +165,34 @@ Disp_BP:    jsr ClearBP         ; Clear the old breakpoint, if it exists
             jmp Return 
                         
 ; Dispatch Assembler
-Disp_Asm:   lda #$00            ; Reset the buffer index
+Disp_Asm:   jsr Detokenize      ; Remove AND, OR, and DEF from the buffer
+            lda Breakpoint      ; If you're assmebling at the current breakpoint
+            cmp PRGCTR          ;   then clear the breakpoint
+            bne asm_start       ;   ,,
+            lda Breakpoint+1    ;   ,,
+            cmp PRGCTR+1        ;   ,,
+            bne asm_start       ;   ,,
+            jsr ClearBP         ;   ,,
+asm_start:  lda #$00            ; Reset the buffer index
             sta BUFFER          ; ,,
             jsr CHRGET          ; The first character after the address must
             cmp #QUOTE          ;   be a double quote
-            bne AsmFail
+            bne asm_r
 -loop       jsr CHRGET          ; Transcribe characters to the assembler buffer
-            cmp #QUOTE          ;   until either a dollar sign or quote is
+            cmp #QUOTE          ;   until either a dollar sign, quote, or $00 is
             beq test            ;   found. The dollar sign moves to operand
             jsr Transcribe      ;   parsing, while the quote moves right to
             cmp #"$"            ;   hypotesting, as it is implied/acc mode
             beq continue        ;   ,,
-            cmp #$00            ; $00 means we ran out of characters,  
-            beq AsmFail         ;   so fail
+            cmp #$00            ;   ,,
+            beq continue        ;   ,,
             bne loop
 continue:   jsr GetOperand      ; Once $ is found, then grab the operand
 -loop       jsr CHRGET
             cmp #QUOTE          ; Look for a double quote to end the line
             beq test            ; ,,
-            cmp #$00            ; Or fail if there's no closing quote         
-            beq AsmFail         ; ,,
+            cmp #$00            ; Or a $00       
+            beq test
             jsr Transcribe
             jmp loop
 test:       lda #$00            ; End the buffer with a $00
@@ -190,16 +204,40 @@ test:       lda #$00            ; End the buffer with a $00
             sta (PRGCTR),y      ;   to transcribe is stored in the FUNCTION memory
             ldx FUNCTION        ;   location.
             cpx #$02            ;
-            bcc Return
+            bcc nextline
             lda OPERAND         ; Store the low operand byte, if indicated
             iny
             sta (PRGCTR),y
             cpx #$03
-            bcc Return
+            bcc nextline
             lda OPERAND+1       ; Store the high operand byte, if indicated
             iny
             sta (PRGCTR),y
-            jmp Return
+nextline:   lda CURLIN+1        ; If an assembly command is performed in
+            cmp #$ff            ;   Direct Mode, then advance the program
+            bne asm_r           ;   counter by the size of the instruction
+            lda #$00            ;   and write it to the keyboard buffer (by
+            sta BUFFER          ;   way of populating the Disassembly buffer)
+            lda #"@"            ;   ,,
+            jsr BuffWrt         ;   ,,
+            txa                 ;   ,,
+            clc                 ;   ,,
+            adc PRGCTR          ;   ,,
+            sta PRGCTR          ;   ,,
+            lda #$00            ;   ,,
+            adc PRGCTR+1        ;   ,,
+            jsr Hex             ;   ,,
+            lda PRGCTR          ;   ,,
+            jsr Hex             ;   ,,
+            jsr Space           ;   ,,
+            ldy #$00
+-loop:      lda DA_BUFFER,y
+            sta KEYBUFF,y
+            iny
+            cpy #$07
+            bne loop
+            sty KBSIZE
+asm_r:      jmp Return
             
 ; Assembly Fail
 ; Invalid opcode or formatting
@@ -215,13 +253,21 @@ Return:     ldx #$0d            ; Restore working space to its original state
             bpl loop            ;   ,,
 readout:    jsr CHRGET          ; Read through any extra nonzero bytes in the
             bne readout         ;   buffer, to prevent ?SYNTAX ERROR
+            pha
+            lda #$ff
+            cmp CURLIN+1
+            beq direct
+            pla
             jmp GONE+3          ; Continue parsing with IGONE
+direct:     pla
+            jmp ($0302)         ; If in direct mode, warm start without READY.            
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DISASSEMBLER COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Disasm:     lda #$00            ; Reset the buffer index
             sta BUFFER          ; ,,
+            jsr BreakInd        ; Indicate breakpoint, if it's here
             lda #ACHAR          ; If we're in Assembler mode, don't include
             cmp FUNCTION        ; the address in the buffer
             beq op_start        ; ,,
@@ -462,11 +508,27 @@ Memory:     lda #$00
             jsr Address
             ldy #$00
 -loop:      lda (PRGCTR),y
+            sta (INSTDATA),y
             jsr Hex
-            jsr Space
             iny
             cpy #$04
-            bne loop
+            beq show_char
+            jsr Space
+            jmp loop       
+show_char:  lda #$12            ; Reverse on for the characters
+            jsr BuffWrt
+            ldy #$00
+-loop:      lda (INSTDATA),y
+            cmp #$22            ; Don't show double quotes
+            beq alter_char      ; ,,
+            and #$7f            ; Mask off the high bit for character display;
+            cmp #$20            ; Show everything else at and above space
+            bcs add_char        ; ,,
+alter_char: lda #$2e            ; Everything else gets a .
+add_char:   jsr BuffWrt         ; ,,
+            iny
+            cpy #04
+            bne loop            
             tya
             clc
             adc PRGCTR
@@ -474,6 +536,8 @@ Memory:     lda #$00
             lda #$00
             adc PRGCTR+1
             sta PRGCTR+1
+            lda #$92            ; Reverse off after the characters
+            jsr CHROUT          ; ,,
             lda #$0d
             jsr BuffWrt
             rts
@@ -520,7 +584,38 @@ ClearBP:    lda Breakpoint+2    ; Is there an existing breakpoint?
 bp_reset:   sty Breakpoint      ; And then clear out the whole
             sty Breakpoint+1    ;   breakpoint data structure
             sty Breakpoint+2    ;   ,,
-cleared:    rts                  
+cleared:    rts
+
+; Breakpoint Indicator
+; Also restores the breakpoint byte, temporarily
+BreakInd:   ldy #$00            ; Is this a BRK instruction?
+            lda (PRGCTR),y      ; ,,
+            bne ind_r           ; If not, do nothing
+            lda Breakpoint      ; If it is a BRK, is it our breakpoint?
+            cmp PRGCTR          ; ,,
+            bne ind_r           ; ,,
+            lda Breakpoint+1    ; ,,
+            cmp PRGCTR+1        ; ,,
+            bne ind_r           ; ,,
+            lda #$12            ; Reverse on for the breakpoint
+            jsr BuffWrt
+            lda Breakpoint+2    ; Temporarily restore the breakpoint byte
+            sta (PRGCTR),y      ;   for disassembly purposes
+ind_r:      rts        
+                 
+; Enable Breakpoint
+; Used after disassembly, in case the BreakInd turned the breakpoint off
+EnableBP:   lda Breakpoint+2
+            beq enable_r
+            lda Breakpoint
+            sta CHARAC
+            lda Breakpoint+1
+            sta CHARAC+1
+            ldy #$00
+            lda #$00
+            sta (CHARAC),y
+enable_r:   rts
+             
                                                 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -698,6 +793,61 @@ SetupVec:   lda #<Scan          ; Intercept GONE to process wedge
             lda #>Break         ; ,,
             sta CBINV+1         ; ,,
             rts
+
+; Detokenize the input buffer            
+Detokenize: ldy #$00
+search:     lda BUF,y           ; Get character in buffer
+            bpl next_char       ; If not a token, move along
+            beq detoken_r       ; If $00, then done
+            ldx #$00
+-loop:      cmp Token,x         ; Search the Token table for the found
+            bne next_tok        ;   token.
+            jsr Tok2Key         ; This is the right one; convert to keyword
+next_tok:   inx
+            lda #TABLE_END
+            bne loop
+next_char:  iny
+            bne search
+detoken_r:  rts
+            
+; Token to Keyword
+; A token has been found at buffer index Y, at the Token table index X.
+; Move characters in the input buffer up by one byte for each character
+; in the keyword, from the start of the Disassembly buffer to Y. Then add
+; the characters at Y.
+Tok2Key:    tya                 ; Save the index registers for use here
+            pha             
+            txa
+            pha
+            lda Token+1,x       ; A = the number of characters to move up
+            tax                 ; X = the number of characters to move up
+            sty WORK            ; Stop point backwards, start point for write
+            stx WORK+2          ; Number of characters to move
+-moveup:    ldy #$2e            ; wAx input buffer end
+-loop:      lda BUF+1,y         ; Copy character from high to low
+            sta BUF,y           ; ,,
+            dey                 ; Work downward until we get back to the
+            cpy WORK            ;   original buffer index
+            bne loop            ;   ,,
+            dex                 ; Do this X times, where X is the number of
+            bne moveup          ;   chars in the detokenized thing
+            lda #>BUF           ; WORK is pointer to keyword's destination;
+            sta WORK+1          ;   the low byte is already set
+            pla                 ; Get the original X, and put it back on the
+            pha                 ;   stack
+            tax                 ; X = index in the Token Table
+            ldy #$00            ; Y = index in the buffer
+-loop:      lda Token+2,x       ; Copy the character from the Token table
+            inx
+            sta (WORK),y        ;   to the input buffer
+            iny
+            dec WORK+2          ; Have we moved the right number of characters?
+            bne loop            ; No, get the next character
+            pla                 ; Restore the registers for the caller
+            tax                 ; ,,
+            pla                 ; ,,
+            tay                 ; ,,
+            rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
@@ -864,6 +1014,10 @@ LangTable:  .byte $69,$09,$a1   ; ADC #oper
             .byte $98,$23,$b0   ; TYA
             .byte TABLE_END     ; End of 6502 table
 
+Token:      .byte $96,$03,$44,$45,$46   ; DEF
+            .byte $af,$03,$41,$4e,$44   ; AND
+            .byte $b0,$02,$4f,$52       ; OR
+            .byte TABLE_END
 Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
 Char3:      .asc "ACDEIKLPQRSTVXY"
 HexDigit:   .asc "0123456789ABCDEF"
