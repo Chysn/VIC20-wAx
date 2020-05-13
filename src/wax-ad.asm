@@ -8,6 +8,7 @@
 ACHAR       = $40               ; Wedge character @ for assembly
 DCHAR       = $24               ; Wedge character $ for disassembly
 MCHAR       = $26               ; Wedge character & for memory dump
+BCHAR       = $21               ; Wedge character ! for breakpoint
 QUOTE       = $22               ; Quote character
 DA_LINES    = $10               ; Disassemble this many lines of code
 DA_BUFFER   = $0230             ; Disassembly buffer
@@ -80,7 +81,9 @@ Scan:       jsr CHRGET
             beq Prepare
             cmp #ACHAR          ; Assemble with @
             beq Prepare
-            cmp #MCHAR          ; Memory dump
+            cmp #MCHAR          ; Memory dump with &
+            beq Prepare
+            cmp #BCHAR          ; Breakpoint with !
             beq Prepare
             jmp GONE+3          ; +3 because jsr CHRGET is done
 
@@ -107,6 +110,9 @@ Dispatch:   sty FUNCTION            ; Store the mode (to normalize spaces in buf
             beq Disp_Asm
             cpy #MCHAR          ; Dispatch Memory dump
             beq Disp_Mem
+            cpy #BCHAR          ; Dispatch Breakpoint
+            
+;Disp_BP:   jmp SetBreak            
             
 ; Dispatch Disassembler            
 Disp_Dasm:  ldx #DA_LINES       ; Show this many lines of code
@@ -454,7 +460,66 @@ Memory:     lda #$00
             lda #$0d
             jsr BuffWrt
             rts
-                                    
+            
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; BREAKPOINT COMPONENTS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Set the breakpoint
+SetBreak:   jsr ClearBP         ; Clear the old breakpoint, if it exists          
+            lda PRGCTR          ; Add a new breakpoint at the program counter
+            sta Breakpoint      ; ,,
+            lda PRGCTR+1        ; ,,
+            sta Breakpoint+1    ; ,,
+            ldy #$00            ; Get the previous code
+            lda (PRGCTR),y      ; Stash it in the Breakpoint data structure,
+            sta Breakpoint+2    ;   to be restored on the next break
+            lda #$00            ; BRK instruction
+            sta (PRGCTR),y      ;   goes into the breakpoint location
+            jsr Install         ; Make sure that the BRK handler is on
+            jmp Return     
+            
+Break:      pha                 ; Right to left in the table: Accumulator
+            tya                 ; Y
+            pha
+            txa                 ; X
+            pha
+            tsx                 ; Stack
+            txa
+            clc                 ; For the stack register, compensate for the
+            adc #$04            ;   four bytes that the report used
+            pha
+            php                 ; Processor status
+            lda #$00            ; Clear the buffer
+            sta BUFFER
+            lda #<Registers     ; Print register indicator bar
+            ldy #>Registers     ; ,,
+            jsr PRTSTR          ; ,,
+            ldy #$05            ; Pull five values off the stack and add
+-loop:      pla                 ;   each one to the buffer
+            jsr Hex             ;   ,,
+            jsr Space           ;   ,,
+            dey                 ;   ,,
+            bne loop            ;   ,,
+            jsr PrintBuff       ; Print the buffer
+            jsr ClearBP         ; Reset the Breakpoint data
+            jmp ($C002)    
+            
+ClearBP:    lda Breakpoint+2    ; Is there an existing breakpoint?
+            beq cleared         ; If not, do nothing
+            lda Breakpoint      ; Get the breakpoint
+            sta CHARAC          ; Stash it in a zeropage location
+            lda Breakpoint+1    ; ,,
+            sta CHARAC+1        ; ,,
+            ldy #$00
+            lda (CHARAC),y      ; What's currently at the Breakpoint?
+            bne bp_reset        ; If it's not a BRK, then preserve what's there
+            lda Breakpoint+2    ; Otherwise, get the breakpoint byte and
+            sta (CHARAC),y      ;   put it back 
+bp_reset:   sty Breakpoint      ; And then clear out the whole
+            sty Breakpoint+1    ;   breakpoint data structure
+            sty Breakpoint+2    ;   ,,
+cleared:    rts                  
+                                                
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
@@ -620,34 +685,6 @@ PrintBuff:  lda #$00            ; End the buffer with 0
             ldy #>DA_BUFFER     ; ,,
             jsr PRTSTR          ; ,,
             rts            
-            
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; BREAK ROUTINE
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Break:      pha                 ; Right to left in the table: Accumulator
-            tya                 ; Y
-            pha
-            txa                 ; X
-            pha
-            tsx                 ; Stack
-            txa
-            clc                 ; For the stack register, compensate for the
-            adc #$04            ;   four bytes that the report used
-            pha
-            php                 ; Processor status
-            lda #$00            ; Clear the buffer
-            sta BUFFER
-            lda #<Registers     ; Print register indicator bar
-            ldy #>Registers     ; ,,
-            jsr PRTSTR          ; ,,
-            ldy #$05            ; Pull five values off the stack and add
--loop:      pla                 ;   each one to the buffer
-            jsr Hex             ;   ,,
-            jsr Space           ;   ,,
-            dey                 ;   ,,
-            bne loop            ;   ,,
-            jsr PrintBuff       ; Print the buffer
-            jmp ($C002)
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
