@@ -7,6 +7,7 @@
 ; Configuration
 ACHAR       = $40               ; Wedge character @ for assembly
 DCHAR       = $24               ; Wedge character $ for disassembly
+MCHAR       = $26               ; Wedge character & for memory dump
 QUOTE       = $22               ; Quote character
 DA_LINES    = $10               ; Disassemble this many lines of code
 DA_BUFFER   = $0230             ; Disassembly buffer
@@ -79,6 +80,8 @@ Scan:       jsr CHRGET
             beq Prepare
             cmp #ACHAR          ; Assemble with @
             beq Prepare
+            cmp #MCHAR          ; Memory dump
+            beq Prepare
             jmp GONE+3          ; +3 because jsr CHRGET is done
 
 Prepare:    tay                 ; Y = the wedge character for function dispatch
@@ -102,6 +105,8 @@ Dispatch:   sty FUNCTION            ; Store the mode (to normalize spaces in buf
             beq Disp_Dasm
             cpy #ACHAR          ; Dispatch Assembler
             beq Disp_Asm
+            cpy #MCHAR          ; Dispatch Memory dump
+            beq Disp_Mem
             
 ; Dispatch Disassembler            
 Disp_Dasm:  ldx #DA_LINES       ; Show this many lines of code
@@ -115,7 +120,19 @@ Disp_Dasm:  ldx #DA_LINES       ; Show this many lines of code
             tax                 ; ,,
             dex
             bne loop
-            jmp Return            
+            jmp Return    
+            
+; Dispatch Memory Dump            
+Disp_Mem:   ldx #DA_LINES       ; Show this many groups of four
+-loop:      txa
+            pha
+            jsr Memory
+            jsr PrintBuff
+            pla
+            tax
+            dex
+            bne loop
+            jmp Return                    
             
 ; Dispatch Assembler
 Disp_Asm:   lda #$00            ; Reset the buffer index
@@ -185,12 +202,9 @@ Disasm:     lda #$00            ; Reset the buffer index
             lda #ACHAR          ; If we're in Assembler mode, don't include
             cmp FUNCTION        ; the address in the buffer
             beq op_start        ; ,,
-            jsr HexPrefix       ; $
-            lda PRGCTR+1        ; Show the address
-            jsr Hex             ; ,,
-            lda PRGCTR          ; ,,
-            jsr Hex             ; ,,
-            jsr Space
+            lda #DCHAR          ; Start each line with the wedge character, so
+            jsr BuffWrt         ;   the user can chain commands
+            jsr Address
 op_start:   ldy #$00            ; Get the opcode
             lda (PRGCTR),y      ;   ,,
             jsr Lookup          ; Look it up
@@ -415,7 +429,32 @@ bad_code:   pla                 ; Pull the program counter off the stack, but
             clc                 ;   because we're giving up.
             rts
             
-                        
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; MEMORY DUMP COMPONENTS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Memory:     lda #$00
+            sta BUFFER
+            lda #MCHAR          ; Start each line with the wedge character, so
+            jsr BuffWrt         ;   the user can chain commands
+            jsr Address
+            ldy #$00
+-loop:      lda (PRGCTR),y
+            jsr Hex
+            jsr Space
+            iny
+            cpy #$04
+            bne loop
+            tya
+            clc
+            adc PRGCTR
+            sta PRGCTR
+            lda #$00
+            adc PRGCTR+1
+            sta PRGCTR+1
+            lda #$0d
+            jsr BuffWrt
+            rts
+                                    
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
@@ -505,6 +544,14 @@ HexPrefix:  lda #"$"
 ; Show Space           
 Space:      lda #" "
             jsr BuffWrt
+            rts
+            
+; Write Address to Buffer            
+Address:    lda PRGCTR+1        ; Show the address
+            jsr Hex             ; ,,
+            lda PRGCTR          ; ,,
+            jsr Hex             ; ,,
+            jsr Space
             rts
 
 ; Show Hex Byte
@@ -772,3 +819,4 @@ Char3:      .asc "ACDEIKLPQRSTVXY"
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
 Registers:  .asc $0d,"P: S: X: Y: A:",$0d,$00
+Breakpoint: .asc $00,$00,$00
