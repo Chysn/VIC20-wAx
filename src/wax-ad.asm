@@ -173,11 +173,12 @@ Disp_Asm:   jsr Detokenize      ; Remove AND, OR, and DEF from the buffer
             cmp PRGCTR+1        ;   ,,
             bne asm_start       ;   ,,
             jsr ClearBP         ;   ,,
+            jsr CHRGET
 asm_start:  lda #$00            ; Reset the buffer index
             sta BUFFER          ; ,,
 -loop       jsr CHRGET          ; Transcribe characters to the assembler buffer
             cmp #QUOTE          ;   until either a dollar sign, quote, or $00 is
-            beq test            ;   found. The dollar sign moves to operand
+            beq loop            ;   found. The dollar sign moves to operand
             jsr Transcribe      ;   parsing, while the quote moves right to
             cmp #"$"            ;   hypotesting, as it is implied/acc mode
             beq continue        ;   ,,
