@@ -27,8 +27,8 @@ MCHAR       = $26               ; Wedge character & for memory dump
 BCHAR       = $21               ; Wedge character ! for breakpoint
 QUOTE       = $22               ; Quote character
 DI_LINES    = $10               ; Disassemble this many lines of code
-DA_BUFFER   = $0230             ; Disassembly buffer
-A_BUFFER    = $0248             ; Assembly buffer
+OutBuffer   = $0230             ; Output buffer
+InBuffer    = $0248             ; Input buffer
 
 ; System resources
 IGONE       = $0308             ; Vector to GONE
@@ -996,7 +996,3 @@ HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
 Registers:  .asc $0d,"BRK",$0d,"Y: X: A: P: S: PC::",$0d,$00
 Breakpoint: .asc $00,$00,$00
-InBuffer:   .asc $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
-            .asc $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
-OutBuffer:  .asc $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
-            .asc $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00           
