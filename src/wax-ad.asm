@@ -24,6 +24,7 @@
 ACHAR       = $40               ; Wedge character @ for assembly
 DCHAR       = $24               ; Wedge character $ for disassembly
 MCHAR       = $26               ; Wedge character & for memory dump
+HCHAR       = $3A               ; Wedge character : for hex entry
 BCHAR       = $21               ; Wedge character ! for breakpoint
 QUOTE       = $22               ; Quote character
 DI_LINES    = $10               ; Disassemble this many lines of code
@@ -100,7 +101,9 @@ Scan:       jsr CHRGET
             beq Prepare
             cmp #DCHAR          ; Disassembler with $
             beq Prepare
-            jmp GONE+3          ; +3 because jsr CHRGET is done
+            cmp #HCHAR          ; Hex Editor edit :
+            beq Prepare
+            jmp GONE+3          ; And back to GONE
 
 Prepare:    tay                 ; Y = the wedge character for function dispatch
             ldx #$00            ; wAx is to be zeropage-neutral, so preserve
@@ -130,6 +133,8 @@ Dispatch:   ldy FUNCTION
             beq Disp_BP
             cpy #ACHAR          ; Dispatch Assembler
             beq Disp_Asm
+            cpy #HCHAR          ; Dispatch Hex Editor
+            beq Disp_Hex
                         
 ; Dispatch Disassembler            
 Disp_Dasm:  ldx #DI_LINES       ; Show this many lines of code
@@ -159,6 +164,9 @@ Disp_Mem:   ldx #DI_LINES       ; Show this many groups of four
             dex
             bne loop
             jmp Return  
+            
+Disp_Hex:   jsr HexEditor
+            jmp Return            
                               
 ; Dispatch Breakpoint Manager     
 Disp_BP:    jsr ClearBP         ; Clear the old breakpoint, if it exists          
@@ -189,8 +197,8 @@ test:       lda IDX_IN          ; If not enough characters have been entered to
             bcc AsmFail         ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
             lda OPCODE          ;   to the program counter. The number of bytes
-            sta (PRGCTR),y      ;   to transcribe is stored in the FUNCTION memory
-            ldx FUNCTION        ;   location.
+            sta (PRGCTR),y      ;   to transcribe is stored in the CHRCOUNT memory
+            ldx CHRCOUNT        ;   location.
             cpx #$02            ; Store the low operand byte, if indicated
             bcc nextline        ; ,,
             lda OPERAND         ; ,,
@@ -202,30 +210,7 @@ test:       lda IDX_IN          ; If not enough characters have been entered to
             iny                 ; ,,
             sta (PRGCTR),y      ; ,,
 nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
-            lda CURLIN+1        ; If an assembly command is performed in
-            cmp #$ff            ;   Direct Mode, then advance the program
-            bne asm_r           ;   counter by the size of the instruction
-            lda #$00            ;   and write it to the keyboard buffer (by
-            sta IDX_OUT         ;   way of populating the Disassembly buffer)
-            lda #"@"            ;   ,,
-            jsr CharOut         ;   ,,
-            txa                 ;   ,,
-            clc                 ;   ,,
-            adc PRGCTR          ;   ,,
-            sta PRGCTR          ;   ,,
-            lda #$00            ;   ,,
-            adc PRGCTR+1        ;   ,,
-            jsr Hex             ;   ,,
-            lda PRGCTR          ;   ,,
-            jsr Hex             ;   ,,
-            jsr Space           ;   ,,
-            ldy #$00
--loop:      lda OutBuffer,y
-            sta KEYBUFF,y
-            iny
-            cpy #$06
-            bne loop
-            sty KBSIZE
+            jsr Prompt          ; Prompt for next line if in direct mode
 asm_r:      jmp Return
             
 ; Assembly Fail
@@ -461,10 +446,10 @@ reset:      lda #OPCODE         ; Write location to PC for hypotesting
             iny
             cmp #$00
             bne loop            ; Loop until the buffer is done
-match:      lda PRGCTR          ; Set the FUNCTION location to the number of
+match:      lda PRGCTR          ; Set the CHRCOUNT location to the number of
             sec                 ;   bytes that need to be programmed
             sbc #OPCODE         ;   ,,
-            sta FUNCTION        ;   ,,
+            sta CHRCOUNT        ;   ,,
             pla                 ; Restore the program counter so that the
             sta PRGCTR          ;   instruction is loaded to the right place
             pla                 ;   ,,
@@ -531,6 +516,23 @@ add_char:   jsr CharOut         ; ,,
             jsr CharOut
             rts
             
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; HEX EDITOR COMPONENT
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+HexEditor:  ldy #$00
+-loop:      jsr Buff2Byte
+            bcc hex_r           ; Bail out on the first non-hex byte
+            sta (PRGCTR),y      
+            iny
+            cpy #$04
+            bne loop
+            ldx #$04            ; If all four hex numbers were entered,
+            jsr Prompt          ;   provide a prompt
+hex_bp:     cpy #$00            ; If any hex numbers were entered,
+            beq hex_r           ;   clear the breakpoint
+            jsr ClearBP         ;   ,,
+hex_r:      rts
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BREAKPOINT COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -660,15 +662,22 @@ CharGet:    ldx IDX_IN
 ; Y is the index of the first character of the byte in the input
 ; buffer, to be returned as a byte in the Accumulator
 Buff2Byte:  jsr CharGet
-            jsr Char2Nyb        ; The first nybble at the index is
-            asl                 ;   the high one, multipled by 16
+            jsr Char2Nyb
+            cmp #TABLE_END
+            beq byte_err
+            asl                 ; Multiple high nybble by 16
             asl                 ;   ,,
             asl                 ;   ,,
             asl                 ;   ,,
             sta WORK
-            jsr CharGet         ; Get the next character, which is
-            jsr Char2Nyb        ;   the low nybble, and combine the
-            ora WORK            ;   nybbles
+            jsr CharGet
+            jsr Char2Nyb
+            cmp #TABLE_END
+            beq byte_err
+            ora WORK            ; Combine high and low nybbles
+            sec                 ; Set Carry flag indicates success
+            rts
+byte_err:   clc
             rts
        
 ; Character to Nybble
@@ -802,13 +811,46 @@ get_next:   iny
             dec CHRCOUNT
             bne get_next
             jmp Transcribe
-            
+ 
+; Print Buffer
+; Add a $00 delimiter to the end of the output buffer, and print it out           
 PrintBuff:  lda #$00            ; End the buffer with 0
             jsr CharOut         ; ,,
             lda #<OutBuffer     ; Print the line
             ldy #>OutBuffer     ; ,,
             jsr PRTSTR          ; ,,
             rts 
+            
+; Prompt for Next Line
+; X should be set to the number of bytes the program counter should be
+; advanced
+Prompt:     lda CURLIN+1        ; If an editor command is performed in
+            cmp #$ff            ;   direct mode, then advance the program
+            bne prompt_r        ;   counter by the size of the instruction
+            lda #$00            ;   and write it to the keyboard buffer (by
+            sta IDX_OUT         ;   way of populating the output buffer)
+            lda FUNCTION        ;   ,,
+            jsr CharOut         ;   ,,
+            txa                 ;   ,,
+            clc                 ;   ,,
+            adc PRGCTR          ;   ,,
+            sta PRGCTR          ;   ,,
+            lda #$00            ;   ,,
+            adc PRGCTR+1        ;   ,,
+            jsr Hex             ;   ,,
+            lda PRGCTR          ;   ,,
+            jsr Hex             ;   ,,
+            ldy #$00            ; Copy the output buffer into KEYBUFF, which
+-loop:      lda OutBuffer,y     ;   will simulate user entry
+            sta KEYBUFF,y       ;   ,,
+            iny                 ;   ,,
+            cpy #$05            ;   ,,
+            bne loop            ;   ,,
+            lda #$20            ; Add the space to the keyboard buffer this way
+            sta KEYBUFF,y       ;   because spaces are disabled for the
+            iny                 ;   assembler
+            sty KBSIZE          ; Setting the buffer size will make it go
+prompt_r:   rts            
                 
 ; Set Up Vectors
 ; Used by installation, and also by the breakpoint manager                    
