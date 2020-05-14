@@ -29,6 +29,7 @@ QUOTE       = $22               ; Quote character
 DI_LINES    = $10               ; Disassemble this many lines of code
 DA_BUFFER   = $0230             ; Disassembly buffer
 A_BUFFER    = $0248             ; Assembly buffer
+A_BUFF_END  = $0259             ; Assembly buffer end
 
 ; System resources
 IGONE       = $0308             ; Vector to GONE
@@ -72,6 +73,7 @@ INSTDATA    = $ac               ; Instruction data (2 bytes)
 OPCODE      = $ae               ; Assembly target for hypotesting
 OPERAND     = $af               ; Operand storage (2 bytes)
 RB_OPERAND  = $b1               ; Hypothetical relative branch operand
+CHRCOUNT    = $b2               ; Detokenization count
                             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; INSTALLER
@@ -101,7 +103,7 @@ Prepare:    tay                 ; Y = the wedge character for function dispatch
 -loop:      lda WORK,x          ;   its workspace on the stack. When this
             pha                 ;   routine is done, put the data back
             inx                 ;   ,,
-            cpx #$0e            ;   ,,
+            cpx #$0f            ;   ,,
             bne loop            ;   ,,
 
 ; Get PRGCTR address from the first four characters after the wedge
@@ -165,8 +167,7 @@ Disp_BP:    jsr ClearBP         ; Clear the old breakpoint, if it exists
             jmp Return 
                         
 ; Dispatch Assembler
-Disp_Asm:   jsr Detokenize      ; Remove AND, OR, and DEF from the buffer
-            lda Breakpoint      ; If you're assmebling at the current breakpoint
+Disp_Asm:   lda Breakpoint      ; If you're assmebling at the current breakpoint
             cmp PRGCTR          ;   then clear the breakpoint
             bne asm_start       ;   ,,
             lda Breakpoint+1    ;   ,,
@@ -175,16 +176,14 @@ Disp_Asm:   jsr Detokenize      ; Remove AND, OR, and DEF from the buffer
             jsr ClearBP         ;   ,,
 asm_start:  lda #$00            ; Reset the buffer index
             sta BUFFER          ; 
--loop       jsr CHRGET          ; 
-            jsr Transcribe      ;   
+-loop       jsr Transcribe      ;   
             cmp #"$"            ;   
             beq get_oprd        ;   ,,
             cmp #$00            ;   ,,
             beq test            ;   ,,
             bne loop
 get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
--loop       jsr CHRGET
-            jsr Transcribe
+-loop       jsr Transcribe
             cmp #$00            ; Look for $00 to end the line
             bne loop
 test:       lda BUFPTR          ; If the user is just hitting Return at the
@@ -244,7 +243,7 @@ AsmFail     lda #"?"
 ; Return in one of two ways:
 ; * In direct mode, to a BASIC warm start without READY.
 ; * In a program, back to GONE
-Return:     ldx #$0d            ; Restore working space to its original state
+Return:     ldx #$0e            ; Restore working space to its original state
 -loop:      pla                 ;   from the stack (see Prepare)
             sta WORK,x          ;   ,,
             dex                 ;   ,,
@@ -656,16 +655,14 @@ AdvLang:    lda #$03            ; Each language entry is three bytes
 ; Buffer to Byte
 ; Y is the index of the first character of the byte in the text
 ; buffer, to be returned as a byte in the Accumulator
-Buff2Byte:  jsr CHRGET
-            jsr Transcribe
+Buff2Byte:  jsr Transcribe
             jsr Char2Nyb        ; The first nybble at the index is
             asl                 ;   the high one, multipled by 16
             asl                 ;   ,,
             asl                 ;   ,,
             asl                 ;   ,,
             sta WORK
-            jsr CHRGET          ; Get the next character, which is
-            jsr Transcribe
+            jsr Transcribe      ; Get the next character, which is
             jsr Char2Nyb        ;   the low nybble, and combine the
             ora WORK            ;   nybbles
             rts
@@ -762,11 +759,37 @@ write_ok:   tya                 ; Save registers
 write_r:    rts 
 
 ; Transcribe to Buffer
-; Add A to assembler buffer, and advance buffer counter
-Transcribe: ldx BUFFER
+; Get a character from the input buffer and transcribe it to the
+; assembler buffer. If the character is a BASIC token, then possibly
+; explode it into individual characters.
+Transcribe: jsr CHRGET          ; Get character from input buffer or BASIC
+            cmp #$80
+            bcc xscribe         ; If it's not a token, just transcribe
+            jmp Detokenize
+xscribe:    ldx BUFFER
             sta A_BUFFER,x
             inc BUFFER
-            rts 
+            rts
+           
+; Detokenize
+; If one of a specific set of tokens (AND, OR, DEF) is found, explode that
+; token into PETSCII characters so it can be disassembled
+Detokenize: ldy #$00            ; Iterate through the token table looking
+-loop:      cmp Token,y         ;   for the possible token
+            beq explode         ; Found the token, so explode it
+            cmp #TABLE_END      ; Reached the end of Token table?
+            iny
+            bne loop
+            rts
+explode:    iny
+            lda Token,y         ; A is the number of characters to explode
+            sta CHRCOUNT
+get_next:   iny
+            lda Token,y         ; Character from the table
+            jsr xscribe         ; And transcribe it
+            dec CHRCOUNT
+            bne get_next
+            rts
             
 PrintBuff:  lda #$00            ; End the buffer with 0
             jsr BuffWrt         ; ,,
@@ -785,64 +808,6 @@ SetupVec:   lda #<Scan          ; Intercept GONE to process wedge
             sta CBINV           ; ,,
             lda #>Break         ; ,,
             sta CBINV+1         ; ,,
-            rts
-
-; Detokenize the input buffer            
-Detokenize: ldy #$00
-search:     lda BUF,y           ; Get character in buffer
-            bpl next_char       ; If not a token, move along
-            beq detoken_r       ; If $00, then done
-            ldx #$00
--loop:      cmp #TABLE_END      ; Reached the end of the Token table?
-            beq next_char       ;   If so, go to next character
-            cmp Token,x         ; Search the Token table for the found
-            bne next_tok        ;   token
-            jsr Tok2Key         ; This is the right one; convert to keyword
-            jmp next_char       ; Detokenized; go to the next character
-next_tok:   inx
-            bne loop
-next_char:  iny
-            bne search
-detoken_r:  rts
-            
-; Token to Keyword
-; A token has been found at buffer index Y, at the Token table index X.
-; Move characters in the input buffer up by one byte for each character
-; in the keyword, from the start of the Disassembly buffer to Y. Then add
-; the characters at Y.
-Tok2Key:    tya                 ; Save the index registers for use here
-            pha             
-            txa
-            pha
-            lda Token+1,x       ; A = the number of characters to move up
-            tax                 ; X = the number of characters to move up
-            sty WORK            ; Stop point backwards, start point for write
-            stx WORK+2          ; Number of characters to move
-            dex                 ;   but -1 because the token is already one
--moveup:    ldy #$2e            ; wAx input buffer end
--loop:      lda BUF,y           ; Copy character from low to high
-            sta BUF+1,y         ; ,,
-            dey                 ; Work downward until we get back to the
-            cpy WORK            ;   original buffer index
-            bne loop            ;   ,,
-            dex                 ; Do this X times, where X is the number of
-            bne moveup          ;   chars in the detokenized thing
-            lda #>BUF           ; WORK is pointer to keyword's destination;
-            sta WORK+1          ;   the low byte is already set
-            pla                 ; Get the original X, and put it back on the
-            pha                 ;   stack
-            tax                 ; X = index in the Token Table
-            ldy #$00            ; Y = index in the buffer
--loop:      lda Token+2,x       ; Copy the character from the Token table
-            inx
-            sta (WORK),y        ;   to the input buffer
-            iny
-            dec WORK+2          ; Have we moved the right number of characters?
-            bne loop            ; No, get the next character
-            pla                 ; Restore the registers for the caller
-            tax                 ; ,,
-            pla                 ; ,,
-            tay                 ; ,,
             rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
