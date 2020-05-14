@@ -244,21 +244,21 @@ AsmFail     lda #"?"
             jsr CHROUT             
             
 ; Return from Wedge
+; Return in one of two ways:
+; * In direct mode, to a BASIC warm start without READY.
+; * In a program, back to GONE
 Return:     ldx #$0d            ; Restore working space to its original state
 -loop:      pla                 ;   from the stack (see Prepare)
             sta WORK,x          ;   ,,
             dex                 ;   ,,
             bpl loop            ;   ,,
+            ldy CURLIN+1
+            iny
+            bne readout
+            jmp ($0302)         ; If in direct mode, warm start without READY.            
 readout:    jsr CHRGET          ; Read through any extra nonzero bytes in the
             bne readout         ;   buffer, to prevent ?SYNTAX ERROR
-            pha
-            lda #$ff
-            cmp CURLIN+1
-            beq direct
-            pla
-            jmp GONE+3          ; Continue parsing with IGONE
-direct:     pla
-            jmp ($0302)         ; If in direct mode, warm start without READY.            
+            jmp GONE+3          ; Continue parsing with IGONE           
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DISASSEMBLER COMPONENTS
