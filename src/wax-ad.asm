@@ -173,31 +173,23 @@ Disp_Asm:   jsr Detokenize      ; Remove AND, OR, and DEF from the buffer
             cmp PRGCTR+1        ;   ,,
             bne asm_start       ;   ,,
             jsr ClearBP         ;   ,,
-            jsr CHRGET
 asm_start:  lda #$00            ; Reset the buffer index
-            sta BUFFER          ; ,,
--loop       jsr CHRGET          ; Transcribe characters to the assembler buffer
-            cmp #QUOTE          ;   until either a dollar sign, quote, or $00 is
-            beq loop            ;   found. The dollar sign moves to operand
-            jsr Transcribe      ;   parsing, while the quote moves right to
-            cmp #"$"            ;   hypotesting, as it is implied/acc mode
-            beq continue        ;   ,,
+            sta BUFFER          ; 
+-loop       jsr CHRGET          ; 
+            jsr Transcribe      ;   
+            cmp #"$"            ;   
+            beq get_oprd        ;   ,,
             cmp #$00            ;   ,,
-            beq continue        ;   ,,
+            beq test            ;   ,,
             bne loop
-continue:   jsr GetOperand      ; Once $ is found, then grab the operand
+get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
 -loop       jsr CHRGET
-            cmp #QUOTE          ; Look for a double quote to end the line
-            beq test            ; ,,
-            cmp #$00            ; Or a $00       
-            beq test
             jsr Transcribe
-            jmp loop
+            cmp #$00            ; Look for $00 to end the line
+            bne loop
 test:       lda BUFPTR          ; If the user is just hitting Return at the
             cmp #$08            ;   prompt, just warm start without raising
             bcc Return          ;   an error
-            lda #$00            ; End the buffer with a $00
-            jsr Transcribe      ; ,,
             jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc AsmFail
             ldy #$00            ; A match was found. Transcribe the good code
@@ -261,9 +253,7 @@ Return:     ldx #$0d            ; Restore working space to its original state
             iny
             bne readout
             jmp ($0302)         ; If in direct mode, warm start without READY.            
-readout:    jsr CHRGET          ; Read through any extra nonzero bytes in the
-            bne readout         ;   buffer, to prevent ?SYNTAX ERROR
-            jmp GONE+3          ; Continue parsing with IGONE           
+readout:    jmp $c7ae           ; Continue parsing with IGONE           
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DISASSEMBLER COMPONENTS
