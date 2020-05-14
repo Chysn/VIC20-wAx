@@ -68,6 +68,7 @@ TABLE_END   = $ff               ; Indicates the end of mnemonic table
 ; Assembler workspace
 WORK        = $a3               ; Temporary workspace (2 bytes)
 PRGCTR      = $a5               ; Program Counter (2 bytes)
+CHARDISP    = $a7               ; Character display for Memory (2 bytes)
 LANG_PTR    = $a7               ; Language Pointer (2 bytes)
 INSTDATA    = $a9               ; Instruction data (2 bytes)
 FUNCTION    = $ab               ; Current function (ACHAR, DCHAR)
@@ -496,7 +497,7 @@ Memory:     lda #$00
             jsr Address
             ldy #$00
 -loop:      lda (PRGCTR),y
-            sta (INSTDATA),y
+            sta (CHARDISP),y
             jsr Hex
             iny
             cpy #$04
@@ -506,7 +507,7 @@ Memory:     lda #$00
 show_char:  lda #$12            ; Reverse on for the characters
             jsr CharOut
             ldy #$00
--loop:      lda (INSTDATA),y
+-loop:      lda (CHARDISP),y
             and #$7f            ; Mask off the high bit for character display;
             cmp #QUOTE          ; Don't show double quotes
             beq alter_char      ; ,,
@@ -791,7 +792,7 @@ Detokenize: ldy #$00            ; Iterate through the token table looking
             iny
             cpy #$0f
             bne loop
-            jmp AsmFail         ; An invalid token triggers an error. Boom.
+            jmp Transcribe      ; Ignore invalid tokens and move on
 explode:    iny
             lda Token,y         ; A is the number of characters to explode
             sta CHRCOUNT
