@@ -777,8 +777,8 @@ xscribe:    ldx BUFFER
 Detokenize: ldy #$00            ; Iterate through the token table looking
 -loop:      cmp Token,y         ;   for the possible token
             beq explode         ; Found the token, so explode it
-            cmp #TABLE_END      ; Reached the end of Token table?
             iny
+            cpy #$0f
             bne loop
             rts
 explode:    iny
@@ -977,8 +977,7 @@ LangTable:  .byte $ea,$07,$b7   ; NOP
 
 Token:      .byte $96,$03,$44,$45,$46   ; DEF
             .byte $af,$03,$41,$4e,$44   ; AND
-            .byte $b0,$02,$4f,$52       ; OR
-            .byte TABLE_END
+            .byte $b0,$02,$4f,$52,$00   ; OR
 Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
 Char3:      .asc "ACDEIKLPQRSTVXY"
 HexDigit:   .asc "0123456789ABCDEF"
