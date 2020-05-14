@@ -517,9 +517,9 @@ show_char:  lda #$12            ; Reverse on for the characters
             jsr BuffWrt
             ldy #$00
 -loop:      lda (INSTDATA),y
-            cmp #$22            ; Don't show double quotes
-            beq alter_char      ; ,,
             and #$7f            ; Mask off the high bit for character display;
+            cmp #QUOTE          ; Don't show double quotes
+            beq alter_char      ; ,,
             cmp #$20            ; Show everything else at and above space
             bcs add_char        ; ,,
 alter_char: lda #$2e            ; Everything else gets a .
