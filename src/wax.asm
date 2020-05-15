@@ -4,7 +4,7 @@
 ;                            Integrated Monitor Tools
 ;                             (c)2020, Jason Justian
 ;                  
-; Release 1 - May 13, 2020
+; Release 1 - May 14, 2020
 ; Assembled with XA
 ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -62,7 +62,7 @@ IMPLIED     = $b0               ; e.g., INY
 RELATIVE    = $c0               ; e.g., BCC $181E
 
 ; Other constants
-TABLE_END   = $ff               ; Indicates the end of mnemonic table
+TABLE_END   = $f2               ; Indicates the end of mnemonic table
 QUOTE       = $22               ; Quote character
 
 ; Assembler workspace
@@ -909,9 +909,13 @@ HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
 Registers:  .asc $0d,"BRK",$0d,"Y: X: A: P: S: PC::",$0d,$00
 
-; Tuplet and Char3 are used to decode instruction names            
+; Tuplet and Char3 are used to decode instruction names. Tuplet should be padded
+; to 64 characters, and Char3 should be padded to 16 characters, to support
+; language table extensions.           
 Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
+Padding1:   .asc "---------------"
 Char3:      .asc "ACDEIKLPQRSTVXY"
+Padding2:   .asc "-"
 
 ; 6502 Instructions
 ; Each instruction is encoded as three bytes.
