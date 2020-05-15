@@ -21,15 +21,12 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 * = $a000 
 ; Configuration
+DISPLAYL    = $10               ; Display this many lines of code or memory
 ACHAR       = $40               ; Wedge character @ for assembly
 DCHAR       = $24               ; Wedge character $ for disassembly
 MCHAR       = $26               ; Wedge character & for memory dump
 HCHAR       = $3A               ; Wedge character : for hex entry
 BCHAR       = $21               ; Wedge character ! for breakpoint
-QUOTE       = $22               ; Quote character
-DI_LINES    = $10               ; Disassemble this many lines of code
-OutBuffer   = $0230             ; Output buffer
-InBuffer    = $0248             ; Input buffer
 
 ; System resources
 IGONE       = $0308             ; Vector to GONE
@@ -64,8 +61,9 @@ IMMEDIATE   = $a0               ; e.g., LDA #$2D
 IMPLIED     = $b0               ; e.g., INY
 RELATIVE    = $c0               ; e.g., BCC $181E
 
-; Other constant
+; Other constants
 TABLE_END   = $ff               ; Indicates the end of mnemonic table
+QUOTE       = $22               ; Quote character
 
 ; Assembler workspace
 WORK        = $a3               ; Temporary workspace (2 bytes)
@@ -80,6 +78,9 @@ RB_OPERAND  = $af               ; Hypothetical relative branch operand
 CHRCOUNT    = $b0               ; Detokenization count
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
+Breakpoint  = $0256             ; Breakpoint data
+OutBuffer   = $0220             ; Output buffer
+InBuffer    = $0240             ; Input buffer
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; INSTALLER
@@ -138,7 +139,7 @@ Dispatch:   ldy FUNCTION
             beq Disp_Hex
                         
 ; Dispatch Disassembler            
-Disp_Dasm:  ldx #DI_LINES       ; Show this many lines of code
+Disp_Dasm:  ldx #DISPLAYL       ; Show this many lines of code
 -loop:      txa
             pha
             jsr Disasm          ; Disassmble the code at the program counter
@@ -158,7 +159,7 @@ Disp_Dasm:  ldx #DI_LINES       ; Show this many lines of code
             jmp Return    
             
 ; Dispatch Memory Dump            
-Disp_Mem:   ldx #DI_LINES       ; Show this many groups of four
+Disp_Mem:   ldx #DISPLAYL       ; Show this many groups of four
 -loop:      txa
             pha
             jsr Memory          ; Dump memory at the program counter
@@ -647,9 +648,9 @@ found:      iny                 ; The opcode has been found; store the
             rts  
                         
 ; Reset Language Table            
-ResetLang:  lda #<LangTable
+ResetLang:  lda #<Instr6502
             sta LANG_PTR
-            lda #>LangTable
+            lda #>Instr6502
             sta LANG_PTR+1
             rts
             
@@ -886,6 +887,22 @@ ShiftDown:  lda KEYCVTRS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; The Token table is used to detokenize certain instructions that might
+; appear in assembly or addresses
+Token:      .byte $96,$03,$44,$45,$46   ; DEF
+            .byte $af,$03,$41,$4e,$44   ; AND
+            .byte $b0,$02,$4f,$52,$00   ; OR
+            
+; Tuplet and Char3 are used to decode instruction names            
+Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
+Char3:      .asc "ACDEIKLPQRSTVXY"
+
+; Miscellaneous data tables
+HexDigit:   .asc "0123456789ABCDEF"
+Intro:      .asc $0d,"WAX ON",$00
+Registers:  .asc $0d,"BRK",$0d,"Y: X: A: P: S: PC::",$0d,$00
+
+; 6502 Instructions
 ; Each instruction is encoded as three bytes.
 ; (1) The first byte is the 6502 opcode of the instruction
 ; (2) The second byte is the position of the first two characters of the 
@@ -895,7 +912,7 @@ ShiftDown:  lda KEYCVTRS
 ;     mode of the insruction, as shown in the Constants labels at the top
 ;     of the source code
 ;
-LangTable:  .byte $ea,$07,$b7   ; NOP
+Instr6502:  .byte $ea,$07,$b7   ; NOP
             .byte $60,$04,$ba   ; RTS
             .byte $a9,$1b,$a0   ; LDA #oper
             .byte $a5,$1b,$70   ; LDA oper
@@ -1047,13 +1064,3 @@ LangTable:  .byte $ea,$07,$b7   ; NOP
             .byte $50,$2a,$c1   ; BVC oper
             .byte $70,$2a,$ca   ; BVS oper
             .byte TABLE_END     ; End of 6502 table
-
-Token:      .byte $96,$03,$44,$45,$46   ; DEF
-            .byte $af,$03,$41,$4e,$44   ; AND
-            .byte $b0,$02,$4f,$52,$00   ; OR
-Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
-Char3:      .asc "ACDEIKLPQRSTVXY"
-HexDigit:   .asc "0123456789ABCDEF"
-Intro:      .asc $0d,"WAX ON",$00
-Registers:  .asc $0d,"BRK",$0d,"Y: X: A: P: S: PC::",$0d,$00
-Breakpoint: .asc $00,$00,$00
