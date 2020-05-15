@@ -78,9 +78,10 @@ RB_OPERAND  = $af               ; Hypothetical relative branch operand
 CHRCOUNT    = $b0               ; Detokenization count
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
-Breakpoint  = $0256             ; Breakpoint data
-OutBuffer   = $0220             ; Output buffer
-InBuffer    = $0240             ; Input buffer
+OutBuffer   = $0218             ; Output buffer (24 bytes)
+InBuffer    = $0230             ; Input buffer (22 bytes)
+ZPTemp      = $0246             ; Zeropage Preservation (16 bytes)
+Breakpoint  = $0256             ; Breakpoint data (3 bytes)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; INSTALLER
@@ -95,51 +96,62 @@ Install:    jsr SetupVec        ; Set up vectors
 ; MAIN PROGRAM
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;              
 Scan:       jsr CHRGET
-            cmp #MCHAR          ; Memory Dump with &
-            beq Prepare
-            cmp #BCHAR          ; Breakpoint Manager with !
-            beq Prepare
-            cmp #ACHAR          ; Assembler with @
-            beq Prepare
-            cmp #DCHAR          ; Disassembler with $
-            beq Prepare
-            cmp #HCHAR          ; Hex Editor edit :
-            beq Prepare
-            jmp GONE+3          ; And back to GONE
+            cmp #DCHAR          ; Disassembler
+            beq Disp_Dasm       ; ,,
+            cmp #ACHAR          ; Assembler
+            beq Disp_Asm        ; ,,
+            cmp #MCHAR          ; Memory Dump
+            beq Disp_Mem        ; ,,
+            cmp #HCHAR          ; Hex Editor
+            beq Disp_Hex        ; ,,
+            jmp GONE+3          ; +3 because the CHRGET is already done
+                        
+; Dispatch Disassembler            
+Disp_Dasm:  jsr Prepare
+            jsr DisList
+            jmp Return    
 
-Prepare:    tay                 ; Y = the wedge character for function dispatch
-            ldx #$00            ; wAx is to be zeropage-neutral, so preserve
--loop:      lda WORK,x          ;   its workspace on the stack. When this
-            pha                 ;   routine is done, put the data back
+; Dispatch Assembler
+Disp_Asm:   jsr Prepare
+            jsr Assemble
+            jmp Return
+            
+; Dispatch Memory Dump            
+Disp_Mem:   jsr Prepare
+            jsr Memory
+            jmp Return  
+            
+Disp_Hex:   jsr Prepare
+            jsr HexEditor
+            jmp Return            
+                              
+; Dispatch Breakpoint Manager
+Disp_BP:    jsr Prepare
+            jsr BPManager
+            ; Falls through to Return
+                        
+; Return from Wedge
+; Return in one of two ways:
+; * In direct mode, to a BASIC warm start without READY.
+; * In a program, back to GONE
+Return:     ldx #$00            ; Restore workspace memory to zeropage
+-loop:      lda ZPTemp,x        ;   ,,
+            sta WORK,x          ;   ,,
             inx                 ;   ,,
             cpx #$10            ;   ,,
             bne loop            ;   ,,
-            sty FUNCTION        ; Store the mode (to normalize spaces in buffer)
+            ldy CURLIN+1        ; See if we're running in direct mode by
+            iny                 ;   checking the current line number
+            bne in_program      ;   ,,
+            jmp (WARM_START)    ; If in direct mode, warm start without READY.            
+in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command          
 
-; Get PRGCTR address from the first four characters after the wedge
-GetAddr:    lda #$00            ; Initialize the input index for write
-            sta IDX_IN          ; ,,
-            jsr Transcribe      ; Transcribe from CHRGET to InBuffer
-            sta IDX_IN          ; Re-initialize for buffer read
-            jsr Buff2Byte       ; Convert 2 characters to a byte
-            sta PRGCTR+1        ; Save to the PRGCTR high byte
-            jsr Buff2Byte       ; Convert next 2 characters to byte
-            sta PRGCTR          ; Save to the PRGCTR low byte
-
-; Dispatch Functions
-; Based on the wedge character detected
-Dispatch:   ldy FUNCTION
-            cpy #MCHAR          ; Dispatch Memory Dump
-            beq Disp_Mem
-            cpy #BCHAR          ; Dispatch Breakpoint Manager
-            beq Disp_BP
-            cpy #ACHAR          ; Dispatch Assembler
-            beq Disp_Asm
-            cpy #HCHAR          ; Dispatch Hex Editor
-            beq Disp_Hex
-                        
-; Dispatch Disassembler            
-Disp_Dasm:  ldx #DISPLAYL       ; Show this many lines of code
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; DISASSEMBLER COMPONENTS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Disassembly Listing
+; Disassemble multiple instructions, starting from the program counter
+DisList:    ldx #DISPLAYL       ; Show this many lines of code
 -loop:      txa
             pha
             jsr Disasm          ; Disassmble the code at the program counter
@@ -156,100 +168,10 @@ Disp_Dasm:  ldx #DISPLAYL       ; Show this many lines of code
             jsr ShiftDown       ; Keep scrolling if the Shift Key
             bne loop            ;   is held down
             jsr EnableBP        ; Re-enable breakpoint, if necessary
-            jmp Return    
-            
-; Dispatch Memory Dump            
-Disp_Mem:   ldx #DISPLAYL       ; Show this many groups of four
--loop:      txa
-            pha
-            jsr Memory          ; Dump memory at the program counter
-            jsr PrintBuff       ; Display the buffer
-            pla                 ; Restore iterator
-            tax                 ; ,,
-            dex
-            bne loop
-            inx
-            jsr ShiftDown       ; Keep scrolling if the Shift Key
-            bne loop            ;   is held down
-            jmp Return  
-            
-Disp_Hex:   jsr HexEditor
-            jmp Return            
-                              
-; Dispatch Breakpoint Manager     
-Disp_BP:    jsr ClearBP         ; Clear the old breakpoint, if it exists          
-            lda PRGCTR          ; Add a new breakpoint at the program counter
-            sta Breakpoint      ; ,,
-            lda PRGCTR+1        ; ,,
-            sta Breakpoint+1    ; ,,
-            ldy #$00            ; Get the previous code
-            lda (PRGCTR),y      ; Stash it in the Breakpoint data structure,
-            sta Breakpoint+2    ;   to be restored on the next break
-            lda #$00            ; BRK instruction
-            sta (PRGCTR),y      ;   goes into the breakpoint location
-            jsr SetupVec        ; Make sure that the BRK handler is on
-            jmp Return 
-                        
-; Dispatch Assembler
-Disp_Asm:   jsr CharGet         ; Look through the buffer for one of two things
-            cmp #"$"            ;   A $ indicates there's an operand. We need to
-            beq get_oprd        ;   parse that operand, or
-            cmp #$00            ;   If we reach the end of the buffer, there's
-            beq test            ;   no operand, so go to test the instruction
-            bne Disp_Asm
-get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
-test:       lda IDX_IN          ; If not enough characters have been entered to
-            cmp #$06            ;   be mistaken for an intentional instrution,
-            bcc asm_r           ;   just go to BASIC
-            jsr Hypotest        ; Line is done; hypothesis test for a match
-            bcc AsmFail         ; Clear carry means the test failed
-            ldy #$00            ; A match was found! Transcribe the good code
-            lda OPCODE          ;   to the program counter. The number of bytes
-            sta (PRGCTR),y      ;   to transcribe is stored in the CHRCOUNT memory
-            ldx CHRCOUNT        ;   location.
-            cpx #$02            ; Store the low operand byte, if indicated
-            bcc nextline        ; ,,
-            lda OPERAND         ; ,,
-            iny                 ; ,,
-            sta (PRGCTR),y      ; ,,
-            cpx #$03            ; Store the high operand byte, if indicated
-            bcc nextline        ; ,,
-            lda OPERAND+1       ; ,,
-            iny                 ; ,,
-            sta (PRGCTR),y      ; ,,
-nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
-            jsr Prompt          ; Prompt for next line if in direct mode
-asm_r:      jmp Return
-            
-; Assembly Fail
-; Invalid opcode or formatting
-; Falls through to Return
-AsmFail:    lda #"?"
-            jsr CHROUT
-            lda #<InBuffer
-            ldy #>InBuffer   
-            jsr PRTSTR
-            lda #$0d
-            jsr CHROUT
-            
-; Return from Wedge
-; Return in one of two ways:
-; * In direct mode, to a BASIC warm start without READY.
-; * In a program, back to GONE
-Return:     ldx #$0f            ; Restore working space to its original state
--loop:      pla                 ;   from the stack (see Prepare)
-            sta WORK,x          ;   ,,
-            dex                 ;   ,,
-            bpl loop            ;   ,,
-            ldy CURLIN+1        ; See if we're running in direct mode by
-            iny                 ;   checking the current line number
-            bne in_program      ;   ,,
-            jmp (WARM_START)    ; If in direct mode, warm start without READY.            
-in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command          
+            rts
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; DISASSEMBLER COMPONENTS
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Disassemble
+; Disassemble a single instruction at the program counter
 Disasm:     lda #$00            ; Reset the buffer index
             sta IDX_OUT         ; ,,
             jsr BreakInd        ; Indicate breakpoint, if it's here
@@ -400,6 +322,47 @@ ind_y:      lda #")"
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSEMBLER COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Assemble:   jsr CharGet         ; Look through the buffer for one of two things
+            cmp #"$"            ;   A $ indicates there's an operand. We need to
+            beq get_oprd        ;   parse that operand, or
+            cmp #$00            ;   If we reach the end of the buffer, there's
+            beq test            ;   no operand, so go to test the instruction
+            bne Assemble        ;   ,,
+get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
+test:       lda IDX_IN          ; If not enough characters have been entered to
+            cmp #$06            ;   be mistaken for an intentional instrution,
+            bcc asm_r           ;   just go to BASIC
+            jsr Hypotest        ; Line is done; hypothesis test for a match
+            bcc AsmFail         ; Clear carry means the test failed
+            ldy #$00            ; A match was found! Transcribe the good code
+            lda OPCODE          ;   to the program counter. The number of bytes
+            sta (PRGCTR),y      ;   to transcribe is stored in the CHRCOUNT memory
+            ldx CHRCOUNT        ;   location.
+            cpx #$02            ; Store the low operand byte, if indicated
+            bcc nextline        ; ,,
+            lda OPERAND         ; ,,
+            iny                 ; ,,
+            sta (PRGCTR),y      ; ,,
+            cpx #$03            ; Store the high operand byte, if indicated
+            bcc nextline        ; ,,
+            lda OPERAND+1       ; ,,
+            iny                 ; ,,
+            sta (PRGCTR),y      ; ,,
+nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
+            jsr Prompt          ; Prompt for next line if in direct mode
+asm_r:      rts
+            
+; Assembly Fail
+; Invalid opcode or formatting
+AsmFail:    lda #"?"
+            jsr CHROUT
+            lda #<InBuffer
+            ldy #>InBuffer   
+            jsr PRTSTR
+            lda #$0d
+            jsr CHROUT
+            rts
+
 ; Get Operand
 ; Populate the operand for an instruction by looking forward in the buffer and
 ; counting upcoming hex digits.
@@ -485,9 +448,12 @@ bad_code:   pla                 ; Pull the program counter off the stack, but
             rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; MEMORY DUMP COMPONENTS
+; MEMORY DUMP COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Memory:     lda #$00
+Memory:     ldx #DISPLAYL       ; Show this many groups of four
+-next:      txa
+            pha
+            lda #$00
             sta IDX_OUT
             lda #MCHAR          ; Start each line with the wedge character, so
             jsr CharOut         ;   the user can chain commands
@@ -526,6 +492,14 @@ add_char:   jsr CharOut         ; ,,
             jsr CHROUT          ; ,,
             lda #$0d
             jsr CharOut
+            jsr PrintBuff       ; Display the buffer
+            pla                 ; Restore iterator
+            tax                 ; ,,
+            dex
+            bne next
+            inx
+            jsr ShiftDown       ; Keep scrolling if the Shift Key
+            bne next            ;   is held down
             rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -549,6 +523,19 @@ hex_r:      rts
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BREAKPOINT COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+BPManager:  jsr ClearBP         ; Clear the old breakpoint, if it exists          
+            lda PRGCTR          ; Add a new breakpoint at the program counter
+            sta Breakpoint      ; ,,
+            lda PRGCTR+1        ; ,,
+            sta Breakpoint+1    ; ,,
+            ldy #$00            ; Get the previous code
+            lda (PRGCTR),y      ; Stash it in the Breakpoint data structure,
+            sta Breakpoint+2    ;   to be restored on the next break
+            lda #$00            ; BRK instruction
+            sta (PRGCTR),y      ;   goes into the breakpoint location
+            jsr SetupVec        ; Make sure that the BRK handler is on
+            rts
+
 Break:      lda #$00
             sta IDX_OUT
             lda #<Registers     ; Print register indicator bar
@@ -624,6 +611,28 @@ enable_r:   rts
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
+; Prepare
+; (1) Save registers for Return
+; (2) Save the current Function
+; (3) Get the program counter address from the input
+Prepare:    tay                 ; Y = the wedge character for function dispatch
+            ldx #$00            ; wAx is to be zeropage-neutral, so preserve
+-loop:      lda WORK,x          ;   its workspace in temp storage. When this
+            sta ZPTemp,x        ;   routine is done, the data will be restored
+            inx                 ;   in Return
+            cpx #$10            ;   ,,
+            bne loop            ;   ,,
+            sty FUNCTION        ; Store the mode (to normalize spaces in buffer)
+            lda #$00            ; Initialize the input index for write
+            sta IDX_IN          ; ,,
+            jsr Transcribe      ; Transcribe from CHRGET to InBuffer
+            sta IDX_IN          ; Re-initialize for buffer read
+            jsr Buff2Byte       ; Convert 2 characters to a byte
+            sta PRGCTR+1        ; Save to the PRGCTR high byte
+            jsr Buff2Byte       ; Convert next 2 characters to byte
+            sta PRGCTR          ; Save to the PRGCTR low byte
+            rts
+
 ; Look Up Opcode             
 Lookup:     sta INSTDATA        ; Store the requested opcode for lookup
             jsr ResetLang       ; Reset language table
