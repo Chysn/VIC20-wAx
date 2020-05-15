@@ -22,8 +22,8 @@
 * = $a000 
 ; Configuration
 DISPLAYL    = $10               ; Display this many lines of code or memory
-ACHAR       = $40               ; Wedge character @ for assembly
 DCHAR       = $24               ; Wedge character $ for disassembly
+ACHAR       = $40               ; Wedge character @ for assembly
 MCHAR       = $26               ; Wedge character & for memory dump
 HCHAR       = $3A               ; Wedge character : for hex entry
 BCHAR       = $21               ; Wedge character ! for breakpoint
@@ -104,6 +104,8 @@ Scan:       jsr CHRGET
             beq Disp_Mem        ; ,,
             cmp #HCHAR          ; Hex Editor
             beq Disp_Hex        ; ,,
+            cmp #BCHAR          ; Breakpoint Manager
+            beq Disp_BP         ; ,,
             jmp GONE+3          ; +3 because the CHRGET is already done
                         
 ; Dispatch Disassembler            
@@ -627,7 +629,7 @@ Prepare:    tay                 ; Y = the wedge character for function dispatch
             sta IDX_IN          ; ,,
             jsr Transcribe      ; Transcribe from CHRGET to InBuffer
             sta IDX_IN          ; Re-initialize for buffer read
-            jsr Buff2Byte       ; Convert 2 characters to a byte
+            jsr Buff2Byte       ; Convert 2 characters to a byte            
             sta PRGCTR+1        ; Save to the PRGCTR high byte
             jsr Buff2Byte       ; Convert next 2 characters to byte
             sta PRGCTR          ; Save to the PRGCTR low byte
