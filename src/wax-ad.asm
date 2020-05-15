@@ -278,8 +278,12 @@ Mnemonic:   bcc unknown         ; Carry clear indicates an unknown opcode
             jsr CharOut         ;   the mnemonic and write to buffer
             jsr Parameter       ; Write the parameter to the buffer
             rts
-unknown:    lda #"?"
-            jsr CharOut
+unknown:    pha                 ; For an unknown opcode, show the hex
+            jsr HexPrefix       ;   value at the location
+            pla                 ;   ,,
+            jsr Hex             ;   ,,
+            lda #"?"            ;   ,,
+            jsr CharOut         ;   ,,
             rts
 
 ; Parameter Display
@@ -528,16 +532,17 @@ add_char:   jsr CharOut         ; ,,
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 HexEditor:  ldy #$00
 -loop:      jsr Buff2Byte
-            bcc hex_r           ; Bail out on the first non-hex byte
+            bcc hex_exit        ; Bail out on the first non-hex byte
             sta (PRGCTR),y      
             iny
             cpy #$04
             bne loop
-            ldx #$04            ; If all four hex numbers were entered,
-            jsr Prompt          ;   provide a prompt
-hex_bp:     cpy #$00            ; If any hex numbers were entered,
-            beq hex_r           ;   clear the breakpoint
-            jsr ClearBP         ;   ,,
+hex_exit:   cpy #$00
+            beq hex_r
+            tya
+            tax
+            jsr Prompt          ; Prompt for the next address
+            jsr ClearBP         ; Clear breakpoint if anything was changed
 hex_r:      rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -629,8 +634,9 @@ Lookup:     sta INSTDATA        ; Store the requested opcode for lookup
             beq found
             jsr AdvLang         ; Not found; advance to next entry and look
             bne loop            ;   again
-not_found:  clc                 ; Opcode not found; clear Carry flag to
-            rts                 ;   indicate unknown opcode
+not_found:  lda INSTDATA        ; Opcode not found; clear Carry flag to indicate
+            clc                 ;   unknown opcode, and set A back to the
+            rts                 ;   original byte
 found:      iny                 ; The opcode has been found; store the
             lda (LANG_PTR),y    ;   mnemonic and addressing mode information
             sta INSTDATA        ;   to draw the instruction
