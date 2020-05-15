@@ -565,10 +565,10 @@ Break:      lda #$00
             jsr Hex             ; ,,
             jsr Space           ; ,,
             pla                 ; Program counter low
-            tax
+            tay
             pla                 ; Program counter high
             jsr Hex             ; High to buffer
-            txa                 ; ,, 
+            tya                 ; ,, 
             jsr Hex             ; Low to buffer with no space
             jsr PrintBuff       ; Print the buffer
             jsr ClearBP         ; Reset the Breakpoint data
@@ -892,15 +892,15 @@ ShiftDown:  lda KEYCVTRS
 Token:      .byte $96,$03,$44,$45,$46   ; DEF
             .byte $af,$03,$41,$4e,$44   ; AND
             .byte $b0,$02,$4f,$52,$00   ; OR
-            
-; Tuplet and Char3 are used to decode instruction names            
-Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
-Char3:      .asc "ACDEIKLPQRSTVXY"
 
 ; Miscellaneous data tables
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
 Registers:  .asc $0d,"BRK",$0d,"Y: X: A: P: S: PC::",$0d,$00
+
+; Tuplet and Char3 are used to decode instruction names            
+Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
+Char3:      .asc "ACDEIKLPQRSTVXY"
 
 ; 6502 Instructions
 ; Each instruction is encoded as three bytes.
