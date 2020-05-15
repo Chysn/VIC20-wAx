@@ -47,6 +47,7 @@ CHARAC      = $07               ; Temporary character
 CURLIN      = $39
 KEYBUFF     = $0277             ; Keyboard buffer and size, for automatically
 KBSIZE      = $c6               ;   advancing the assembly address
+KEYCVTRS    = $028d             ; Keyboard codes
 
 ; Constants
 ; Addressing mode encodings
@@ -150,6 +151,9 @@ Disp_Dasm:  ldx #DI_LINES       ; Show this many lines of code
             tax                 ; ,,
             dex
             bne loop
+            inx
+            jsr ShiftDown       ; Keep scrolling if the Shift Key
+            bne loop            ;   is held down
             jsr EnableBP        ; Re-enable breakpoint, if necessary
             jmp Return    
             
@@ -163,6 +167,9 @@ Disp_Mem:   ldx #DI_LINES       ; Show this many groups of four
             tax                 ; ,,
             dex
             bne loop
+            inx
+            jsr ShiftDown       ; Keep scrolling if the Shift Key
+            bne loop            ;   is held down
             jmp Return  
             
 Disp_Hex:   jsr HexEditor
@@ -863,6 +870,12 @@ SetupVec:   lda #<Scan          ; Intercept GONE to process wedge
             lda #>Break         ; ,,
             sta CBINV+1         ; ,,
             rts
+            
+; Check Shift Key
+; If it's held down, Zero flag will be clear
+ShiftDown:  lda KEYCVTRS   
+            and #$01
+            rts         
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
