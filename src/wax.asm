@@ -89,32 +89,20 @@ Breakpoint  = $0256             ; Breakpoint data (3 bytes)
 Install:    lda IGONE+1         ; If the wedge is aleady installed, skip
             cmp #>main          ;   the memory adjustment. Otherwise, set BASIC
             beq installed       ;   pointers as a courtesy
-            lda $2b             ; Copy start-of-basic to start-of-variables
-            sta $2d             ;   to be the starting point for search
-            lda $2c             ;   ,,
-            sta $2e             ;   ,,
-            ldy #$00
-reset_c0c:  ldx #$00            ; Reset consecutive-zero count
-adv_sov:    lda ($2d),y
-            inc $2d             ; Advance start-of-variables pointer after
-            bne check_0         ;   reading, because we want the final value to
-            inc $2e             ;   be the third zero location + 1
-check_0:    cmp #$00            ; If the current position is not a zero, then
-            bne reset_c0c       ;   reset the consecutive-zero count
-            inx                 ; A zero was found
-            cpx #$03            ; Is it the third?
-            bne adv_sov         ; If not, seach the next character
-            lda $2d             ; Copy the newly-found start-of-variables
-            sta $2f             ;   into end-of-everthing-elses
-            sta $31             ;   ,,
-            lda $2e             ;   ,,
-            sta $30             ;   ,,
-            sta $32             ;   ,,
+            lda #$01            ; Reset the BASIC start-of-variable pointer
+            tay                 ;   and array pointers as a courtesy to
+            sta ($2b),y         ;   the user
+            jsr $c533           ;   ,,
+            txa                 ;   ,,
+            adc #$02            ;   ,,
+            sta $2d             ;   ,,
+            lda $23             ;   ,,
+            jsr $c655           ;   ,,
 installed:  jsr SetupVec        ; Set up vectors (IGONE and BRK)
             lda #<Intro         ; Announce that wAx is on
             ldy #>Intro         ; ,,
             jsr PRTSTR          ; ,,            
-            rts
+            jmp (READY)         ; Warm Start
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MAIN PROGRAM
