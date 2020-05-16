@@ -177,7 +177,7 @@ DisList:    ldx #DISPLAYL       ; Show this many lines of code
 Disasm:     lda #$00            ; Reset the buffer index
             sta IDX_OUT         ; ,,
             jsr BreakInd        ; Indicate breakpoint, if it's here
-            lda #DCHAR          ; Start each line with the wedge character, so
+            lda FUNCTION        ; Start each line with the wedge character, so
             jsr CharOut         ;   the user can chain commands
             jsr Address
 op_start:   ldy #$00            ; Get the opcode
@@ -334,6 +334,13 @@ get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
 test:       lda IDX_IN          ; If not enough characters have been entered to
             cmp #$06            ;   be mistaken for an intentional instrution,
             bcc asm_r           ;   just go to BASIC
+            lda InBuffer+$07    ; Get the third character of the mnemonic;
+            ldx #$0f            ;   this will be used to reduce the number
+-loop:      cmp Char3,x         ;   of opcodes that Hypotest will need to 
+            bne save_i3         ;   actually disassemble. Hypotest won't
+            dex                 ;   act on mnemonics that don't end with this
+            bne loop            ;   letter.
+            stx CHARDISP        ;   ,,
             jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc AsmFail         ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
@@ -525,7 +532,10 @@ hex_r:      rts
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BREAKPOINT COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-BPManager:  jsr ClearBP         ; Clear the old breakpoint, if it exists          
+BPManager:  php
+            jsr ClearBP         ; Clear the old breakpoint, if it exists
+            plp                 ; If no breakpoint is chosen (e.g., if ! was)
+            bcc bpm_r           ;   by itself), just clear the breakpoint
             lda PRGCTR          ; Add a new breakpoint at the program counter
             sta Breakpoint      ; ,,
             lda PRGCTR+1        ; ,,
@@ -533,9 +543,16 @@ BPManager:  jsr ClearBP         ; Clear the old breakpoint, if it exists
             ldy #$00            ; Get the previous code
             lda (PRGCTR),y      ; Stash it in the Breakpoint data structure,
             sta Breakpoint+2    ;   to be restored on the next break
-            lda #$00            ; BRK instruction
-            sta (PRGCTR),y      ;   goes into the breakpoint location
-            jsr SetupVec        ; Make sure that the BRK handler is on
+            lda #$00            ; Write BRK to the breakpoint location
+            sta (PRGCTR),y      ;   ,,
+            jsr Disasm          ; Disassemble the line at the breakpoint
+            lda #$91            ;   for the user to review
+            jsr CHROUT          ;   ,,
+            jsr PrintBuff       ;   ,,
+            lda #$0d            ;   ,,
+            jsr CHROUT          ;   ,,
+            jsr EnableBP        ; Enable the breakpoint after disassembly
+bpm_r:      jsr SetupVec        ; Make sure that the BRK handler is on
             rts
 
 Break:      lda #$00
@@ -604,9 +621,9 @@ EnableBP:   lda Breakpoint+2
             sta CHARAC
             lda Breakpoint+1
             sta CHARAC+1
-            ldy #$00
-            lda #$00
-            sta (CHARAC),y
+            ldy #$00            ; Write BRK to the breakpoint
+            lda #$00            ; ,,
+            sta (CHARAC),y      ; ,,
 enable_r:   rts
              
                                                 
@@ -629,10 +646,12 @@ Prepare:    tay                 ; Y = the wedge character for function dispatch
             sta IDX_IN          ; ,,
             jsr Transcribe      ; Transcribe from CHRGET to InBuffer
             sta IDX_IN          ; Re-initialize for buffer read
-            jsr Buff2Byte       ; Convert 2 characters to a byte            
+            jsr Buff2Byte       ; Convert 2 characters to a byte   
+            php                 ; Use this byte to determine success         
             sta PRGCTR+1        ; Save to the PRGCTR high byte
             jsr Buff2Byte       ; Convert next 2 characters to byte
             sta PRGCTR          ; Save to the PRGCTR low byte
+            plp
             rts
 
 ; Look Up Opcode             
