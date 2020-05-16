@@ -336,12 +336,7 @@ test:       lda IDX_IN          ; If not enough characters have been entered to
             bcc asm_r           ;   just go to BASIC
             lda InBuffer+$07    ; Get the third character of the mnemonic;
             ldx #$0f            ;   this will be used to reduce the number
--loop:      cmp Char3,x         ;   of opcodes that Hypotest will need to 
-            bne save_i3         ;   actually disassemble. Hypotest won't
-            dex                 ;   act on mnemonics that don't end with this
-            bne loop            ;   letter.
-            stx CHARDISP        ;   ,,
-            jsr Hypotest        ; Line is done; hypothesis test for a match
+-loop:      jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc AsmFail         ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
             lda OPCODE          ;   to the program counter. The number of bytes
