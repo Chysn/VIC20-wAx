@@ -895,10 +895,10 @@ PrintBuff:  lda #$00            ; End the buffer with 0
 ; Prompt for Next Line
 ; X should be set to the number of bytes the program counter should be
 ; advanced
-Prompt:     lda CURLIN+1        ; If an editor command is performed in
-            cmp #$ff            ;   direct mode, then advance the program
+Prompt:     ldy CURLIN+1        ; If an editor command is performed in
+            iny                 ;   direct mode, then advance the program
             bne prompt_r        ;   counter by the size of the instruction
-            lda #$00            ;   and write it to the keyboard buffer (by
+            tya                 ;   and write it to the keyboard buffer (by
             sta IDX_OUT         ;   way of populating the output buffer)
             lda FUNCTION        ;   ,,
             jsr CharOut         ;   ,,
@@ -906,14 +906,13 @@ Prompt:     lda CURLIN+1        ; If an editor command is performed in
             clc                 ;   ,,
             adc PRGCTR          ;   ,,
             sta PRGCTR          ;   ,,
-            lda #$00            ;   ,,
+            tya                 ;   ,, (Y is still $00, otherwise lda #$00)
             adc PRGCTR+1        ;   ,,
             jsr Hex             ;   ,,
             lda PRGCTR          ;   ,,
             jsr Hex             ;   ,,
-            ldy #$00            ; Copy the output buffer into KEYBUFF, which
--loop:      lda OutBuffer,y     ;   will simulate user entry
-            sta KEYBUFF,y       ;   ,,
+-loop:      lda OutBuffer,y     ; Copy the output buffer into KEYBUFF, which
+            sta KEYBUFF,y       ;   will simulate user entry
             iny                 ;   ,,
             cpy #$05            ;   ,,
             bne loop            ;   ,,
