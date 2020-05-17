@@ -100,23 +100,32 @@ Breakpoint  = $0256             ; Breakpoint data (3 bytes)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; INSTALLER
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-Install:    lda IGONE+1         ; If the wedge is aleady installed, skip
-            cmp #>main          ;   the memory adjustment. Otherwise, set BASIC
-            beq installed       ;   pointers as a courtesy
-            lda #$01            ; Reset the BASIC start-of-variable pointer
-            tay                 ;   and array pointers as a courtesy to
-            sta ($2b),y         ;   the user
-            jsr $c533           ;   ,,
-            txa                 ;   ,,
-            adc #$02            ;   ,,
-            sta $2d             ;   ,,
-            lda $23             ;   ,,
-            jsr $c655           ;   ,,
+Install:    lda $2b             ; Copy start-of-basic to start-of-variables
+            sta $2d             ;   to be the starting point for search
+            lda $2c             ;   ,,
+            sta $2e             ;   ,,
+            ldy #$00
+reset_c0c:  ldx #$00            ; Reset consecutive-zero count
+adv_sov:    lda ($2d),y
+            inc $2d             ; Advance start-of-variables pointer after
+            bne check_0         ;   reading, because we want the final value to
+            inc $2e             ;   be the third zero location + 1
+check_0:    cmp #$00            ; If the current value is not a zero, then
+            bne reset_c0c       ;   reset the consecutive-zero count
+            inx                 ; A zero was found
+            cpx #$03            ; Is it the third?
+            bne adv_sov         ; If not, search the next character
+            lda $2d             ; Copy the newly-found start-of-variables
+            sta $2f             ;   into end-of-everthing-elses
+            sta $31             ;   ,,
+            lda $2e             ;   ,,
+            sta $30             ;   ,,
+            sta $32             ;   ,,
 installed:  jsr SetupVec        ; Set up vectors (IGONE and BRK)
             lda #<Intro         ; Announce that wAx is on
             ldy #>Intro         ; ,,
             jsr PRTSTR          ; ,,            
-            jmp (READY)         ; Warm Start
+            rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MAIN PROGRAM
@@ -254,11 +263,39 @@ Parameter:  lda INSTDATA+1
             bcs DisZP
             cmp #ABSOLUTE
             bcs DisAbs
-            jmp DisInd
+            ; Fall through to DisInd, because it's the only one left
 
-; Disassemble Implied
-DisImp:     rts
-            
+; Disassemble Indirect 
+DisInd:     pha
+            lda #"("
+            jsr CharOut
+            pla
+            cmp #INDIRECT
+            bne ind_xy
+            jsr Param_16
+            lda #")"
+            jsr CharOut
+            rts
+ind_xy:     pha
+            jsr Param_8
+            pla
+            cmp #INDIRECT_X
+            bne ind_y
+            lda #","
+            jsr CharOut
+            lda #"X"
+            jsr CharOut
+            lda #")"
+            jsr CharOut
+            rts
+ind_y:      lda #")"
+            jsr CharOut
+            lda #","
+            jsr CharOut
+            lda #"Y"
+            jsr CharOut
+DisImp:     rts                 ; Any convenient rts will o for DisImp     
+
 ; Disassemble Immediate            
 DisImm:     lda #"#"
             jsr CharOut
@@ -316,36 +353,7 @@ abs_ind:    lda #","            ; This is an indexed addressing mode, so
             jsr CharOut         ;   ,,
             rts                      
 
-; Disassemble Indirect 
-DisInd:     pha
-            lda #"("
-            jsr CharOut
-            pla
-            cmp #INDIRECT
-            bne ind_xy
-            jsr Param_16
-            lda #")"
-            jsr CharOut
-            rts
-ind_xy:     pha
-            jsr Param_8
-            pla
-            cmp #INDIRECT_X
-            bne ind_y
-            lda #","
-            jsr CharOut
-            lda #"X"
-            jsr CharOut
-            lda #")"
-            jsr CharOut
-            rts
-ind_y:      lda #")"
-            jsr CharOut
-            lda #","
-            jsr CharOut
-            lda #"Y"
-            jsr CharOut
-            rts 
+
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSEMBLER COMPONENTS
@@ -360,8 +368,6 @@ get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
 test:       lda IDX_IN          ; If not enough characters have been entered to
             cmp #$06            ;   be mistaken for an intentional instrution,
             bcc asm_r           ;   just go to BASIC
-            lda InBuffer+$07    ; Get the third character of the mnemonic;
-            ldx #$0f            ;   this will be used to reduce the number
 -loop:      jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc AsmFail         ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
