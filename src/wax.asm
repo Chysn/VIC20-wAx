@@ -230,6 +230,7 @@ Unknown:    pha                 ; For an unknown opcode, show the hex
             jsr Hex             ;   ,,
             lda #"?"            ;   ,,
             jsr CharOut         ;   ,,
+            jsr NextValue       ; Advance to the next line of code
             rts
             
 ; Write Mnemonic and Parameters
