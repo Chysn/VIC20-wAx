@@ -9,17 +9,17 @@
 ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
-; This software is released under the Creative Commons
-; Attribution-NonCommercial 4.0 International
-; License. The license should be included with this file.
+; This software is released under the Creative Commons Attribution 4.0 
+; International Public License. The license should be included with this file.
 ; If not, please see: 
 ;
-; https://creativecommons.org/licenses/by-nc/4.0/legalcode.txt* = $a000
-
+; https://creativecommons.org/licenses/by/4.0/
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; LABEL DEFINITIONS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
+
 * = $a000 
+
 ; Configuration
 DISPLAYL    = $10               ; Display this many lines of code or memory
 DCHAR       = $24               ; Wedge character $ for disassembly
