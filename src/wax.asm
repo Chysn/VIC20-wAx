@@ -873,15 +873,15 @@ Detokenize: ldy #$00            ; Iterate through the token table looking
             cpy #$0f
             bne loop
             jmp Transcribe      ; Ignore invalid tokens and move on
-explode:    iny
-            lda Token,y         ; A is the number of characters to explode
+explode:    lda #$03
             sta CHRCOUNT
 get_next:   iny
             lda Token,y         ; Character from the table
+            beq detoken_r
             jsr AddInput        ; Add it to input buffer
             dec CHRCOUNT
             bne get_next
-            jmp Transcribe
+detoken_r: jmp Transcribe
  
 ; Print Buffer
 ; Add a $00 delimiter to the end of the output buffer, and print it out           
@@ -946,9 +946,9 @@ ShiftDown:  lda KEYCVTRS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; The Token table is used to detokenize certain instructions that might
 ; appear in assembly or addresses
-Token:      .byte $96,$03,$44,$45,$46   ; DEF
-            .byte $af,$03,$41,$4e,$44   ; AND
-            .byte $b0,$02,$4f,$52,$00   ; OR
+Token:      .byte $96,$44,$45,$46   ; DEF
+            .byte $af,$41,$4e,$44   ; AND
+            .byte $b0,$4f,$52,$00   ; OR
 
 ; Miscellaneous data tables
 HexDigit:   .asc "0123456789ABCDEF"
