@@ -8,7 +8,7 @@
 ; Assembled with XA
 ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-* = $a5be
+* = $a5cb
 ; Tuplet and Char3 are used to decode instruction names            
 Tuplet:     .asc "JMBEORLASANOBINSTADEBCPLDCLXSRTXJSEISLSHLBNBPHBROTSBMARRBVCMTY"
 Padding1:   .asc "--"
