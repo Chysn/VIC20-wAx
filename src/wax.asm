@@ -578,7 +578,8 @@ BPManager:  php
 bpm_r:      jsr SetupVec        ; Make sure that the BRK handler is on
             rts
 
-Break:      lda #$00
+Break:      cld                 ; Escape hatch for accidenally-set Decimal flag
+            lda #$00
             sta IDX_OUT
             lda #<Registers     ; Print register indicator bar
             ldy #>Registers     ; ,,
