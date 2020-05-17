@@ -36,11 +36,12 @@
 
 ; Configuration
 DISPLAYL    = $10               ; Display this many lines of code or memory
-DCHAR       = $24               ; Wedge character $ for disassembly
-ACHAR       = $40               ; Wedge character @ for assembly
-MCHAR       = $26               ; Wedge character & for memory dump
-HCHAR       = $3A               ; Wedge character : for hex entry
-BCHAR       = $21               ; Wedge character ! for breakpoint
+DCHAR       = "$"               ; Wedge character $ for disassembly
+ACHAR       = "@"               ; Wedge character @ for assembly
+MCHAR       = "&"               ; Wedge character & for memory dump
+HCHAR       = ":"               ; Wedge character : for hex entry
+BCHAR       = "!"               ; Wedge character ! for breakpoint
+RCHAR       = ";"               ; Wedge character ; for register set
 
 ; System resources
 IGONE       = $0308             ; Vector to GONE
@@ -59,6 +60,10 @@ CURLIN      = $39
 KEYBUFF     = $0277             ; Keyboard buffer and size, for automatically
 KBSIZE      = $c6               ;   advancing the assembly address
 KEYCVTRS    = $028d             ; Keyboard codes
+Acc         = $030c             ; Saved accumulator
+XReg        = $030d             ; Saved X Register
+YReg        = $030e             ; Saved Y Register
+Proc        = $030f             ; Saved Processor Status
 
 ; Constants
 ; Addressing mode encodings
@@ -100,32 +105,17 @@ Breakpoint  = $0256             ; Breakpoint data (3 bytes)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; INSTALLER
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-Install:    lda $2b             ; Copy start-of-basic to start-of-variables
-            sta $2d             ;   to be the starting point for search
-            lda $2c             ;   ,,
-            sta $2e             ;   ,,
-            ldy #$00
-reset_c0c:  ldx #$00            ; Reset consecutive-zero count
-adv_sov:    lda ($2d),y
-            inc $2d             ; Advance start-of-variables pointer after
-            bne check_0         ;   reading, because we want the final value to
-            inc $2e             ;   be the third zero location + 1
-check_0:    cmp #$00            ; If the current value is not a zero, then
-            bne reset_c0c       ;   reset the consecutive-zero count
-            inx                 ; A zero was found
-            cpx #$03            ; Is it the third?
-            bne adv_sov         ; If not, search the next character
-            lda $2d             ; Copy the newly-found start-of-variables
-            sta $2f             ;   into end-of-everthing-elses
-            sta $31             ;   ,,
-            lda $2e             ;   ,,
-            sta $30             ;   ,,
-            sta $32             ;   ,,
+Install:    jsr $c533           ; Re-chain BASIC program to set BASIC
+            lda $22             ;   pointers as a courtesy to the user
+            adc #$02            ;   ,,
+            sta $2D             ;   ,,
+            lda $23             ;   ,,
+            jsr $C655           ;   ,,
 installed:  jsr SetupVec        ; Set up vectors (IGONE and BRK)
             lda #<Intro         ; Announce that wAx is on
             ldy #>Intro         ; ,,
             jsr PRTSTR          ; ,,            
-            rts
+            jmp (READY)
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MAIN PROGRAM
@@ -141,6 +131,8 @@ main:       jsr CHRGET
             beq Disp_Hex        ; ,,
             cmp #BCHAR          ; Breakpoint Manager
             beq Disp_BP         ; ,,
+            cmp #RCHAR          ; Register Setter
+            beq Disp_Reg        ; ,,
             jmp GONE+3          ; +3 because the CHRGET is already done
                         
 ; Dispatch Disassembler            
@@ -157,10 +149,15 @@ Disp_Asm:   jsr Prepare
 Disp_Mem:   jsr Prepare
             jsr Memory
             jmp Return  
-            
+
+; Dispatch Hex Editor            
 Disp_Hex:   jsr Prepare
             jsr HexEditor
-            jmp Return            
+            jmp Return 
+            
+Disp_Reg:   jsr Prepare
+            jsr Register
+            jmp Return           
                               
 ; Dispatch Breakpoint Manager
 Disp_BP:    jsr Prepare
@@ -218,15 +215,25 @@ Disasm:     lda #$00            ; Reset the buffer index
 op_start:   ldy #$00            ; Get the opcode
             lda (PRGCTR),y      ;   ,,
             jsr Lookup          ; Look it up
+            bcc Unknown         ; Clear carry indicates an unknown opcode
             jsr Mnemonic
+            jsr Space
+            jsr Parameter
             lda #$00            ; Write $00 to the buffer for printing
             jsr CharOut         ;   purposes
             jsr NextValue       ; Advance to the next line of code
             rts
+
+Unknown:    pha                 ; For an unknown opcode, show the hex
+            jsr HexPrefix       ;   value at the location
+            pla                 ;   ,,
+            jsr Hex             ;   ,,
+            lda #"?"            ;   ,,
+            jsr CharOut         ;   ,,
+            rts
             
 ; Write Mnemonic and Parameters
-Mnemonic:   bcc unknown         ; Carry clear indicates an unknown opcode
-            ldx INSTDATA        ; Get the index to the first two characters
+Mnemonic:   ldx INSTDATA        ; Get the index to the first two characters
             lda Tuplet,x        ;   of the mnemonic and write to buffer
             jsr CharOut         ;   ,,
             lda Tuplet+1,x      ;   ,,
@@ -236,14 +243,6 @@ Mnemonic:   bcc unknown         ; Carry clear indicates an unknown opcode
             tax                 ; ,,
             lda Char3,x         ; Get the index to the third character of
             jsr CharOut         ;   the mnemonic and write to buffer
-            jsr Parameter       ; Write the parameter to the buffer
-            rts
-unknown:    pha                 ; For an unknown opcode, show the hex
-            jsr HexPrefix       ;   value at the location
-            pla                 ;   ,,
-            jsr Hex             ;   ,,
-            lda #"?"            ;   ,,
-            jsr CharOut         ;   ,,
             rts
 
 ; Parameter Display
@@ -252,9 +251,6 @@ Parameter:  lda INSTDATA+1
             and #$f0            ; Isolate addressing mode from data table
             cmp #IMPLIED        ; Handle each addressing mode with a subroutine
             beq DisImp
-            pha
-            jsr Space           ; There's a space after all other mnemonics
-            pla
             cmp #RELATIVE
             beq DisRel
             cmp #IMMEDIATE
@@ -605,7 +601,9 @@ Break:      lda #$00
             jsr Hex             ; Low to buffer with no space
             jsr PrintBuff       ; Print the buffer
             jsr ClearBP         ; Reset the Breakpoint data
-            jmp (READY)    
+            lda #$0d            ; Drop to the next line
+            jsr CHROUT          ; ,,
+            jmp (WARM_START)    
             
 ClearBP:    lda Breakpoint+2    ; Is there an existing breakpoint?
             beq cleared         ; If not, do nothing
@@ -653,6 +651,18 @@ EnableBP:   lda Breakpoint+2
             sta (CHARAC),y      ; ,,
 enable_r:   rts
              
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; REGISTER COMPONENT
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Register:   lda PRGCTR+1        ; Two bytes are already set in the program
+            sta YReg            ;   counter. These are Y and X
+            lda PRGCTR          ;   ,,
+            sta XReg            ;   ,,
+            jsr Buff2Byte       ; Get a third byte to set Accumulator
+            sta Acc             ;   ,,
+            jsr Buff2Byte       ; Get a fourth byte to set Processor Status
+            sta Proc            ;   ,,
+            rts
                                                 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -952,7 +962,7 @@ Token:      .byte $96,$44,$45,$46   ; DEF
 ; Miscellaneous data tables
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
-Registers:  .asc $0d,"BRK",$0d,"Y: X: A: P: S: PC::",$0d,$00
+Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
 
 ; Tuplet and Char3 are used to decode instruction names. Tuplet should be padded
 ; to 64 characters, and Char3 should be padded to 16 characters, to support
