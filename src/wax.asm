@@ -42,6 +42,7 @@ MCHAR       = "&"               ; Wedge character & for memory dump
 HCHAR       = ":"               ; Wedge character : for hex entry
 BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
+ECHAR       = $5f               ; Wedge character arrow for code execute
 
 ; System resources
 IGONE       = $0308             ; Vector to GONE
@@ -50,6 +51,7 @@ GONE        = $c7e4
 CHRGET      = $0073
 BUF         = $0200             ; Input buffer
 PRTSTR      = $cb1e             ; Print from data (Y,A)
+SYS         = $e133             ; BASIC SYS start
 CHROUT      = $ffd2
 WARM_START  = $0302             ; BASIC warm start vector
 READY       = $c002             ; BASIC warm start with READY.
@@ -64,6 +66,7 @@ Acc         = $030c             ; Saved accumulator
 XReg        = $030d             ; Saved X Register
 YReg        = $030e             ; Saved Y Register
 Proc        = $030f             ; Saved Processor Status
+SYS_DEST    = $14
 
 ; Constants
 ; Addressing mode encodings
@@ -133,6 +136,8 @@ main:       jsr CHRGET
             beq Disp_BP         ; ,,
             cmp #RCHAR          ; Register Setter
             beq Disp_Reg        ; ,,
+            cmp #ECHAR          ; Execute
+            beq Disp_Exec       ; ,,
             jmp GONE+3          ; +3 because the CHRGET is already done
                         
 ; Dispatch Disassembler            
@@ -157,7 +162,10 @@ Disp_Hex:   jsr Prepare
             
 Disp_Reg:   jsr Prepare
             jsr Register
-            jmp Return           
+            jmp Return     
+            
+Disp_Exec:  jsr Prepare
+            jmp Execute
                               
 ; Dispatch Breakpoint Manager
 Disp_BP:    jsr Prepare
@@ -168,12 +176,7 @@ Disp_BP:    jsr Prepare
 ; Return in one of two ways:
 ; * In direct mode, to a BASIC warm start without READY.
 ; * In a program, back to GONE
-Return:     ldx #$00            ; Restore workspace memory to zeropage
--loop:      lda ZPTemp,x        ;   ,,
-            sta WORK,x          ;   ,,
-            inx                 ;   ,,
-            cpx #$10            ;   ,,
-            bne loop            ;   ,,
+Return:     jsr Restore
             ldy CURLIN+1        ; See if we're running in direct mode by
             iny                 ;   checking the current line number
             bne in_program      ;   ,,
@@ -502,14 +505,13 @@ add_char:   jsr CharOut         ; ,,
             iny
             cpy #04
             bne loop            
-            tya
-            clc
-            adc PRGCTR
-            sta PRGCTR
-            lda #$00
-            adc PRGCTR+1
-            sta PRGCTR+1
-            lda #$92            ; Reverse off after the characters
+            tya                 ; Advance the program counter by four bytes
+            clc                 ;   for the next line of memory values
+            adc PRGCTR          ;   ,,
+            sta PRGCTR          ;   ,,
+            bcc rev_off         ;   ,,
+            inc PRGCTR+1        ;   ,,
+rev_off:    lda #$92            ; Reverse off after the characters
             jsr CHROUT          ; ,,
             lda #$0d
             jsr CharOut
@@ -655,6 +657,19 @@ Register:   lda PRGCTR+1        ; Two bytes are already set in the program
             rts
                                                 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; EXECUTE COMPONENT
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Execute:    jsr SetupVec        ; Make sure the BRK handler is enabled
+            bcc ex_r            ; BRK if the provided address was no good
+            lda PRGCTR          ; Set the temporary INT storage to the program
+            sta SYS_DEST        ;   counter. This is what SYS uses for its
+            lda PRGCTR+1        ;   execution address, and we're using that
+            sta SYS_DEST+1      ;   system.
+            jsr Restore         ; Restore the zeropage locations used
+            jsr SYS             ; Call BASIC SYS from where it pushes RTS values
+ex_r:       brk                 ; Trigger the BRK handler
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 ; Prepare
@@ -680,6 +695,15 @@ Prepare:    tay                 ; Y = the wedge character for function dispatch
             sta PRGCTR          ; Save to the PRGCTR low byte
             plp
             rts
+; Restore
+; Put back temporary zeropage workspace            
+Restore:    ldx #$00            ; Restore workspace memory to zeropage
+-loop:      lda ZPTemp,x        ;   ,,
+            sta WORK,x          ;   ,,
+            inx                 ;   ,,
+            cpx #$10            ;   ,,
+            bne loop            ;   ,,
+            rts            
 
 ; Look Up Opcode             
 Lookup:     sta INSTDATA        ; Store the requested opcode for lookup
