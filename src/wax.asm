@@ -399,34 +399,22 @@ AsmFail:    lda #"?"
 ; Get Operand
 ; Populate the operand for an instruction by looking forward in the buffer and
 ; counting upcoming hex digits.
-GetOperand: ldy #$00            ; Valid number count
-            sty OPERAND         ; Initialize operand
-            sty OPERAND+1       ; ,,
-            lda IDX_IN          ; Save the buffer pointer for backtracking
-            pha
--loop:      jsr CharGet         ; Count number of hex characters in the buffer
-            jsr Char2Nyb        ; ,,
-            cmp #TABLE_END      ; Once we reach a non-hex character, the
-            bcs counted         ;   count is over
-            iny
-            bne loop
-counted:    pla                 ; Backtrack to read and store the hex digits
-            sta IDX_IN          ; ,,
-            cpy #$02            ; Y can be 2 (one byte) or 4 (two bytes)
-            beq found1          ; ,,
-            cpy #$04            ; ,,
-            bne getop_r         ; ,,
-found2:     jsr Buff2Byte       ; Four characters were found; Put the byte value
-            sta OPERAND+1       ;   of two in the high byte of the operand
-found1:     jsr Buff2Byte       ; Get two characters for the operand low byte
-            sta OPERAND         ; ,,
-            sec                 ; Subtract the program counter address
-            sbc PRGCTR          ;   from the instruction target to
-            sec                 ;   get the relative branch's operand.
+GetOperand: jsr Buff2Byte       ; Get the first byte
+            bcc getop_r         ; If invalid, return
+            sta OPERAND+1       ; Default to being high byte
+            jsr Buff2Byte
+            bcc mov_low         ; Only 8-bit operand provided
+            sta OPERAND         ; Have 16-bits, so set low byte
+            sec                 ; Compute hypothetical relative branch
+            sbc PRGCTR          ; Subtract the program counter address from
+            sec                 ;   the instruction target
             sbc #$02            ; Offset by 2 to account for the instruction
             sta RB_OPERAND      ; Save the hypothetical relative branch operand
-getop_r:    rts    
-
+getop_r:    rts
+mov_low:    lda OPERAND+1       ; It's an 8-bit operand, so the first value
+            sta OPERAND         ;   provided is moved to the low byte
+            rts
+            
 ; Hypothesis Test
 ; Search through
 Hypotest:   lda PRGCTR+1        ; Save the program counter from the assembler
@@ -466,10 +454,10 @@ match:      lda PRGCTR          ; Set the CHRCOUNT location to the number of
             rts
 differ:     jsr AdvLang         ; Advance the counter
             jmp reset
-test_rel:   ldy #$02            ; Here, relative branching instructions are
--loop:      lda OutBuffer+5,y   ;   handled. Only the first three characters
+test_rel:   ldy #$03            ; Here, relative branching instructions are
+-loop:      lda OutBuffer+5,y   ;   handled. Only the first four characters
             cmp InBuffer+4,y    ;   are compared. If there's a match on the
-            bne differ          ;   instruction name, then move the computed
+            bne differ          ;   mnemonic + $, then move the computed
             dey                 ;   relative operand into the regular operand
             bpl loop            ;   low byte, and then treat this as a regular
             lda RB_OPERAND      ;   match after that
