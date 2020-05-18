@@ -548,17 +548,16 @@ BPManager:  php
             jsr ClearBP         ; Clear the old breakpoint, if it exists
             plp                 ; If no breakpoint is chosen (e.g., if ! was)
             bcc bpm_r           ;   by itself), just clear the breakpoint
-            ldy #$00            ; Get the previous code
-            lda (PRGCTR),y      ; Stash it in the Breakpoint data structure
-            beq reminder        ;   if it's not already a BRK
-            sta Breakpoint+2    ;   ,,
-            lda #$00            ; Write BRK to the breakpoint location
-            sta (PRGCTR),y      ;   ,,
             lda PRGCTR          ; Add a new breakpoint at the program counter
             sta Breakpoint      ; ,,
             lda PRGCTR+1        ; ,,
             sta Breakpoint+1    ; ,,
-reminder:   jsr Disasm          ; Disassemble the line at the breakpoint
+            ldy #$00            ; Get the previous code
+            lda (PRGCTR),y      ; Stash it in the Breakpoint data structure,
+            sta Breakpoint+2    ;   to be restored on the next break
+            lda #$00            ; Write BRK to the breakpoint location
+            sta (PRGCTR),y      ;   ,,
+            jsr Disasm          ; Disassemble the line at the breakpoint
             lda #$91            ;   for the user to review
             jsr CHROUT          ;   ,,
             jsr PrintBuff       ;   ,,
