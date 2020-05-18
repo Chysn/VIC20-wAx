@@ -481,7 +481,7 @@ Memory:     ldx #DISPLAYL       ; Show this many groups of four
             jsr Address
             ldy #$00
 -loop:      lda (PRGCTR),y
-            sta (CHARDISP),y
+            sta CHARDISP,y
             jsr Hex
             iny
             cpy #$04
@@ -491,7 +491,7 @@ Memory:     ldx #DISPLAYL       ; Show this many groups of four
 show_char:  lda #$12            ; Reverse on for the characters
             jsr CharOut
             ldy #$00
--loop:      lda (CHARDISP),y
+-loop:      lda CHARDISP,y
             and #$7f            ; Mask off the high bit for character display;
             cmp #QUOTE          ; Don't show double quotes
             beq alter_char      ; ,,
