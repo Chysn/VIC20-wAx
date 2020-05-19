@@ -388,12 +388,12 @@ asm_r:      rts
             
 ; Assembly Fail
 ; Invalid opcode or formatting
-AsmFail:    lda #<Error
+AsmFail:    jsr Restore
+            lda #<Error
             sta ERROR_PTR
             ldy #>Error  
             sty ERROR_PTR+1
-            jsr BASICERR
-            rts
+            jmp BASICERR
 
 ; Get Operand
 ; Populate the operand for an instruction by looking forward in the buffer and
