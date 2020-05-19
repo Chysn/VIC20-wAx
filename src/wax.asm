@@ -56,6 +56,7 @@ CHROUT      = $ffd2
 WARM_START  = $0302             ; BASIC warm start vector
 READY       = $c002             ; BASIC warm start with READY.
 NX_BASIC    = $c7ae             ; Get next BASIC command
+BASICERR    = $c447             ; Basic error message
 BUFPTR      = $7a               ; Pointer to buffer
 CHARAC      = $07               ; Temporary character
 CURLIN      = $39
@@ -66,6 +67,7 @@ Acc         = $030c             ; Saved accumulator
 XReg        = $030d             ; Saved X Register
 YReg        = $030e             ; Saved Y Register
 Proc        = $030f             ; Saved Processor Status
+ERROR_PTR   = $22               ; BASIC error text pointer
 SYS_DEST    = $14
 
 ; Constants
@@ -219,11 +221,11 @@ op_start:   ldy #$00            ; Get the opcode
             lda (PRGCTR),y      ;   ,,
             jsr Lookup          ; Look it up
             bcc Unknown         ; Clear carry indicates an unknown opcode
-            jsr Mnemonic
+            jsr DMnemonic       ; Display mnemonic
             jsr Space
-            jsr Parameter
+            jsr DOperand        ; Display operand
             lda #$00            ; Write $00 to the buffer for printing
-            jsr CharOut         ;   purposes
+disasm_r:   jsr CharOut         ;   purposes
             jsr NextValue       ; Advance to the next line of code
             rts
 
@@ -232,12 +234,10 @@ Unknown:    pha                 ; For an unknown opcode, show the hex
             pla                 ;   ,,
             jsr Hex             ;   ,,
             lda #"?"            ;   ,,
-            jsr CharOut         ;   ,,
-            jsr NextValue       ; Advance to the next line of code
-            rts
+            jmp disasm_r
             
 ; Write Mnemonic and Parameters
-Mnemonic:   ldx INSTDATA        ; Get the index to the first two characters
+DMnemonic:  ldx INSTDATA        ; Get the index to the first two characters
             lda Tuplet,x        ;   of the mnemonic and write to buffer
             jsr CharOut         ;   ,,
             lda Tuplet+1,x      ;   ,,
@@ -249,9 +249,9 @@ Mnemonic:   ldx INSTDATA        ; Get the index to the first two characters
             jsr CharOut         ;   the mnemonic and write to buffer
             rts
 
-; Parameter Display
+; Operand Display
 ; Dispatch display routines based on addressing mode
-Parameter:  lda INSTDATA+1
+DOperand:   lda INSTDATA+1
             and #$f0            ; Isolate addressing mode from data table
             cmp #IMPLIED        ; Handle each addressing mode with a subroutine
             beq DisImp
@@ -265,7 +265,7 @@ Parameter:  lda INSTDATA+1
             bcs DisAbs
             ; Fall through to DisInd, because it's the only one left
 
-; Disassemble Indirect 
+; Disassemble Indirect Operand
 DisInd:     pha
             lda #"("
             jsr CharOut
@@ -294,9 +294,9 @@ ind_y:      lda #")"
             jsr CharOut
             lda #"Y"
             jsr CharOut
-DisImp:     rts                 ; Any convenient rts will o for DisImp     
+DisImp:     rts                 ; Any convenient rts will do for Implied     
 
-; Disassemble Immediate            
+; Disassemble Immediate Operand         
 DisImm:     lda #"#"
             jsr CharOut
             jsr Param_8
@@ -334,7 +334,7 @@ sign:       sta WORK+1          ; Set the high byte to either $00 or $ff
             jsr Hex             ; ,,
             rts
                             
-; Disassemble Absolute            
+; Disassemble Absolute Operand           
 DisAbs:     pha                 ; Save addressing mode for use later
             jsr Param_16
             pla
@@ -352,9 +352,7 @@ abs_ind:    lda #","            ; This is an indexed addressing mode, so
             txa                 ;   ,,
             jsr CharOut         ;   ,,
             rts                      
-
-
-            
+                        
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSEMBLER COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -390,13 +388,11 @@ asm_r:      rts
             
 ; Assembly Fail
 ; Invalid opcode or formatting
-AsmFail:    lda #"?"
-            jsr CHROUT
-            lda #<InBuffer
-            ldy #>InBuffer   
-            jsr PRTSTR
-            lda #$0d
-            jsr CHROUT
+AsmFail:    lda #<Error
+            sta ERROR_PTR
+            ldy #>Error  
+            sty ERROR_PTR+1
+            jsr BASICERR
             rts
 
 ; Get Operand
@@ -976,6 +972,7 @@ Token:      .byte $96,$44,$45,$46   ; DEF
 ; Miscellaneous data tables
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
+Error:      .asc "ASSEMBL",$d9
 Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
 
 ; Tuplet and Char3 are used to decode instruction names. Tuplet should be padded
