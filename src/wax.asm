@@ -662,7 +662,7 @@ Execute:    jsr SetupVec        ; Make sure the BRK handler is enabled
             lda PRGCTR+1        ;   execution address, and we're using that
             sta SYS_DEST+1      ;   system.
             jsr Restore         ; Restore the zeropage locations used
-            jmp SYS             ; Call BASIC SYS from where it pushes RTS values
+            jsr SYS             ; Call BASIC SYS from where it pushes RTS values
 ex_r:       brk                 ; Trigger the BRK handler
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
