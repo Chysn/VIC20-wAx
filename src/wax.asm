@@ -186,7 +186,7 @@ Disp_BP:    jsr Prepare
 ; Return from Wedge
 ; Return in one of two ways:
 ; * In direct mode, to a BASIC warm start without READY.
-; * In a program, back to GONE
+; * In a program, find the next BASIC command
 Return:     jsr Restore
             ldy CURLIN+1        ; See if we're running in direct mode by
             iny                 ;   checking the current line number
@@ -411,17 +411,15 @@ GetOperand: jsr Buff2Byte       ; Get the first byte
             bcc getop_r         ; If invalid, return
             sta OPERAND+1       ; Default to being high byte
             jsr Buff2Byte
-            bcc mov_low         ; Only 8-bit operand provided
-            sta OPERAND         ; Have 16-bits, so set low byte
+            bcs high_byte       ; If an 8-bit operand is provided, move the high
+            lda OPERAND+1       ;   byte to the low byte. Otherwise, just
+high_byte:  sta OPERAND         ;   set the low byte with the input
             sec                 ; Compute hypothetical relative branch
             sbc PRGCTR          ; Subtract the program counter address from
             sec                 ;   the instruction target
             sbc #$02            ; Offset by 2 to account for the instruction
             sta RB_OPERAND      ; Save the hypothetical relative branch operand
 getop_r:    rts
-mov_low:    lda OPERAND+1       ; It's an 8-bit operand, so the first value
-            sta OPERAND         ;   provided is moved to the low byte
-            rts
             
 ; Hypothesis Test
 ; Search through the language table for each opcode and disassemble it using
