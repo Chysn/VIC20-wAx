@@ -415,7 +415,10 @@ mov_low:    lda OPERAND+1       ; It's an 8-bit operand, so the first value
             rts
             
 ; Hypothesis Test
-; Search through
+; Search through the language table for each opcode and disassemble it using
+; the opcode provided for the candidate instruction. If there's a match, then
+; that's the instruction to assemble at the program counter. If Hypotest tries
+; all the opcodes without a match, then the candidate instruction is invalid.
 Hypotest:   lda PRGCTR+1        ; Save the program counter from the assembler
             pha                 ;   so it can be used by the disassembler
             lda PRGCTR
