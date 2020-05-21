@@ -63,10 +63,10 @@ CURLIN      = $39
 KEYBUFF     = $0277             ; Keyboard buffer and size, for automatically
 KBSIZE      = $c6               ;   advancing the assembly address
 KEYCVTRS    = $028d             ; Keyboard codes
-Acc         = $030c             ; Saved accumulator
-XReg        = $030d             ; Saved X Register
-YReg        = $030e             ; Saved Y Register
-Proc        = $030f             ; Saved Processor Status
+ACC         = $030c             ; Saved Accumulator
+XREG        = $030d             ; Saved X Register
+YREG        = $030e             ; Saved Y Register
+PROC        = $030f             ; Saved Processor Status
 ERROR_PTR   = $22               ; BASIC error text pointer
 SYS_DEST    = $14
 
@@ -102,10 +102,10 @@ RB_OPERAND  = $af               ; Hypothetical relative branch operand
 CHRCOUNT    = $b0               ; Detokenization count
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
-OutBuffer   = $0218             ; Output buffer (24 bytes)
-InBuffer    = $0230             ; Input buffer (22 bytes)
-ZPTemp      = $0246             ; Zeropage Preservation (16 bytes)
-Breakpoint  = $0256             ; Breakpoint data (3 bytes)
+OUTBUFFER   = $0218             ; Output buffer (24 bytes)
+INBUFFER    = $0230             ; Input buffer (22 bytes)
+ZP_TMP      = $0246             ; Zeropage Preservation (16 bytes)
+BREAKPOINT  = $0256             ; Breakpoint data (3 bytes)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; INSTALLER
@@ -435,8 +435,8 @@ reset:      lda #OPCODE         ; Write location to PC for hypotesting
             cmp #RELATIVE       ;   ,,
             beq test_rel        ;   ,,
             ldy #$00
--loop:      lda InBuffer+4,y    ; Compare the assembly with the disassembly
-            cmp OutBuffer+5,y   ;   in the buffers
+-loop:      lda INBUFFER+4,y    ; Compare the assembly with the disassembly
+            cmp OUTBUFFER+5,y   ;   in the buffers
             bne differ          ; If any bytes don't match, then quit
             iny
             cmp #$00
@@ -454,8 +454,8 @@ match:      lda PRGCTR          ; Set the CHRCOUNT location to the number of
 differ:     jsr AdvLang         ; Advance the counter
             jmp reset
 test_rel:   ldy #$03            ; Here, relative branching instructions are
--loop:      lda OutBuffer+5,y   ;   handled. Only the first four characters
-            cmp InBuffer+4,y    ;   are compared. If there's a match on the
+-loop:      lda OUTBUFFER+5,y   ;   handled. Only the first four characters
+            cmp INBUFFER+4,y    ;   are compared. If there's a match on the
             bne differ          ;   mnemonic + $, then move the computed
             dey                 ;   relative operand into the regular operand
             bpl loop            ;   low byte, and then treat this as a regular
@@ -547,12 +547,12 @@ BPManager:  php
             plp                 ; If no breakpoint is chosen (e.g., if ! was)
             bcc bpm_r           ;   by itself), just clear the breakpoint
             lda PRGCTR          ; Add a new breakpoint at the program counter
-            sta Breakpoint      ; ,,
+            sta BREAKPOINT      ; ,,
             lda PRGCTR+1        ; ,,
-            sta Breakpoint+1    ; ,,
+            sta BREAKPOINT+1    ; ,,
             ldy #$00            ; Get the previous code
             lda (PRGCTR),y      ; Stash it in the Breakpoint data structure,
-            sta Breakpoint+2    ;   to be restored on the next break
+            sta BREAKPOINT+2    ;   to be restored on the next break
             lda #$00            ; Write BRK to the breakpoint location
             sta (PRGCTR),y      ;   ,,
             jsr Disasm          ; Disassemble the line at the breakpoint
@@ -565,7 +565,7 @@ BPManager:  php
 bpm_r:      jsr SetupVec        ; Make sure that the BRK handler is on
             rts
 
-Break:      cld                 ; Escape hatch for accidenally-set Decimal flag
+Break:      cld                 ; Escape hatch for accidentally-set Decimal flag
             lda #$00
             sta IDX_OUT
             lda #<Registers     ; Print register indicator bar
@@ -593,20 +593,20 @@ Break:      cld                 ; Escape hatch for accidenally-set Decimal flag
             jsr CHROUT          ; ,,
             jmp (WARM_START)    
             
-ClearBP:    lda Breakpoint+2    ; Is there an existing breakpoint?
+ClearBP:    lda BREAKPOINT+2    ; Is there an existing breakpoint?
             beq cleared         ; If not, do nothing
-            lda Breakpoint      ; Get the breakpoint
+            lda BREAKPOINT      ; Get the breakpoint
             sta CHARAC          ; Stash it in a zeropage location
-            lda Breakpoint+1    ; ,,
+            lda BREAKPOINT+1    ; ,,
             sta CHARAC+1        ; ,,
             ldy #$00
             lda (CHARAC),y      ; What's currently at the Breakpoint?
             bne bp_reset        ; If it's not a BRK, then preserve what's there
-            lda Breakpoint+2    ; Otherwise, get the breakpoint byte and
+            lda BREAKPOINT+2    ; Otherwise, get the breakpoint byte and
             sta (CHARAC),y      ;   put it back 
-bp_reset:   sty Breakpoint      ; And then clear out the whole
-            sty Breakpoint+1    ;   breakpoint data structure
-            sty Breakpoint+2    ;   ,,
+bp_reset:   sty BREAKPOINT      ; And then clear out the whole
+            sty BREAKPOINT+1    ;   breakpoint data structure
+            sty BREAKPOINT+2    ;   ,,
 cleared:    rts
 
 ; Breakpoint Indicator
@@ -614,25 +614,25 @@ cleared:    rts
 BreakInd:   ldy #$00            ; Is this a BRK instruction?
             lda (PRGCTR),y      ; ,,
             bne ind_r           ; If not, do nothing
-            lda Breakpoint      ; If it is a BRK, is it our breakpoint?
+            lda BREAKPOINT      ; If it is a BRK, is it our breakpoint?
             cmp PRGCTR          ; ,,
             bne ind_r           ; ,,
-            lda Breakpoint+1    ; ,,
+            lda BREAKPOINT+1    ; ,,
             cmp PRGCTR+1        ; ,,
             bne ind_r           ; ,,
             lda #$12            ; Reverse on for the breakpoint
             jsr CharOut
-            lda Breakpoint+2    ; Temporarily restore the breakpoint byte
+            lda BREAKPOINT+2    ; Temporarily restore the breakpoint byte
             sta (PRGCTR),y      ;   for disassembly purposes
 ind_r:      rts        
                  
 ; Enable Breakpoint
 ; Used after disassembly, in case the BreakInd turned the breakpoint off
-EnableBP:   lda Breakpoint+2
+EnableBP:   lda BREAKPOINT+2
             beq enable_r
-            lda Breakpoint
+            lda BREAKPOINT
             sta CHARAC
-            lda Breakpoint+1
+            lda BREAKPOINT+1
             sta CHARAC+1
             ldy #$00            ; Write BRK to the breakpoint
             lda #$00            ; ,,
@@ -643,13 +643,13 @@ enable_r:   rts
 ; REGISTER COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Register:   lda PRGCTR+1        ; Two bytes are already set in the program
-            sta YReg            ;   counter. These are Y and X
+            sta YREG            ;   counter. These are Y and X
             lda PRGCTR          ;   ,,
-            sta XReg            ;   ,,
+            sta XREG            ;   ,,
             jsr Buff2Byte       ; Get a third byte to set Accumulator
-            sta Acc             ;   ,,
+            sta ACC             ;   ,,
             jsr Buff2Byte       ; Get a fourth byte to set Processor Status
-            sta Proc            ;   ,,
+            sta PROC            ;   ,,
             rts
                                                 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -662,7 +662,7 @@ Execute:    jsr SetupVec        ; Make sure the BRK handler is enabled
             lda PRGCTR+1        ;   execution address, and we're using that
             sta SYS_DEST+1      ;   system.
             jsr Restore         ; Restore the zeropage locations used
-            jsr SYS             ; Call BASIC SYS from where it pushes RTS values
+            jmp SYS             ; Call BASIC SYS from where it pushes RTS values
 ex_r:       brk                 ; Trigger the BRK handler
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -675,14 +675,14 @@ ex_r:       brk                 ; Trigger the BRK handler
 Prepare:    tay                 ; Y = the wedge character for function dispatch
             ldx #$00            ; wAx is to be zeropage-neutral, so preserve
 -loop:      lda WORK,x          ;   its workspace in temp storage. When this
-            sta ZPTemp,x        ;   routine is done, the data will be restored
+            sta ZP_TMP,x        ;   routine is done, the data will be restored
             inx                 ;   in Return
             cpx #$10            ;   ,,
             bne loop            ;   ,,
             sty FUNCTION        ; Store the mode (to normalize spaces in buffer)
             lda #$00            ; Initialize the input index for write
             sta IDX_IN          ; ,,
-            jsr Transcribe      ; Transcribe from CHRGET to InBuffer
+            jsr Transcribe      ; Transcribe from CHRGET to INBUFFER
             sta IDX_IN          ; Re-initialize for buffer read
             jsr Buff2Byte       ; Convert 2 characters to a byte   
             php                 ; Use this byte to determine success         
@@ -694,7 +694,7 @@ Prepare:    tay                 ; Y = the wedge character for function dispatch
 ; Restore
 ; Put back temporary zeropage workspace            
 Restore:    ldx #$00            ; Restore workspace memory to zeropage
--loop:      lda ZPTemp,x        ;   ,,
+-loop:      lda ZP_TMP,x        ;   ,,
             sta WORK,x          ;   ,,
             inx                 ;   ,,
             cpx #$10            ;   ,,
@@ -743,9 +743,9 @@ AdvLang:    lda #$03            ; Each language entry is three bytes
             rts
             
 ; Get Character
-; Akin to CHRGET, but scans the InBuffer, which has already been detokenized            
+; Akin to CHRGET, but scans the INBUFFER, which has already been detokenized            
 CharGet:    ldx IDX_IN
-            lda InBuffer,x
+            lda INBUFFER,x
             inc IDX_IN
             rts             
             
@@ -852,9 +852,9 @@ write_ok:   tya                 ; Save registers
             pha                 ; ,,
             txa                 ; ,,
             pha                 ; ,,
-            ldx IDX_OUT         ; Write to the next OutBuffer location
+            ldx IDX_OUT         ; Write to the next OUTBUFFER location
             lda CHARAC          ; ,,
-            sta OutBuffer,x     ; ,,
+            sta OUTBUFFER,x     ; ,,
             inc IDX_OUT         ; ,,
             pla                 ; Restore registers
             tax                 ; ,,
@@ -879,7 +879,7 @@ xscribe_r:  jsr AddInput        ; Add the final zero
 ; Add Input
 ; Add a character to the input buffer and advance the counter
 AddInput:   ldx IDX_IN
-            sta InBuffer,x
+            sta INBUFFER,x
             inc IDX_IN
             rts
            
@@ -907,8 +907,8 @@ detoken_r: jmp Transcribe
 ; Add a $00 delimiter to the end of the output buffer, and print it out           
 PrintBuff:  lda #$00            ; End the buffer with 0
             jsr CharOut         ; ,,
-            lda #<OutBuffer     ; Print the line
-            ldy #>OutBuffer     ; ,,
+            lda #<OUTBUFFER     ; Print the line
+            ldy #>OUTBUFFER     ; ,,
             jsr PRTSTR          ; ,,
             rts 
             
@@ -931,7 +931,7 @@ Prompt:     ldy CURLIN+1        ; If an editor command is performed in
             jsr Hex             ;   ,,
             lda PRGCTR          ;   ,,
             jsr Hex             ;   ,,
--loop:      lda OutBuffer,y     ; Copy the output buffer into KEYBUFF, which
+-loop:      lda OUTBUFFER,y     ; Copy the output buffer into KEYBUFF, which
             sta KEYBUFF,y       ;   will simulate user entry
             iny                 ;   ,,
             cpy #$05            ;   ,,
@@ -963,7 +963,7 @@ ShiftDown:  lda KEYCVTRS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; The Token table is used to detokenize certain instructions that might
+; The Token table is used to detokenize certain BASIC keywords that might
 ; appear in assembly or addresses
 Token:      .byte $96,$44,$45,$46   ; DEF
             .byte $af,$41,$4e,$44   ; AND
