@@ -142,34 +142,43 @@ main:       jsr CHRGET
             beq Disp_Exec       ; ,,
             jmp GONE+3          ; +3 because the CHRGET is already done
                         
-; Dispatch Disassembler            
+; Dispatch Disassembler  
+; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler          
 Disp_Dasm:  jsr Prepare
             jsr DisList
             jmp Return    
 
 ; Dispatch Assembler
+; https://github.com/Chysn/wAx/wiki/2-6502-Assembler
 Disp_Asm:   jsr Prepare
             jsr Assemble
             jmp Return
             
-; Dispatch Memory Dump            
+; Dispatch Memory Dump 
+; https://github.com/Chysn/wAx/wiki/3-Memory-Dump           
 Disp_Mem:   jsr Prepare
             jsr Memory
             jmp Return  
 
-; Dispatch Hex Editor            
+; Dispatch Hex Editor 
+; https://github.com/Chysn/wAx/wiki/4-Hex-Editor           
 Disp_Hex:   jsr Prepare
             jsr HexEditor
             jmp Return 
-            
+  
+; Dispatch Register Editor           
+; https://github.com/Chysn/wAx/wiki/5-Register-Editor
 Disp_Reg:   jsr Prepare
             jsr Register
             jmp Return     
-            
+
+; Dispatch Subroutine Execution   
+; https://github.com/Chysn/wAx/wiki/6-Subroutine-Execution    
 Disp_Exec:  jsr Prepare
             jmp Execute
                               
 ; Dispatch Breakpoint Manager
+; https://github.com/Chysn/wAx/wiki/7-Breakpoint-Manager
 Disp_BP:    jsr Prepare
             jsr BPManager
             ; Falls through to Return
