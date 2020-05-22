@@ -608,10 +608,13 @@ BPManager:  php
 bpm_r:      jsr SetupVec        ; Make sure that the BRK handler is on
             rts
 
+; BRK Trapper
+; Replaces the default BRK handler. Shows the register display, goes to warm
+; start.
 Break:      cld                 ; Escape hatch for accidentally-set Decimal flag
             lda #$00
             sta IDX_OUT
-            lda #<Registers     ; Print register indicator bar
+            lda #<Registers     ; Print register display bar
             ldy #>Registers     ; ,,
             jsr PRTSTR          ; ,,
             ldy #$04            ; Pull four values off the stack and add
@@ -631,14 +634,13 @@ Break:      cld                 ; Escape hatch for accidentally-set Decimal flag
             tya                 ; ,, 
             jsr Hex             ; Low to buffer with no space
             jsr PrintBuff       ; Print the buffer
-            jsr ClearBP         ; Reset the Breakpoint data
             lda #$0d            ; Drop to the next line
             jsr CHROUT          ; ,,
             jmp (WARM_START)    
             
-ClearBP:    lda BREAKPOINT+2    ; Is there an existing breakpoint?
-            beq cleared         ; If not, do nothing
-            lda BREAKPOINT      ; Get the breakpoint
+; Clear Breakpoint   
+; Restore breakpoint byte and zero out breakpoint data         
+ClearBP:    lda BREAKPOINT      ; Get the breakpoint
             sta CHARAC          ; Stash it in a zeropage location
             lda BREAKPOINT+1    ; ,,
             sta CHARAC+1        ; ,,
@@ -1015,7 +1017,7 @@ Token:      .byte $96,$44,$45,$46   ; DEF
 ; Miscellaneous data tables
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d
-Message:    .asc "WAX",$a0,"ON",$00
+Message:    .asc "WAX",$a0,"ON",$00 ; $a0 provides a stop for error msg
 Registers:  .asc $0d,"*Y: X: A: P: S: PC::",$0d,";",$00
 
 ; Tuplet and Char3 are used to decode instruction names. Tuplet should be padded
