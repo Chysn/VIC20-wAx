@@ -40,6 +40,7 @@ DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
 HCHAR       = ":"               ; Wedge character : for hex entry
+TCHAR       = $b2               ; Wedge character = for tester
 BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
 ECHAR       = $5f               ; Wedge character arrow for code execute
@@ -134,6 +135,8 @@ main:       jsr CHRGET
             beq Disp_Mem        ; ,,
             cmp #HCHAR          ; Hex Editor
             beq Disp_Hex        ; ,,
+            cmp #TCHAR          ; Tester
+            beq Disp_Test       ; ,,
             cmp #BCHAR          ; Breakpoint Manager
             beq Disp_BP         ; ,,
             cmp #RCHAR          ; Register Setter
@@ -176,13 +179,21 @@ Disp_Reg:   jsr Prepare
 ; https://github.com/Chysn/wAx/wiki/6-Subroutine-Execution    
 Disp_Exec:  jsr Prepare
             jmp Execute
-                              
+            
+; Dispatch Tester           
+; https://github.com/Chysn/wAx/wiki/8-Test-Bytes
+Disp_Test:  jsr Prepare
+            jsr Tester
+            bcs Return
+            jmp Error
+                                          
 ; Dispatch Breakpoint Manager
 ; https://github.com/Chysn/wAx/wiki/7-Breakpoint-Manager
 Disp_BP:    jsr Prepare
             jsr BPManager
             ; Falls through to Return
-                        
+            
+            
 ; Return from Wedge
 ; Return in one of two ways:
 ; * In direct mode, to a BASIC warm start without READY.
@@ -192,14 +203,18 @@ Return:     jsr Restore
             iny                 ;   checking the current line number
             bne in_program      ;   ,,
             jmp (WARM_START)    ; If in direct mode, warm start without READY.            
-in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command          
+in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command   
+
+       
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DISASSEMBLER COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Disassembly Listing
 ; Disassemble multiple instructions, starting from the program counter
-DisList:    ldx #DISPLAYL       ; Show this many lines of code
+DisList:    lda #$91            ; Cursor up
+            jsr CHROUT          ; ,,
+            ldx #DISPLAYL       ; Show this many lines of code
 -loop:      txa
             pha
             jsr Disasm          ; Disassmble the code at the program counter
@@ -376,7 +391,7 @@ test:       lda IDX_IN          ; If not enough characters have been entered to
             cmp #$06            ;   be mistaken for an intentional instrution,
             bcc asm_r           ;   just go to BASIC
 -loop:      jsr Hypotest        ; Line is done; hypothesis test for a match
-            bcc AsmFail         ; Clear carry means the test failed
+            bcc Error           ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
             lda OPCODE          ;   to the program counter. The number of bytes
             sta (PRGCTR),y      ;   to transcribe is stored in the CHRCOUNT memory
@@ -396,11 +411,11 @@ nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
 asm_r:      rts
             
 ; Assembly Fail
-; Invalid opcode or formatting
-AsmFail:    jsr Restore
-            lda #<Error
+; Invalid opcode or formatting, or test failure
+Error:      jsr Restore
+            lda #<Message
             sta ERROR_PTR
-            ldy #>Error  
+            ldy #>Message
             sty ERROR_PTR+1
             jmp BASICERR
 
@@ -480,7 +495,9 @@ bad_code:   pla                 ; Pull the program counter off the stack, but
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY DUMP COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Memory:     ldx #DISPLAYL       ; Show this many groups of four
+Memory:     lda #$91            ; Cursor up
+            jsr CHROUT          ; ,,
+            ldx #DISPLAYL       ; Show this many groups of four
 -next:      txa
             pha
             lda #$00
@@ -548,6 +565,22 @@ hex_exit:   cpy #$00
             jsr Prompt          ; Prompt for the next address
             jsr ClearBP         ; Clear breakpoint if anything was changed
 hex_r:      rts
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; TEST COMPONENT
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Tester:     ldy #$00
+-loop:      jsr Buff2Byte
+            bcc test_r          ; Bail out on the first non-hex byte
+            cmp (PRGCTR),y
+            bne test_err      
+            iny
+            cpy #$04
+            bne loop
+test_r:     sec
+            rts
+test_err:   clc
+            rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BREAKPOINT COMPONENTS
@@ -981,17 +1014,15 @@ Token:      .byte $96,$44,$45,$46   ; DEF
 
 ; Miscellaneous data tables
 HexDigit:   .asc "0123456789ABCDEF"
-Intro:      .asc $0d,"WAX ON",$00
-Error:      .asc "ASSEMBL",$d9
-Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
+Intro:      .asc $0d
+Message:    .asc "WAX",$a0,"ON",$00
+Registers:  .asc $0d,"*Y: X: A: P: S: PC::",$0d,";",$00
 
 ; Tuplet and Char3 are used to decode instruction names. Tuplet should be padded
 ; to 64 characters, and Char3 should be padded to 16 characters, to support
 ; language table extensions.           
 Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
-Padding1:   .asc "---------------"
 Char3:      .asc "ACDEIKLPQRSTVXY"
-Padding2:   .asc "-"
 
 ; 6502 Instructions
 ; Each instruction is encoded as three bytes.
