@@ -180,8 +180,8 @@ Disp_Reg:   jsr Prepare
 Disp_Exec:  jsr Prepare
             jmp Execute
             
-; Dispatch Tester           
-; https://github.com/Chysn/wAx/wiki/8-Test-Bytes
+; Dispatch Assertion Tester           
+; https://github.com/Chysn/wAx/wiki/8-Assertion-Tester
 Disp_Test:  jsr Prepare
             jsr Tester
             bcs Return
