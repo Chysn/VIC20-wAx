@@ -39,7 +39,7 @@ DISPLAYL    = $10               ; Display this many lines of code or memory
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
-HCHAR       = "%"               ; Wedge character : for hex entry
+HCHAR       = ":"               ; Wedge character : for hex entry
 TCHAR       = $b2               ; Wedge character = for tester
 BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
@@ -195,29 +195,27 @@ Disp_Test:  jsr Prepare
 Disp_BP:    jsr Prepare
             jsr BPManager
             ; Falls through to Return
-            
-            
+    
 ; Return from Wedge
 ; Return in one of two ways:
 ; * In direct mode, to a BASIC warm start without READY.
 ; * In a program, find the next BASIC command
 Return:     jsr Restore
-            ldy CURLIN+1        ; See if we're running in direct mode by
-            iny                 ;   checking the current line number
+            jsr DirectMode      ; If in Direct Mode, warm start without READY.
             bne in_program      ;   ,,
-            jmp (WARM_START)    ; If in direct mode, warm start without READY.            
+            jmp (WARM_START)    ;   ,,           
 in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command   
-
-       
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DISASSEMBLER COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Disassembly Listing
 ; Disassemble multiple instructions, starting from the program counter
-DisList:    lda #$91            ; Cursor up
-            jsr CHROUT          ; ,,
-            ldx #DISPLAYL       ; Show this many lines of code
+DisList:    jsr DirectMode      ; If the command is run in Direct Mode,
+            bne d_listing       ;   cursor up to overwrite the original input
+            lda #$91            ;   ,,
+            jsr CHROUT          ;   ,,
+d_listing:  ldx #DISPLAYL       ; Show this many lines of code
 -loop:      txa
             pha
             jsr Disasm          ; Disassmble the code at the program counter
@@ -518,9 +516,11 @@ bad_code:   pla                 ; Pull the program counter off the stack, but
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY DUMP COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Memory:     lda #$91            ; Cursor up
-            jsr CHROUT          ; ,,
-            ldx #DISPLAYL       ; Show this many groups of four
+Memory:     jsr DirectMode      ; If the command is run in Direct Mode,
+            bne m_listing       ;   cursor up to hide the original input
+            lda #$91            ;   ,, 
+            jsr CHROUT          ;   ,,
+m_listing:  ldx #DISPLAYL       ; Show this many groups of four
 -next:      txa
             pha
             lda #$00
@@ -788,10 +788,10 @@ not_found:  clc                 ; Reached the end of the language table without
             rts                 ;   finding a matching instruction
                                     
 ; Reset Language Table            
-ResetLang:  lda #<Instr6502-2
-            sta LANG_PTR
-            lda #>Instr6502-2
-            sta LANG_PTR+1
+ResetLang:  lda #<InstrSet-2    ; Start two bytes before the Instruction Set
+            sta LANG_PTR        ;   table, because advancing the table will be
+            lda #>InstrSet-2    ;   an early thing we do
+            sta LANG_PTR+1      ;   ,,
             rts
             
 ; Next Instruction in Language Table
@@ -982,9 +982,8 @@ PrintBuff:  lda #$00            ; End the buffer with 0
 ; Prompt for Next Line
 ; X should be set to the number of bytes the program counter should be
 ; advanced
-Prompt:     ldy CURLIN+1        ; If an editor command is performed in
-            iny                 ;   direct mode, then advance the program
-            bne prompt_r        ;   counter by the size of the instruction
+Prompt:     jsr DirectMode      ; If a command is in Direct Mode, increase
+            bne prompt_r        ;   the PC by the size of the instruction
             tya                 ;   and write it to the keyboard buffer (by
             sta IDX_OUT         ;   way of populating the output buffer)
             lda FUNCTION        ;   ,,
@@ -1025,7 +1024,13 @@ SetupVec:   lda #<main          ; Intercept GONE to process wedge
 ; If it's held down, Zero flag will be clear
 ShiftDown:  lda KEYCVTRS   
             and #$01
-            rts         
+            rts    
+            
+; In Direct Mode
+; If the wAx command is running in Direct Mode, the Zero flag will be set
+DirectMode: ldy CURLIN+1
+            iny
+            rts     
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
@@ -1042,17 +1047,29 @@ Intro:      .asc $0d,"WAX ON",$00
 Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
 AsmErr:     .asc "ASSEMBL",$d9
 
-; 6502 Instructions
-; Each instruction is encoded as three bytes.
-; (1) The first byte is the 6502 opcode of the instruction
-; (2) The second byte is the position of the first two characters of the 
-;     instruction in the Tuple table
-; (3) The third byte's low nybble is the position of the third character of
-;     the instruction in the Char3 table. The high nybble is the addressing
-;     mode of the insruction, as shown in the Constants labels at the top
-;     of the source code
+; Padding to 2048 bytes, done for two reasons
+; (1) ROM images for 2716s
+; (2) So that extended instructions sets can always be loaded into the
+;     same place (base + $7ff)
+Padding:    .asc "12345678901234567890123456789012345678901234567890"
+
+; Instruction Set
+; This table contains two types of one-word records--mnemonic records and
+; instruction records. Every word in the table is in big-endian format, so
+; the high byte is first.
 ;
-Instr6502:  .byte $09,$07       ; ADC
+; Mnemonic records are formatted like this...
+;     fffffsss ssttttt1
+; where f is first letter, s is second letter, and t is third letter. Bit
+; 0 of the word is set to 1 to identify this word as a mnemonic record.
+;
+; Each mnemonic record has one or more instruction records after it.
+; Instruction records are formatted like this...
+;     oooooooo aaaaaaa0
+; where o is the opcode and a is the addressing mode (see Constants section
+; at the top of the code). Bit 0 of the word is set to 0 to identify this
+; word as an instruction record.
+InstrSet:   .byte $09,$07       ; ADC
             .byte $69,$a0       ; * ADC #immediate
             .byte $65,$70       ; * ADC zeropage
             .byte $75,$80       ; * ADC zeropage,X
