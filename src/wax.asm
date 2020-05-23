@@ -50,6 +50,7 @@ IGONE       = $0308             ; Vector to GONE
 CBINV       = $0316             ; BRK vector
 GONE        = $c7e4
 CHRGET      = $0073
+CHRGOT      = $0079
 BUF         = $0200             ; Input buffer
 PRTSTR      = $cb1e             ; Print from data (Y,A)
 SYS         = $e133             ; BASIC SYS start
@@ -144,7 +145,7 @@ main:       jsr CHRGET
             beq Disp_Reg        ; ,,
             cmp #ECHAR          ; Execute
             beq Disp_Exec       ; ,,
-            jsr $0079
+            jsr CHRGOT          ; Restore flags for the found character
             jmp GONE+3          ; +3 because the CHRGET is already done
                         
 ; Dispatch Disassembler  
@@ -454,38 +455,32 @@ reset:      lda #OPCODE         ; Write location to PC for hypotesting
             sta PRGCTR          ; ,,
             ldy #$00            ; Set the program counter high byte
             sty PRGCTR+1        ; ,,
+            sty IDX_OUT         ; Reset the output buffer for disassembly
             jsr NextInst        ; Get next instruction in 6502 table
-            ldy #$00            ; If we reached the end of the table, leave
-            lda (LANG_PTR),y    ;   the hypothesis testing routine; the
-            cmp #TABLE_END      ;   assembly candidate is no good
-            beq bad_code        ;   ,,
+            ldy #$00            ; Get the instruction's opcode
+            lda (LANG_PTR),y    ;   ,,
+            cmp #TABLE_END      ; If we've reached the end of the table,
+            beq bad_code        ;   the assembly candidate is no good
+            sta OPCODE          ; Store opcode to hypotesting location
             iny                 ; 
-            lda (LANG_PTR),y
-            
-            lda (LANG_PTR),y    ; A is this language entry's opcode
-            cmp #TABLE_END      ; If the table has ended, leave the
-            beq bad_code        ;   hypotesting routine
-            tax
-            iny                 ; If the record is a mnemonic record,
-            lda (LANG_PTR),y    ;   skip the record and keep looking for
-            and #$f0            ;   instruction records
-            beq skip_rec        ;   ,,
-            sta INSTDATA+1      ; Store addressing mode in instruction data
-            stx OPCODE          ; Store opcode in the hypotesting location
+            lda (LANG_PTR),y    ; This is the addressing mode
+            sta INSTDATA+1      ; Save addressing mode for disassembly
             jsr DMnemonic       ; Add mnemonic to buffer
-            jsr DOperand        ; Add formatted operand to buffer
-            lda INSTDATA+1      ; This is a relative branch instruction, and
-            and #$f0            ;   these are handled differently. See below
-            cmp #RELATIVE       ;   ,,
+            lda INSTDATA+1      ; If this is a relative branch instruction
+            cmp #RELATIVE       ;   test it separately
             beq test_rel        ;   ,,
+            jsr DOperand        ; Add formatted operand to buffer
+            lda #$00            ; Add a $00 to the end of the disassembly as a
+            jsr CharOut         ;   delimiter
             ldy #$00
--loop:      lda INBUFFER,y      ; Compare the assembly with the disassembly
-            cmp OUTBUFFER+5,y   ;   in the buffers
-            bne skip_rec        ; If any bytes don't match, then skip
+-loop:      lda INBUFFER+4,y    ; Compare the assembly with the disassembly
+            cmp OUTBUFFER,y     ;   in the buffers
+            bne reset           ; If any bytes don't match, then skip
             iny
             cmp #$00
             bne loop            ; Loop until the buffer is done
-match:      lda PRGCTR          ; Set the CHRCOUNT location to the number of
+match:      jsr NextValue
+            lda PRGCTR          ; Set the CHRCOUNT location to the number of
             sec                 ;   bytes that need to be programmed
             sbc #OPCODE         ;   ,,
             sta CHRCOUNT        ;   ,,
@@ -495,12 +490,10 @@ match:      lda PRGCTR          ; Set the CHRCOUNT location to the number of
             sta PRGCTR+1        ;   ,,
             sec                 ; Set Carry flag to indicate success
             rts
-skip_rec:   jsr NextInst        ; Advance the counter
-            jmp reset
 test_rel:   ldy #$03            ; Here, relative branching instructions are
--loop:      lda OUTBUFFER+5,y   ;   handled. Only the first four characters
-            cmp INBUFFER,y      ;   are compared. If there's a match on the
-            bne skip_rec        ;   mnemonic + $, then move the computed
+-loop:      lda OUTBUFFER,y     ;   handled. Only the first four characters
+            cmp INBUFFER+4,y    ;   are compared. If there's a match on the
+            bne reset           ;   mnemonic + $, then move the computed
             dey                 ;   relative operand into the regular operand
             bpl loop            ;   low byte, and then treat this as a regular
             lda RB_OPERAND      ;   match after that
@@ -799,7 +792,7 @@ NextInst:   lda #$02            ; Each language entry is two bytes
             sta LANG_PTR
             bcc ch_mnem
             inc LANG_PTR+1
-ch_mnem:    ldy #$01            ; Is this entry a mnemonic record?
+ch_mnem:    ldy #$01            ; Is this entry an instruction record?
             lda (LANG_PTR),y    ; ,,
             and #$f0            ; ,,
             bne adv_lang_r      ; If it's an instruction, return
@@ -911,12 +904,6 @@ Param_16:   jsr HexPrefix
             rts
             
 CharOut:    sta CHARAC          ; Save temporary character
-            lda #ACHAR          ; If wAx is in Assembler mode, then
-            cmp FUNCTION        ;   ignore spaces in the buffer
-            bne write_ok        ;   ,,
-            lda #" "            ;   ,,
-            cmp CHARAC          ;   ,,
-            beq write_r         ;   ,,
 write_ok:   tya                 ; Save registers
             pha                 ; ,,
             txa                 ; ,,
