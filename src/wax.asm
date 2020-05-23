@@ -50,6 +50,7 @@ IGONE       = $0308             ; Vector to GONE
 CBINV       = $0316             ; BRK vector
 GONE        = $c7e4
 CHRGET      = $0073
+CHRGOT      = $0079
 BUF         = $0200             ; Input buffer
 PRTSTR      = $cb1e             ; Print from data (Y,A)
 SYS         = $e133             ; BASIC SYS start
@@ -69,7 +70,8 @@ XREG        = $030d             ; Saved X Register
 YREG        = $030e             ; Saved Y Register
 PROC        = $030f             ; Saved Processor Status
 ERROR_PTR   = $22               ; BASIC error text pointer
-SYS_DEST    = $14
+SYS_DEST    = $14               ; Pointer for SYS destination
+MISMATCH    = $c2cd             ; "MISMATCH"
 
 ; Constants
 ; Addressing mode encodings
@@ -143,6 +145,7 @@ main:       jsr CHRGET
             beq Disp_Reg        ; ,,
             cmp #ECHAR          ; Execute
             beq Disp_Exec       ; ,,
+            jsr CHRGOT          ; Restore flags for the found character
             jmp GONE+3          ; +3 because the CHRGET is already done
                         
 ; Dispatch Disassembler  
@@ -192,29 +195,27 @@ Disp_Test:  jsr Prepare
 Disp_BP:    jsr Prepare
             jsr BPManager
             ; Falls through to Return
-            
-            
+    
 ; Return from Wedge
 ; Return in one of two ways:
 ; * In direct mode, to a BASIC warm start without READY.
 ; * In a program, find the next BASIC command
 Return:     jsr Restore
-            ldy CURLIN+1        ; See if we're running in direct mode by
-            iny                 ;   checking the current line number
+            jsr DirectMode      ; If in Direct Mode, warm start without READY.
             bne in_program      ;   ,,
-            jmp (WARM_START)    ; If in direct mode, warm start without READY.            
+            jmp (WARM_START)    ;   ,,           
 in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command   
-
-       
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DISASSEMBLER COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Disassembly Listing
 ; Disassemble multiple instructions, starting from the program counter
-DisList:    lda #$91            ; Cursor up
-            jsr CHROUT          ; ,,
-            ldx #DISPLAYL       ; Show this many lines of code
+DisList:    jsr DirectMode      ; If the command is run in Direct Mode,
+            bne d_listing       ;   cursor up to overwrite the original input
+            lda #$91            ;   ,,
+            jsr CHROUT          ;   ,,
+d_listing:  ldx #DISPLAYL       ; Show this many lines of code
 -loop:      txa
             pha
             jsr Disasm          ; Disassmble the code at the program counter
@@ -253,23 +254,31 @@ disasm_r:   jsr CharOut         ;   purposes
             jsr NextValue       ; Advance to the next line of code
             rts
 
-Unknown:    jsr HexPrefix
-            lda INSTDATA        ; The unknown opcode byte is still here
-            jsr Hex
-            lda #"?"
+Unknown:    jsr HexPrefix       ;
+            lda INSTDATA        ; The unknown opcode is still here   
+            jsr Hex             ;
+            lda #"?"            ;
             jmp disasm_r
             
 ; Write Mnemonic and Parameters
-DMnemonic:  ldx INSTDATA        ; Get the index to the first two characters
-            lda Tuplet,x        ;   of the mnemonic and write to buffer
-            jsr CharOut         ;   ,,
-            lda Tuplet+1,x      ;   ,,
-            jsr CharOut         ;   ,,
-            lda INSTDATA+1      ; Get the addressing mode
-            and #$0f            ; ,,
-            tax                 ; ,,
-            lda Char3,x         ; Get the index to the third character of
-            jsr CharOut         ;   the mnemonic and write to buffer
+DMnemonic:  lda WORK+1          ; Strip off the low bit of the low byte, which
+            and #$fe            ;   indicates that the record is a mnemonic
+            sta WORK+1          ;   (encoding is big-endian)
+            ldx #$03            ; Three characters...
+-loop:      lda #$00
+            sta CHARAC
+            ldy #$05            ; Each character encoded in five bits, shifted
+-shift_l:   lda #$00            ;   as a 24-bit register into CHARAC, which
+            asl WORK+1          ;   winds up as a ROT0 code (A=1 ... Z=26)
+            rol WORK            ;   ,,
+            rol CHARAC          ;   ,,
+            dey
+            bne shift_l
+            lda CHARAC
+            adc #"@"            ; Get the PETSCII character. Carry is clear from
+            jsr CharOut         ;   the last ROL
+            dex
+            bne loop
             rts
 
 ; Operand Display
@@ -411,12 +420,17 @@ asm_r:      rts
             
 ; Assembly Fail
 ; Invalid opcode or formatting, or test failure
-Error:      jsr Restore
-            lda #<Message
-            sta ERROR_PTR
-            ldy #>Message
-            sty ERROR_PTR+1
-            jmp BASICERR
+Error:      ldy FUNCTION        ; Stash which function is active
+            jsr Restore         ; Restore zeropage state
+            lda #<AsmErr        ; Default to ASSMEBLY Error
+            ldx #>AsmErr        ; ,,
+            cpy #TCHAR          ; If the function is Assertion Test,
+            bne show_err        ;   then change the error to
+            lda #<MISMATCH      ;   MISMATCH Error
+            ldx #>MISMATCH      ;   ,,
+show_err:   sta ERROR_PTR       ; Set the selected pointer
+            stx ERROR_PTR+1     ;   ,,
+            jmp BASICERR        ; And emit the error
 
 ; Get Operand
 ; Populate the operand for an instruction by looking forward in the buffer and
@@ -449,23 +463,32 @@ reset:      lda #OPCODE         ; Write location to PC for hypotesting
             sta PRGCTR          ; ,,
             ldy #$00            ; Set the program counter high byte
             sty PRGCTR+1        ; ,,
-            lda (LANG_PTR),y    ; A is this language entry's opcode
-            cmp #TABLE_END      ; If the table has ended, leave the
-            beq bad_code        ;   hypotesting routine
-            sta OPCODE          ; Store it in the hypotesting location
-            jsr Disasm          ; Disassemble using the opcode
-            lda INSTDATA+1      ; This is a relative branch instruction, and
-            and #$f0            ;   these are handled differently. See below
-            cmp #RELATIVE       ;   ,,
+            sty IDX_OUT         ; Reset the output buffer for disassembly
+            jsr NextInst        ; Get next instruction in 6502 table
+            ldy #$00            ; Get the instruction's opcode
+            lda (LANG_PTR),y    ;   ,,
+            cmp #TABLE_END      ; If we've reached the end of the table,
+            beq bad_code        ;   the assembly candidate is no good
+            sta OPCODE          ; Store opcode to hypotesting location
+            iny                 ; 
+            lda (LANG_PTR),y    ; This is the addressing mode
+            sta INSTDATA+1      ; Save addressing mode for disassembly
+            jsr DMnemonic       ; Add mnemonic to buffer
+            lda INSTDATA+1      ; If this is a relative branch instruction
+            cmp #RELATIVE       ;   test it separately
             beq test_rel        ;   ,,
+            jsr DOperand        ; Add formatted operand to buffer
+            lda #$00            ; Add a $00 to the end of the disassembly as a
+            jsr CharOut         ;   delimiter
             ldy #$00
 -loop:      lda INBUFFER+4,y    ; Compare the assembly with the disassembly
-            cmp OUTBUFFER+5,y   ;   in the buffers
-            bne differ          ; If any bytes don't match, then quit
+            cmp OUTBUFFER,y     ;   in the buffers
+            bne reset           ; If any bytes don't match, then skip
             iny
             cmp #$00
             bne loop            ; Loop until the buffer is done
-match:      lda PRGCTR          ; Set the CHRCOUNT location to the number of
+match:      jsr NextValue
+            lda PRGCTR          ; Set the CHRCOUNT location to the number of
             sec                 ;   bytes that need to be programmed
             sbc #OPCODE         ;   ,,
             sta CHRCOUNT        ;   ,,
@@ -475,17 +498,16 @@ match:      lda PRGCTR          ; Set the CHRCOUNT location to the number of
             sta PRGCTR+1        ;   ,,
             sec                 ; Set Carry flag to indicate success
             rts
-differ:     jsr AdvLang         ; Advance the counter
-            jmp reset
 test_rel:   ldy #$03            ; Here, relative branching instructions are
--loop:      lda OUTBUFFER+5,y   ;   handled. Only the first four characters
+-loop:      lda OUTBUFFER,y     ;   handled. Only the first four characters
             cmp INBUFFER+4,y    ;   are compared. If there's a match on the
-            bne differ          ;   mnemonic + $, then move the computed
+            bne reset           ;   mnemonic + $, then move the computed
             dey                 ;   relative operand into the regular operand
             bpl loop            ;   low byte, and then treat this as a regular
             lda RB_OPERAND      ;   match after that
             sta OPERAND         ;   ,,
-            jmp match           ;   ,,
+            jsr NextValue       ; Advance program counter for instruction
+            jmp match           ; Treat this like a regular match from here
 bad_code:   pla                 ; Pull the program counter off the stack, but
             pla                 ;   there's no need to do anything with it
             clc                 ;   because we're giving up.
@@ -494,9 +516,11 @@ bad_code:   pla                 ; Pull the program counter off the stack, but
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY DUMP COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Memory:     lda #$91            ; Cursor up
-            jsr CHROUT          ; ,,
-            ldx #DISPLAYL       ; Show this many groups of four
+Memory:     jsr DirectMode      ; If the command is run in Direct Mode,
+            bne m_listing       ;   cursor up to hide the original input
+            lda #$91            ;   ,, 
+            jsr CHROUT          ;   ,,
+m_listing:  ldx #DISPLAYL       ; Show this many groups of four
 -next:      txa
             pha
             lda #$00
@@ -743,47 +767,53 @@ Restore:    ldx #$00            ; Restore workspace memory to zeropage
             inx                 ;   ,,
             cpx #$10            ;   ,,
             bne loop            ;   ,,
-            rts            
+            rts       
 
-; Look Up Opcode             
-Lookup:     sta INSTDATA        ; Store the requested opcode for lookup
-            jsr ResetLang       ; Reset language table
--loop:      ldy #$00            ; Look at the first of three bytes in a table
+; Look up opcode
+Lookup:     sta INSTDATA
+            jsr ResetLang
+-loop:      jsr NextInst
+            ldy #$00
             lda (LANG_PTR),y
             cmp #TABLE_END
             beq not_found
             cmp INSTDATA
-            beq found
-            jsr AdvLang         ; Not found; advance to next entry and look
-            bne loop            ;   again
-not_found:  clc                 ; Unknown opcode; clear Carry flag to indicate
-            rts                 ;   unknown status
-found:      iny                 ; The opcode has been found; store the
-            lda (LANG_PTR),y    ;   mnemonic and addressing mode information
-            sta INSTDATA        ;   to draw the instruction
-            iny                 ;   ,,
-            lda (LANG_PTR),y    ;   ,,
-            sta INSTDATA+1      ;   ,,
-            sec                 ; Set Carry flag to indicate successful lookup
-            rts  
-                        
+            bne loop
+found:      iny
+            lda (LANG_PTR),y    ; A match was found! Set the addressing mode
+            sta INSTDATA+1      ;   to the instruction data structure
+            sec                 ;   and set the carry flag to indicate success
+            rts
+not_found:  clc                 ; Reached the end of the language table without
+            rts                 ;   finding a matching instruction
+                                    
 ; Reset Language Table            
-ResetLang:  lda #<Instr6502
-            sta LANG_PTR
-            lda #>Instr6502
-            sta LANG_PTR+1
+ResetLang:  lda #<InstrSet-2    ; Start two bytes before the Instruction Set
+            sta LANG_PTR        ;   table, because advancing the table will be
+            lda #>InstrSet-2    ;   an early thing we do
+            sta LANG_PTR+1      ;   ,,
             rts
             
-; Advance Language Table
-; to next entry
-AdvLang:    lda #$03            ; Each language entry is three bytes
+; Next Instruction in Language Table
+; Handle mnemonics by recording the last found mnemonic and then advancing
+; to the following instruction.
+NextInst:   lda #$02            ; Each language entry is two bytes
             clc
             adc LANG_PTR
             sta LANG_PTR
-            lda #$00
-            adc LANG_PTR+1
-            sta LANG_PTR+1 
-            rts
+            bcc ch_mnem
+            inc LANG_PTR+1
+ch_mnem:    ldy #$01            ; Is this entry an instruction record?
+            lda (LANG_PTR),y    ; ,,
+            and #$01            ; ,,
+            beq adv_lang_r      ; If it's an instruction, return
+            lda (LANG_PTR),y    ; Otherwise, set the mnemonic in the workspace
+            sta WORK+1
+            dey
+            lda (LANG_PTR),y
+            sta WORK
+            jmp NextInst        ; Go to what should now be an instruction
+adv_lang_r: rts
             
 ; Get Character
 ; Akin to CHRGET, but scans the INBUFFER, which has already been detokenized            
@@ -885,12 +915,6 @@ Param_16:   jsr HexPrefix
             rts
             
 CharOut:    sta CHARAC          ; Save temporary character
-            lda #ACHAR          ; If wAx is in Assembler mode, then
-            cmp FUNCTION        ;   ignore spaces in the buffer
-            bne write_ok        ;   ,,
-            lda #" "            ;   ,,
-            cmp CHARAC          ;   ,,
-            beq write_r         ;   ,,
 write_ok:   tya                 ; Save registers
             pha                 ; ,,
             txa                 ; ,,
@@ -958,9 +982,8 @@ PrintBuff:  lda #$00            ; End the buffer with 0
 ; Prompt for Next Line
 ; X should be set to the number of bytes the program counter should be
 ; advanced
-Prompt:     ldy CURLIN+1        ; If an editor command is performed in
-            iny                 ;   direct mode, then advance the program
-            bne prompt_r        ;   counter by the size of the instruction
+Prompt:     jsr DirectMode      ; If a command is in Direct Mode, increase
+            bne prompt_r        ;   the PC by the size of the instruction
             tya                 ;   and write it to the keyboard buffer (by
             sta IDX_OUT         ;   way of populating the output buffer)
             lda FUNCTION        ;   ,,
@@ -1001,7 +1024,13 @@ SetupVec:   lda #<main          ; Intercept GONE to process wedge
 ; If it's held down, Zero flag will be clear
 ShiftDown:  lda KEYCVTRS   
             and #$01
-            rts         
+            rts    
+            
+; In Direct Mode
+; If the wAx command is running in Direct Mode, the Zero flag will be set
+DirectMode: ldy CURLIN+1
+            iny
+            rts     
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
@@ -1014,175 +1043,237 @@ Token:      .byte $96,$44,$45,$46   ; DEF
 
 ; Miscellaneous data tables
 HexDigit:   .asc "0123456789ABCDEF"
-Intro:      .asc $0d
-Message:    .asc "WAX",$a0,"ON",$00 ; $a0 provides a stop for error msg
-Registers:  .asc $0d,"*Y: X: A: P: S: PC::",$0d,";",$00
+Intro:      .asc $0d,"WAX ON",$00
+Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
+AsmErr:     .asc "ASSEMBL",$d9
 
-; Tuplet and Char3 are used to decode instruction names. Tuplet should be padded
-; to 64 characters, and Char3 should be padded to 16 characters, to support
-; language table extensions.           
-Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
-Char3:      .asc "ACDEIKLPQRSTVXY"
+; Padding to 2048 bytes, done for two reasons
+; (1) ROM images for 2716s
+; (2) So that extended instructions sets can always be loaded into the
+;     same place (base + $7ff)
+Padding:    .asc "12345678901234567890123456789012345678901234567890"
 
-; 6502 Instructions
-; Each instruction is encoded as three bytes.
-; (1) The first byte is the 6502 opcode of the instruction
-; (2) The second byte is the position of the first two characters of the 
-;     instruction in the Tuple table
-; (3) The third byte's low nybble is the position of the third character of
-;     the instruction in the Char3 table. The high nybble is the addressing
-;     mode of the insruction, as shown in the Constants labels at the top
-;     of the source code
+; Instruction Set
+; This table contains two types of one-word records--mnemonic records and
+; instruction records. Every word in the table is in big-endian format, so
+; the high byte is first.
 ;
-Instr6502:  .byte $ea,$07,$b7   ; NOP
-            .byte $60,$04,$ba   ; RTS
-            .byte $a9,$1b,$a0   ; LDA #oper
-            .byte $a5,$1b,$70   ; LDA oper
-            .byte $b5,$1b,$80   ; LDA oper,X
-            .byte $ad,$1b,$40   ; LDA oper
-            .byte $bd,$1b,$50   ; LDA oper,X
-            .byte $b9,$1b,$60   ; LDA oper,Y
-            .byte $a1,$1b,$20   ; LDA (oper,X)
-            .byte $b1,$1b,$30   ; LDA (oper),Y
-            .byte $4c,$1f,$47   ; JMP oper
-            .byte $6c,$1f,$17   ; JMP (oper)
-            .byte $20,$2f,$49   ; JSR oper
-            .byte $a2,$1b,$ad   ; LDX #oper
-            .byte $a6,$1b,$7d   ; LDX oper
-            .byte $b6,$1b,$9d   ; LDX oper,Y
-            .byte $ae,$1b,$4d   ; LDX oper
-            .byte $be,$1b,$6d   ; LDX oper,Y
-            .byte $a0,$1b,$ae   ; LDY #oper
-            .byte $a4,$1b,$7e   ; LDY oper
-            .byte $b4,$1b,$8e   ; LDY oper,X
-            .byte $ac,$1b,$4e   ; LDY oper
-            .byte $bc,$1b,$5e   ; LDY oper,X
-            .byte $c9,$14,$a7   ; CMP #oper
-            .byte $c5,$14,$77   ; CMP oper
-            .byte $d5,$14,$87   ; CMP oper,X
-            .byte $cd,$14,$47   ; CMP oper
-            .byte $dd,$14,$57   ; CMP oper,X
-            .byte $d9,$14,$67   ; CMP oper,Y
-            .byte $c1,$14,$27   ; CMP (oper,X)
-            .byte $d1,$14,$37   ; CMP (oper),Y
-            .byte $e0,$16,$ad   ; CPX #oper
-            .byte $e4,$16,$7d   ; CPX oper
-            .byte $ec,$16,$4d   ; CPX oper
-            .byte $c0,$16,$ae   ; CPY #oper
-            .byte $c4,$16,$7e   ; CPY oper
-            .byte $cc,$16,$4e   ; CPY oper
-            .byte $90,$19,$c1   ; BCC oper
-            .byte $b0,$19,$ca   ; BCS oper
-            .byte $f0,$28,$c8   ; BEQ oper
-            .byte $d0,$1d,$c3   ; BNE oper
-            .byte $ca,$0a,$bd   ; DEX
-            .byte $88,$0a,$be   ; DEY
-            .byte $e8,$26,$bd   ; INX
-            .byte $c8,$26,$be   ; INY
-            .byte $85,$22,$70   ; STA oper
-            .byte $95,$22,$80   ; STA oper,X
-            .byte $8d,$22,$40   ; STA oper
-            .byte $9d,$22,$50   ; STA oper,X
-            .byte $99,$22,$60   ; STA oper,Y
-            .byte $81,$22,$20   ; STA (oper,X)
-            .byte $91,$22,$30   ; STA (oper),Y
-            .byte $86,$22,$7d   ; STX oper
-            .byte $96,$22,$9d   ; STX oper,Y
-            .byte $8e,$22,$4d   ; STX oper
-            .byte $84,$22,$7e   ; STY oper
-            .byte $94,$22,$8e   ; STY oper,X
-            .byte $8c,$22,$4e   ; STY oper
-            .byte $aa,$05,$bd   ; TAX
-            .byte $a8,$05,$be   ; TAY
-            .byte $ba,$21,$bd   ; TSX
-            .byte $8a,$12,$b0   ; TXA
-            .byte $9a,$12,$ba   ; TXS
-            .byte $98,$23,$b0   ; TYA
-            .byte $69,$09,$a1   ; ADC #oper
-            .byte $65,$09,$71   ; ADC oper
-            .byte $75,$09,$81   ; ADC oper,X
-            .byte $6d,$09,$41   ; ADC oper
-            .byte $7d,$09,$51   ; ADC oper,X
-            .byte $79,$09,$61   ; ADC oper,Y
-            .byte $61,$09,$21   ; ADC (oper,X)
-            .byte $71,$09,$31   ; ADC (oper),Y
-            .byte $29,$06,$a2   ; AND #oper
-            .byte $25,$06,$72   ; AND oper
-            .byte $35,$06,$82   ; AND oper,X
-            .byte $2d,$06,$42   ; AND oper
-            .byte $3d,$06,$52   ; AND oper,X
-            .byte $39,$06,$62   ; AND oper,Y
-            .byte $21,$06,$22   ; AND (oper,X)
-            .byte $31,$06,$32   ; AND (oper),Y
-            .byte $0a,$00,$b6   ; ASL A
-            .byte $06,$00,$76   ; ASL oper
-            .byte $16,$00,$86   ; ASL oper,X
-            .byte $0e,$00,$46   ; ASL oper
-            .byte $1e,$00,$56   ; ASL oper,X
-            .byte $24,$25,$7b   ; BIT oper
-            .byte $2c,$25,$4b   ; BIT oper
-            .byte $30,$10,$c4   ; BMI oper
-            .byte $10,$0c,$c6   ; BPL oper
-            .byte $00,$2c,$b5   ; BRK
-            .byte $18,$1a,$b1   ; CLC
-            .byte $38,$01,$b1   ; SEC
-            .byte $78,$01,$b4   ; SEI
-            .byte $58,$1a,$b4   ; CLI
-            .byte $c6,$0a,$71   ; DEC oper
-            .byte $d6,$0a,$81   ; DEC oper,X
-            .byte $ce,$0a,$41   ; DEC oper
-            .byte $de,$0a,$51   ; DEC oper,X
-            .byte $e6,$26,$71   ; INC oper
-            .byte $f6,$26,$81   ; INC oper,X
-            .byte $ee,$26,$41   ; INC oper
-            .byte $fe,$26,$51   ; INC oper,X
-            .byte $4a,$0e,$b9   ; LSR A
-            .byte $46,$0e,$79   ; LSR oper
-            .byte $56,$0e,$89   ; LSR oper,X
-            .byte $4e,$0e,$49   ; LSR oper
-            .byte $5e,$0e,$59   ; LSR oper,X
-            .byte $48,$17,$b0   ; PHA
-            .byte $08,$17,$b7   ; PHP
-            .byte $68,$0d,$b0   ; PLA
-            .byte $28,$0d,$b7   ; PLP
-            .byte $2a,$2d,$b6   ; ROL A
-            .byte $26,$2d,$76   ; ROL oper
-            .byte $36,$2d,$86   ; ROL oper,X
-            .byte $2e,$2d,$46   ; ROL oper
-            .byte $3e,$2d,$56   ; ROL oper,X
-            .byte $6a,$2d,$b9   ; ROR A
-            .byte $66,$2d,$79   ; ROR oper
-            .byte $76,$2d,$89   ; ROR oper,X
-            .byte $6e,$2d,$49   ; ROR oper
-            .byte $7e,$2d,$59   ; ROR oper,X
-            .byte $09,$03,$a0   ; ORA #oper
-            .byte $05,$03,$70   ; ORA oper
-            .byte $15,$03,$80   ; ORA oper,X
-            .byte $0d,$03,$40   ; ORA oper
-            .byte $1d,$03,$50   ; ORA oper,X
-            .byte $19,$03,$60   ; ORA oper,Y
-            .byte $01,$03,$20   ; ORA (oper,X)
-            .byte $11,$03,$30   ; ORA (oper),Y
-            .byte $49,$02,$a9   ; EOR #oper
-            .byte $45,$02,$79   ; EOR oper
-            .byte $55,$02,$89   ; EOR oper,X
-            .byte $4d,$02,$49   ; EOR oper
-            .byte $5d,$02,$59   ; EOR oper,X
-            .byte $59,$02,$69   ; EOR oper,Y
-            .byte $41,$02,$29   ; EOR (oper,X)
-            .byte $51,$02,$39   ; EOR (oper),Y
-            .byte $40,$04,$b4   ; RTI
-            .byte $e9,$0f,$a1   ; SBC #oper
-            .byte $e5,$0f,$71   ; SBC oper
-            .byte $f5,$0f,$81   ; SBC oper,X
-            .byte $ed,$0f,$41   ; SBC oper
-            .byte $fd,$0f,$51   ; SBC oper,X
-            .byte $f9,$0f,$61   ; SBC oper,Y
-            .byte $e1,$0f,$21   ; SBC (oper,X)
-            .byte $f1,$0f,$31   ; SBC (oper),Y
-            .byte $f8,$01,$b2   ; SED
-            .byte $d8,$1a,$b2   ; CLD
-            .byte $b8,$1a,$bc   ; CLV
-            .byte $50,$2a,$c1   ; BVC oper
-            .byte $70,$2a,$ca   ; BVS oper
-            .byte TABLE_END     ; End of 6502 table
+; Mnemonic records are formatted like this...
+;     fffffsss ssttttt1
+; where f is first letter, s is second letter, and t is third letter. Bit
+; 0 of the word is set to 1 to identify this word as a mnemonic record.
+;
+; Each mnemonic record has one or more instruction records after it.
+; Instruction records are formatted like this...
+;     oooooooo aaaaaaa0
+; where o is the opcode and a is the addressing mode (see Constants section
+; at the top of the code). Bit 0 of the word is set to 0 to identify this
+; word as an instruction record.
+InstrSet:   .byte $09,$07       ; ADC
+            .byte $69,$a0       ; * ADC #immediate
+            .byte $65,$70       ; * ADC zeropage
+            .byte $75,$80       ; * ADC zeropage,X
+            .byte $6d,$40       ; * ADC absolute
+            .byte $7d,$50       ; * ADC absolute,X
+            .byte $79,$60       ; * ADC absolute,Y
+            .byte $61,$20       ; * ADC (indirect,X)
+            .byte $71,$30       ; * ADC (indirect),Y
+            .byte $0b,$89       ; AND
+            .byte $29,$a0       ; * AND #immediate
+            .byte $25,$70       ; * AND zeropage
+            .byte $35,$80       ; * AND zeropage,X
+            .byte $2d,$40       ; * AND absolute
+            .byte $3d,$50       ; * AND absolute,X
+            .byte $39,$60       ; * AND absolute,Y
+            .byte $21,$20       ; * AND (indirect,X)
+            .byte $31,$30       ; * AND (indirect),Y
+            .byte $0c,$d9       ; ASL
+            .byte $0a,$a0       ; * ASL accumulator
+            .byte $06,$70       ; * ASL zeropage
+            .byte $16,$80       ; * ASL zeropage,X
+            .byte $0e,$40       ; * ASL absolute
+            .byte $1e,$50       ; * ASL absolute,X
+            .byte $10,$c7       ; BCC
+            .byte $90,$c0       ; * BCC relative
+            .byte $10,$e7       ; BCS
+            .byte $b0,$c0       ; * BCS relative
+            .byte $11,$63       ; BEQ
+            .byte $f0,$c0       ; * BEQ relative
+            .byte $12,$69       ; BIT
+            .byte $24,$70       ; * BIT zeropage
+            .byte $2c,$40       ; * BIT absolute
+            .byte $13,$53       ; BMI
+            .byte $30,$c0       ; * BMI relative
+            .byte $13,$8b       ; BNE
+            .byte $d0,$c0       ; * BNE relative
+            .byte $14,$19       ; BPL
+            .byte $10,$c0       ; * BPL relative
+            .byte $14,$97       ; BRK
+            .byte $00,$b0       ; * BRK implied
+            .byte $15,$87       ; BVC
+            .byte $50,$c0       ; * BVC relative
+            .byte $15,$a7       ; BVS
+            .byte $70,$c0       ; * BVS relative
+            .byte $1b,$07       ; CLC
+            .byte $18,$b0       ; * CLC implied
+            .byte $1b,$09       ; CLD
+            .byte $d8,$b0       ; * CLD implied
+            .byte $1b,$13       ; CLI
+            .byte $58,$b0       ; * CLI implied
+            .byte $1b,$2d       ; CLV
+            .byte $b8,$b0       ; * CLV implied
+            .byte $1b,$61       ; CMP
+            .byte $c9,$a0       ; * CMP #immediate
+            .byte $c5,$70       ; * CMP zeropage
+            .byte $d5,$80       ; * CMP zeropage,X
+            .byte $cd,$40       ; * CMP absolute
+            .byte $dd,$50       ; * CMP absolute,X
+            .byte $d9,$60       ; * CMP absolute,Y
+            .byte $c1,$20       ; * CMP (indirect,X)
+            .byte $d1,$30       ; * CMP (indirect),Y
+            .byte $1c,$31       ; CPX
+            .byte $e0,$a0       ; * CPX #immediate
+            .byte $e4,$70       ; * CPX zeropage
+            .byte $ec,$40       ; * CPX absolute
+            .byte $1c,$33       ; CPY
+            .byte $c0,$a0       ; * CPY #immediate
+            .byte $c4,$70       ; * CPY zeropage
+            .byte $cc,$40       ; * CPY absolute
+            .byte $21,$47       ; DEC
+            .byte $c6,$70       ; * DEC zeropage
+            .byte $d6,$80       ; * DEC zeropage,X
+            .byte $ce,$40       ; * DEC absolute
+            .byte $de,$50       ; * DEC absolute,X
+            .byte $21,$71       ; DEX
+            .byte $ca,$b0       ; * DEX implied
+            .byte $21,$73       ; DEY
+            .byte $88,$b0       ; * DEY implied
+            .byte $2b,$e5       ; EOR
+            .byte $49,$a0       ; * EOR #immediate
+            .byte $45,$70       ; * EOR zeropage
+            .byte $55,$80       ; * EOR zeropage,X
+            .byte $4d,$40       ; * EOR absolute
+            .byte $5d,$50       ; * EOR absolute,X
+            .byte $59,$60       ; * EOR absolute,Y
+            .byte $41,$20       ; * EOR (indirect,X)
+            .byte $51,$30       ; * EOR (indirect),Y
+            .byte $4b,$87       ; INC
+            .byte $e6,$70       ; * INC zeropage
+            .byte $f6,$80       ; * INC zeropage,X
+            .byte $ee,$40       ; * INC absolute
+            .byte $fe,$50       ; * INC absolute,X
+            .byte $4b,$b1       ; INX
+            .byte $e8,$b0       ; * INX implied
+            .byte $4b,$b3       ; INY
+            .byte $c8,$b0       ; * INY implied
+            .byte $53,$61       ; JMP
+            .byte $4c,$40       ; * JMP absolute
+            .byte $6c,$10       ; * JMP indirect
+            .byte $54,$e5       ; JSR
+            .byte $20,$40       ; * JSR absolute
+            .byte $61,$03       ; LDA
+            .byte $a9,$a0       ; * LDA #immediate
+            .byte $a5,$70       ; * LDA zeropage
+            .byte $b5,$80       ; * LDA zeropage,X
+            .byte $ad,$40       ; * LDA absolute
+            .byte $bd,$50       ; * LDA absolute,X
+            .byte $b9,$60       ; * LDA absolute,Y
+            .byte $a1,$20       ; * LDA (indirect,X)
+            .byte $b1,$30       ; * LDA (indirect),Y
+            .byte $61,$31       ; LDX
+            .byte $a2,$a0       ; * LDX #immediate
+            .byte $a6,$70       ; * LDX zeropage
+            .byte $b6,$90       ; * LDX zeropage,Y
+            .byte $ae,$40       ; * LDX absolute
+            .byte $be,$60       ; * LDX absolute,Y
+            .byte $61,$33       ; LDY
+            .byte $a0,$a0       ; * LDY #immediate
+            .byte $a4,$70       ; * LDY zeropage
+            .byte $b4,$80       ; * LDY zeropage,X
+            .byte $ac,$40       ; * LDY absolute
+            .byte $bc,$50       ; * LDY absolute,X
+            .byte $64,$e5       ; LSR
+            .byte $4a,$a0       ; * LSR accumulator
+            .byte $46,$70       ; * LSR zeropage
+            .byte $56,$80       ; * LSR zeropage,X
+            .byte $4e,$40       ; * LSR absolute
+            .byte $5e,$50       ; * LSR absolute,X
+            .byte $73,$e1       ; NOP
+            .byte $ea,$b0       ; * NOP implied
+            .byte $7c,$83       ; ORA
+            .byte $09,$a0       ; * ORA #immediate
+            .byte $05,$70       ; * ORA zeropage
+            .byte $15,$80       ; * ORA zeropage,X
+            .byte $0d,$40       ; * ORA absolute
+            .byte $1d,$50       ; * ORA absolute,X
+            .byte $19,$60       ; * ORA absolute,Y
+            .byte $01,$20       ; * ORA (indirect,X)
+            .byte $11,$30       ; * ORA (indirect),Y
+            .byte $82,$03       ; PHA
+            .byte $48,$b0       ; * PHA implied
+            .byte $82,$21       ; PHP
+            .byte $08,$b0       ; * PHP implied
+            .byte $83,$03       ; PLA
+            .byte $68,$b0       ; * PLA implied
+            .byte $83,$21       ; PLP
+            .byte $28,$b0       ; * PLP implied
+            .byte $93,$d9       ; ROL
+            .byte $2a,$a0       ; * ROL accumulator
+            .byte $26,$70       ; * ROL zeropage
+            .byte $36,$80       ; * ROL zeropage,X
+            .byte $2e,$40       ; * ROL absolute
+            .byte $3e,$50       ; * ROL absolute,X
+            .byte $93,$e5       ; ROR
+            .byte $6a,$a0       ; * ROR accumulator
+            .byte $66,$70       ; * ROR zeropage
+            .byte $76,$80       ; * ROR zeropage,X
+            .byte $6e,$40       ; * ROR absolute
+            .byte $7e,$50       ; * ROR absolute,X
+            .byte $95,$13       ; RTI
+            .byte $40,$b0       ; * RTI implied
+            .byte $95,$27       ; RTS
+            .byte $60,$b0       ; * RTS implied
+            .byte $98,$87       ; SBC
+            .byte $e9,$a0       ; * SBC #immediate
+            .byte $e5,$70       ; * SBC zeropage
+            .byte $f5,$80       ; * SBC zeropage,X
+            .byte $ed,$40       ; * SBC absolute
+            .byte $fd,$50       ; * SBC absolute,X
+            .byte $f9,$60       ; * SBC absolute,Y
+            .byte $e1,$20       ; * SBC (indirect,X)
+            .byte $f1,$30       ; * SBC (indirect),Y
+            .byte $99,$47       ; SEC
+            .byte $38,$b0       ; * SEC implied
+            .byte $99,$49       ; SED
+            .byte $f8,$b0       ; * SED implied
+            .byte $99,$53       ; SEI
+            .byte $78,$b0       ; * SEI implied
+            .byte $9d,$03       ; STA
+            .byte $85,$70       ; * STA zeropage
+            .byte $95,$80       ; * STA zeropage,X
+            .byte $8d,$40       ; * STA absolute
+            .byte $9d,$50       ; * STA absolute,X
+            .byte $99,$60       ; * STA absolute,Y
+            .byte $81,$20       ; * STA (indirect,X)
+            .byte $91,$30       ; * STA (indirect),Y
+            .byte $9d,$31       ; STX
+            .byte $86,$70       ; * STX zeropage
+            .byte $96,$90       ; * STX zeropage,Y
+            .byte $8e,$40       ; * STX absolute
+            .byte $9d,$33       ; STY
+            .byte $84,$70       ; * STY zeropage
+            .byte $94,$80       ; * STY zeropage,X
+            .byte $8c,$40       ; * STY absolute
+            .byte $a0,$71       ; TAX
+            .byte $aa,$b0       ; * TAX implied
+            .byte $a0,$73       ; TAY
+            .byte $a8,$b0       ; * TAY implied
+            .byte $a4,$f1       ; TSX
+            .byte $ba,$b0       ; * TSX implied
+            .byte $a6,$03       ; TXA
+            .byte $8a,$b0       ; * TXA implied
+            .byte $a6,$27       ; TXS
+            .byte $9a,$b0       ; * TXS implied
+            .byte $a6,$43       ; TYA
+            .byte $98,$b0       ; * TYA implied
+Expand:     .byte TABLE_END     ; End of 6502 table
