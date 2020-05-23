@@ -69,7 +69,8 @@ XREG        = $030d             ; Saved X Register
 YREG        = $030e             ; Saved Y Register
 PROC        = $030f             ; Saved Processor Status
 ERROR_PTR   = $22               ; BASIC error text pointer
-SYS_DEST    = $14
+SYS_DEST    = $14               ; Pointer for SYS destination
+MISMATCH    = $c2cd             ; "MISMATCH"
 
 ; Constants
 ; Addressing mode encodings
@@ -409,12 +410,17 @@ asm_r:      rts
             
 ; Assembly Fail
 ; Invalid opcode or formatting, or test failure
-Error:      jsr Restore
-            lda #<Message
-            sta ERROR_PTR
-            ldy #>Message
-            sty ERROR_PTR+1
-            jmp BASICERR
+Error:      ldy FUNCTION        ; Stash which function is active
+            jsr Restore         ; Restore zeropage state
+            lda #<AsmErr        ; Default to ASSMEBLY Error
+            ldx #>AsmErr        ; ,,
+            cpy #TCHAR          ; If the function is Assertion Test,
+            bne show_err        ;   then change the error to
+            lda #<MISMATCH      ;   MISMATCH Error
+            ldx #>MISMATCH      ;   ,,
+show_err:   sta ERROR_PTR       ; Set the selected pointer
+            stx ERROR_PTR+1     ;   ,,
+            jmp BASICERR        ; And emit the error
 
 ; Get Operand
 ; Populate the operand for an instruction by looking forward in the buffer and
@@ -447,10 +453,16 @@ reset:      lda #OPCODE         ; Write location to PC for hypotesting
             sta PRGCTR          ; ,,
             ldy #$00            ; Set the program counter high byte
             sty PRGCTR+1        ; ,,
+            
             lda (LANG_PTR),y    ; A is this language entry's opcode
             cmp #TABLE_END      ; If the table has ended, leave the
             beq bad_code        ;   hypotesting routine
-            sta OPCODE          ; Store it in the hypotesting location
+            tax
+            iny                 ; If the record is a mnemonic record,
+            lda (LANG_PTR),y    ;   skip the record and keep looking for
+            and #$f0            ;   instruction records
+            beq skip_rec        ;   ,,
+            stx OPCODE          ; Store it in the hypotesting location
             jsr Disasm          ; Disassemble using the opcode
             lda INSTDATA+1      ; This is a relative branch instruction, and
             and #$f0            ;   these are handled differently. See below
@@ -459,7 +471,7 @@ reset:      lda #OPCODE         ; Write location to PC for hypotesting
             ldy #$00
 -loop:      lda INBUFFER+4,y    ; Compare the assembly with the disassembly
             cmp OUTBUFFER+5,y   ;   in the buffers
-            bne differ          ; If any bytes don't match, then quit
+            bne skip_rec        ; If any bytes don't match, then skip
             iny
             cmp #$00
             bne loop            ; Loop until the buffer is done
@@ -473,12 +485,12 @@ match:      lda PRGCTR          ; Set the CHRCOUNT location to the number of
             sta PRGCTR+1        ;   ,,
             sec                 ; Set Carry flag to indicate success
             rts
-differ:     jsr AdvLang         ; Advance the counter
+skip_rec:   jsr AdvLang         ; Advance the counter
             jmp reset
 test_rel:   ldy #$03            ; Here, relative branching instructions are
 -loop:      lda OUTBUFFER+5,y   ;   handled. Only the first four characters
             cmp INBUFFER+4,y    ;   are compared. If there's a match on the
-            bne differ          ;   mnemonic + $, then move the computed
+            bne skip_rec        ;   mnemonic + $, then move the computed
             dey                 ;   relative operand into the regular operand
             bpl loop            ;   low byte, and then treat this as a regular
             lda RB_OPERAND      ;   match after that
@@ -744,32 +756,32 @@ Restore:    ldx #$00            ; Restore workspace memory to zeropage
             rts       
 
 ; Look up opcode
-Lookup:     sta INSTDATA        ; Store the requested opcode for lookup         
-            jsr ResetLang       ; Reset language table
--loop:      ldy #$00            ; Look at the first of two bytes for the record
+Lookup:     sta INSTDATA
+            jsr ResetLang
+-loop:      ldy #$01
+            lda (LANG_PTR),y
+            and #$f0
+            beq set_mnem
+            dey
             lda (LANG_PTR),y
             cmp #TABLE_END
-            beq not_found       ; Reached the end of the table; not found
+            beq not_found
             cmp INSTDATA
-            beq ch_inst
-next_rec:   jsr AdvLang         ; The opcode does not match; go to the next
-            bne loop            ;   record
-ch_inst:    iny                 ; The first byte seems to match; make sure that
-            lda (LANG_PTR),y    ;   this is an instruction record by looking
-            and #$f0            ;   at high nybble of the second byte
-            beq set_mnem        ; Any high bits on indicates instruction record
-found:      lda (LANG_PTR),y    ;   addressing mode to the INSTDATA structure
-            sta INSTDATA+1      ; A  match was found. Set the addressing mode,
+            bne adv_loop
+found:      iny
+            lda (LANG_PTR),y    ; A match was found! Set the addressing mode
+            sta INSTDATA+1      ;   to the instruction data structure
             sec                 ;   and set the carry flag to indicate success
             rts
+set_mnem:   lda (LANG_PTR),y
+            sta WORK+1
+            dey
+            lda (LANG_PTR),y
+            sta WORK
+adv_loop:   jsr AdvLang
+            bne loop
 not_found:  clc                 ; Reached the end of the language table without
             rts                 ;   finding a matching instruction
-set_mnem:   lda (LANG_PTR),y    ;   mnemonic's character in the workspace
-            sta WORK+1            ;   ,,
-            iny                 ;   ,,
-            lda (LANG_PTR),y    ;   ,,
-            sta WORK+1          ;   ,,
-            bne next_rec        ; Go back to look for the opcode
                                     
 ; Reset Language Table            
 ResetLang:  lda #<Instr6502
@@ -1018,15 +1030,15 @@ Token:      .byte $96,$44,$45,$46   ; DEF
 
 ; Miscellaneous data tables
 HexDigit:   .asc "0123456789ABCDEF"
-Intro:      .asc $0d
-Message:    .asc "WAX",$a0,"ON",$00 ; $a0 provides a stop for error msg
-Registers:  .asc $0d,"*Y: X: A: P: S: PC::",$0d,";",$00
+Intro:      .asc $0d,"WAX",$a0,"ON",$00 ; $a0 provides a stop for error msg
+Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
+AsmErr:     .asc "ASSEMBL",$d9
 
 ; Tuplet and Char3 are used to decode instruction names. Tuplet should be padded
 ; to 64 characters, and Char3 should be padded to 16 characters, to support
 ; language table extensions.           
 Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
-Char3:      .asc "0ACDEIKLPQRSTVXY"
+Char3:      .asc "ACDEIKLPQRSTVXY"
 
 ; 6502 Instructions
 ; Each instruction is encoded as three bytes.
@@ -1245,4 +1257,4 @@ Instr6502:  .byte $09,$01       ; ADC
             .byte $9a,$b0       ; * TXS 
             .byte $23,$00       ; TYA
             .byte $98,$b0       ; * TYA 
-            .byte TABLE_END     ; End of 6502 table
+            .byte TABLE_END,$00 ; End of 6502 table
