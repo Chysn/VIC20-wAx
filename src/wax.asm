@@ -253,11 +253,10 @@ disasm_r:   jsr CharOut         ;   purposes
             jsr NextValue       ; Advance to the next line of code
             rts
 
-Unknown:    pha                 ; For an unknown opcode, show the hex
-            jsr HexPrefix       ;   value at the location
-            pla                 ;   ,,
-            jsr Hex             ;   ,,
-            lda #"?"            ;   ,,
+Unknown:    jsr HexPrefix
+            lda INSTDATA        ; The unknown opcode byte is still here
+            jsr Hex
+            lda #"?"
             jmp disasm_r
             
 ; Write Mnemonic and Parameters
@@ -757,9 +756,8 @@ Lookup:     sta INSTDATA        ; Store the requested opcode for lookup
             beq found
             jsr AdvLang         ; Not found; advance to next entry and look
             bne loop            ;   again
-not_found:  lda INSTDATA        ; Opcode not found; clear Carry flag to indicate
-            clc                 ;   unknown opcode, and set A back to the
-            rts                 ;   original byte
+not_found:  clc                 ; Unknown opcode; clear Carry flag to indicate
+            rts                 ;   unknown status
 found:      iny                 ; The opcode has been found; store the
             lda (LANG_PTR),y    ;   mnemonic and addressing mode information
             sta INSTDATA        ;   to draw the instruction
