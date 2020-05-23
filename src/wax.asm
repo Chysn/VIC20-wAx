@@ -760,8 +760,8 @@ Lookup:     sta INSTDATA
             jsr ResetLang
 -loop:      ldy #$01
             lda (LANG_PTR),y
-            and #$f0
-            beq set_mnem
+            and #$0f
+            bne set_mnem
             dey
             lda (LANG_PTR),y
             cmp #TABLE_END
