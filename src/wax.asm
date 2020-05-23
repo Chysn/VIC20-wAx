@@ -39,7 +39,7 @@ DISPLAYL    = $10               ; Display this many lines of code or memory
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
-HCHAR       = ":"               ; Wedge character : for hex entry
+HCHAR       = "%"               ; Wedge character : for hex entry
 TCHAR       = $b2               ; Wedge character = for tester
 BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
@@ -144,6 +144,7 @@ main:       jsr CHRGET
             beq Disp_Reg        ; ,,
             cmp #ECHAR          ; Execute
             beq Disp_Exec       ; ,,
+            jsr $0079
             jmp GONE+3          ; +3 because the CHRGET is already done
                         
 ; Dispatch Disassembler  
@@ -453,6 +454,13 @@ reset:      lda #OPCODE         ; Write location to PC for hypotesting
             sta PRGCTR          ; ,,
             ldy #$00            ; Set the program counter high byte
             sty PRGCTR+1        ; ,,
+            jsr NextInst        ; Get next instruction in 6502 table
+            ldy #$00            ; If we reached the end of the table, leave
+            lda (LANG_PTR),y    ;   the hypothesis testing routine; the
+            cmp #TABLE_END      ;   assembly candidate is no good
+            beq bad_code        ;   ,,
+            iny                 ; 
+            lda (LANG_PTR),y
             
             lda (LANG_PTR),y    ; A is this language entry's opcode
             cmp #TABLE_END      ; If the table has ended, leave the
