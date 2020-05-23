@@ -462,14 +462,16 @@ reset:      lda #OPCODE         ; Write location to PC for hypotesting
             lda (LANG_PTR),y    ;   skip the record and keep looking for
             and #$f0            ;   instruction records
             beq skip_rec        ;   ,,
-            stx OPCODE          ; Store it in the hypotesting location
-            jsr Disasm          ; Disassemble using the opcode
+            sta INSTDATA+1      ; Store addressing mode in instruction data
+            stx OPCODE          ; Store opcode in the hypotesting location
+            jsr DMnemonic       ; Add mnemonic to buffer
+            jsr DOperand        ; Add formatted operand to buffer
             lda INSTDATA+1      ; This is a relative branch instruction, and
             and #$f0            ;   these are handled differently. See below
             cmp #RELATIVE       ;   ,,
             beq test_rel        ;   ,,
             ldy #$00
--loop:      lda INBUFFER+4,y    ; Compare the assembly with the disassembly
+-loop:      lda INBUFFER,y      ; Compare the assembly with the disassembly
             cmp OUTBUFFER+5,y   ;   in the buffers
             bne skip_rec        ; If any bytes don't match, then skip
             iny
@@ -485,11 +487,11 @@ match:      lda PRGCTR          ; Set the CHRCOUNT location to the number of
             sta PRGCTR+1        ;   ,,
             sec                 ; Set Carry flag to indicate success
             rts
-skip_rec:   jsr AdvLang         ; Advance the counter
+skip_rec:   jsr NextInst        ; Advance the counter
             jmp reset
 test_rel:   ldy #$03            ; Here, relative branching instructions are
 -loop:      lda OUTBUFFER+5,y   ;   handled. Only the first four characters
-            cmp INBUFFER+4,y    ;   are compared. If there's a match on the
+            cmp INBUFFER,y      ;   are compared. If there's a match on the
             bne skip_rec        ;   mnemonic + $, then move the computed
             dey                 ;   relative operand into the regular operand
             bpl loop            ;   low byte, and then treat this as a regular
@@ -758,48 +760,48 @@ Restore:    ldx #$00            ; Restore workspace memory to zeropage
 ; Look up opcode
 Lookup:     sta INSTDATA
             jsr ResetLang
--loop:      ldy #$01
-            lda (LANG_PTR),y
-            and #$0f
-            bne set_mnem
-            dey
+-loop:      jsr NextInst
+            ldy #$00
             lda (LANG_PTR),y
             cmp #TABLE_END
             beq not_found
             cmp INSTDATA
-            bne adv_loop
+            bne loop
 found:      iny
             lda (LANG_PTR),y    ; A match was found! Set the addressing mode
             sta INSTDATA+1      ;   to the instruction data structure
             sec                 ;   and set the carry flag to indicate success
             rts
-set_mnem:   lda (LANG_PTR),y
-            sta WORK+1
-            dey
-            lda (LANG_PTR),y
-            sta WORK
-adv_loop:   jsr AdvLang
-            bne loop
 not_found:  clc                 ; Reached the end of the language table without
             rts                 ;   finding a matching instruction
                                     
 ; Reset Language Table            
-ResetLang:  lda #<Instr6502
+ResetLang:  lda #<Instr6502-2
             sta LANG_PTR
-            lda #>Instr6502
+            lda #>Instr6502-2
             sta LANG_PTR+1
             rts
             
-; Advance Language Table
-; to next entry
-AdvLang:    lda #$02            ; Each language entry is two bytes
+; Next Instruction in Language Table
+; Handle mnemonics by recording the last found mnemonic and then advancing
+; to the following instruction.
+NextInst:   lda #$02            ; Each language entry is two bytes
             clc
             adc LANG_PTR
             sta LANG_PTR
-            lda #$00
-            adc LANG_PTR+1
-            sta LANG_PTR+1 
-            rts
+            bcc ch_mnem
+            inc LANG_PTR+1
+ch_mnem:    ldy #$01            ; Is this entry a mnemonic record?
+            lda (LANG_PTR),y    ; ,,
+            and #$f0            ; ,,
+            bne adv_lang_r      ; If it's an instruction, return
+            lda (LANG_PTR),y    ; Otherwise, set the mnemonic in the workspace
+            sta WORK+1
+            dey
+            lda (LANG_PTR),y
+            sta WORK
+            jmp NextInst        ; Go to what should now be an instruction
+adv_lang_r: rts
             
 ; Get Character
 ; Akin to CHRGET, but scans the INBUFFER, which has already been detokenized            
@@ -1030,7 +1032,7 @@ Token:      .byte $96,$44,$45,$46   ; DEF
 
 ; Miscellaneous data tables
 HexDigit:   .asc "0123456789ABCDEF"
-Intro:      .asc $0d,"WAX",$a0,"ON",$00 ; $a0 provides a stop for error msg
+Intro:      .asc $0d,"WAX ON",$00
 Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
 AsmErr:     .asc "ASSEMBL",$d9
 
@@ -1257,4 +1259,4 @@ Instr6502:  .byte $09,$01       ; ADC
             .byte $9a,$b0       ; * TXS 
             .byte $23,$00       ; TYA
             .byte $98,$b0       ; * TYA 
-            .byte TABLE_END,$00 ; End of 6502 table
+            .byte TABLE_END     ; End of 6502 table
