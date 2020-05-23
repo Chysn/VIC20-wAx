@@ -498,7 +498,8 @@ test_rel:   ldy #$03            ; Here, relative branching instructions are
             bpl loop            ;   low byte, and then treat this as a regular
             lda RB_OPERAND      ;   match after that
             sta OPERAND         ;   ,,
-            jmp match           ;   ,,
+            jsr NextValue       ; Advance program counter for instruction
+            jmp match           ; Treat this like a regular match from here
 bad_code:   pla                 ; Pull the program counter off the stack, but
             pla                 ;   there's no need to do anything with it
             clc                 ;   because we're giving up.
