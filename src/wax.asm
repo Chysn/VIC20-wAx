@@ -253,24 +253,21 @@ disasm_r:   jsr CharOut         ;   purposes
             jsr NextValue       ; Advance to the next line of code
             rts
 
-Unknown:    pha                 ; For an unknown opcode, show the hex
-            jsr HexPrefix       ;   value at the location
-            pla                 ;   ,,
-            jsr Hex             ;   ,,
-            lda #"?"            ;   ,,
+Unknown:    jsr HexPrefix       ;
+            lda INSTDATA        ; The unknown opcode is still here   
+            jsr Hex             ;
+            lda #"?"            ;
             jmp disasm_r
             
 ; Write Mnemonic and Parameters
-DMnemonic:  ldx INSTDATA        ; Get the index to the first two characters
+DMnemonic:  ldx WORK            ; Get the index to the first two characters
             lda Tuplet,x        ;   of the mnemonic and write to buffer
             jsr CharOut         ;   ,,
             lda Tuplet+1,x      ;   ,,
             jsr CharOut         ;   ,,
-            lda INSTDATA+1      ; Get the addressing mode
-            and #$0f            ; ,,
-            tax                 ; ,,
-            lda Char3,x         ; Get the index to the third character of
-            jsr CharOut         ;   the mnemonic and write to buffer
+            ldx WORK+1          ; Get the index to the third character of the
+            lda Char3,x         ;   mnemonic and write to buffer
+            jsr CharOut         ;   ,,
             rts
 
 ; Operand Display
@@ -744,31 +741,36 @@ Restore:    ldx #$00            ; Restore workspace memory to zeropage
             inx                 ;   ,,
             cpx #$10            ;   ,,
             bne loop            ;   ,,
-            rts            
+            rts       
 
-; Look Up Opcode             
-Lookup:     sta INSTDATA        ; Store the requested opcode for lookup
+; Look up opcode
+Lookup:     sta INSTDATA        ; Store the requested opcode for lookup         
             jsr ResetLang       ; Reset language table
--loop:      ldy #$00            ; Look at the first of three bytes in a table
+-loop:      ldy #$00            ; Look at the first of two bytes for the record
             lda (LANG_PTR),y
             cmp #TABLE_END
-            beq not_found
+            beq not_found       ; Reached the end of the table; not found
             cmp INSTDATA
-            beq found
-            jsr AdvLang         ; Not found; advance to next entry and look
-            bne loop            ;   again
-not_found:  lda INSTDATA        ; Opcode not found; clear Carry flag to indicate
-            clc                 ;   unknown opcode, and set A back to the
-            rts                 ;   original byte
-found:      iny                 ; The opcode has been found; store the
-            lda (LANG_PTR),y    ;   mnemonic and addressing mode information
-            sta INSTDATA        ;   to draw the instruction
+            beq ch_inst
+next_rec:   jsr AdvLang         ; The opcode does not match; go to the next
+            bne loop            ;   record
+ch_inst:    iny                 ; The first byte seems to match; make sure that
+            lda (LANG_PTR),y    ;   this is an instruction record by looking
+            and #$f0            ;   at high nybble of the second byte
+            beq set_mnem        ; Any high bits on indicates instruction record
+found:      lda (LANG_PTR),y    ;   addressing mode to the INSTDATA structure
+            sta INSTDATA+1      ; A  match was found. Set the addressing mode,
+            sec                 ;   and set the carry flag to indicate success
+            rts
+not_found:  clc                 ; Reached the end of the language table without
+            rts                 ;   finding a matching instruction
+set_mnem:   lda (LANG_PTR),y    ;   mnemonic's character in the workspace
+            sta WORK+1            ;   ,,
             iny                 ;   ,,
             lda (LANG_PTR),y    ;   ,,
-            sta INSTDATA+1      ;   ,,
-            sec                 ; Set Carry flag to indicate successful lookup
-            rts  
-                        
+            sta WORK+1          ;   ,,
+            bne next_rec        ; Go back to look for the opcode
+                                    
 ; Reset Language Table            
 ResetLang:  lda #<Instr6502
             sta LANG_PTR
@@ -778,7 +780,7 @@ ResetLang:  lda #<Instr6502
             
 ; Advance Language Table
 ; to next entry
-AdvLang:    lda #$03            ; Each language entry is three bytes
+AdvLang:    lda #$02            ; Each language entry is two bytes
             clc
             adc LANG_PTR
             sta LANG_PTR
@@ -1024,7 +1026,7 @@ Registers:  .asc $0d,"*Y: X: A: P: S: PC::",$0d,";",$00
 ; to 64 characters, and Char3 should be padded to 16 characters, to support
 ; language table extensions.           
 Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
-Char3:      .asc "ACDEIKLPQRSTVXY"
+Char3:      .asc "0ACDEIKLPQRSTVXY"
 
 ; 6502 Instructions
 ; Each instruction is encoded as three bytes.
