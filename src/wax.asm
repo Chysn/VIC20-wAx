@@ -263,14 +263,24 @@ Unknown:    jsr HexPrefix       ;
             jmp disasm_r
             
 ; Write Mnemonic and Parameters
-DMnemonic:  ldx WORK            ; Get the index to the first two characters
-            lda Tuplet,x        ;   of the mnemonic and write to buffer
-            jsr CharOut         ;   ,,
-            lda Tuplet+1,x      ;   ,,
-            jsr CharOut         ;   ,,
-            ldx WORK+1          ; Get the index to the third character of the
-            lda Char3,x         ;   mnemonic and write to buffer
-            jsr CharOut         ;   ,,
+DMnemonic:  lda WORK+1          ; Strip off the low bit of the low byte, which
+            and #$fe            ;   indicates that the record is a mnemonic
+            sta WORK+1          ;   (encoding is big-endian)
+            ldx #$03            ; Three characters...
+-loop:      lda #$00
+            sta CHARAC
+            ldy #$05            ; Each character encoded in five bits, shifted
+-shift_l:   lda #$00            ;   as a 24-bit register into CHARAC, which
+            asl WORK+1          ;   winds up as a ROT0 code (A=1 ... Z=26)
+            rol WORK            ;   ,,
+            rol CHARAC          ;   ,,
+            dey
+            bne shift_l
+            lda CHARAC
+            adc #"@"            ; Get the PETSCII character. Carry is clear from
+            jsr CharOut         ;   the last ROL
+            dex
+            bne loop
             rts
 
 ; Operand Display
@@ -795,8 +805,8 @@ NextInst:   lda #$02            ; Each language entry is two bytes
             inc LANG_PTR+1
 ch_mnem:    ldy #$01            ; Is this entry an instruction record?
             lda (LANG_PTR),y    ; ,,
-            and #$f0            ; ,,
-            bne adv_lang_r      ; If it's an instruction, return
+            and #$01            ; ,,
+            beq adv_lang_r      ; If it's an instruction, return
             lda (LANG_PTR),y    ; Otherwise, set the mnemonic in the workspace
             sta WORK+1
             dey
@@ -1032,12 +1042,6 @@ Intro:      .asc $0d,"WAX ON",$00
 Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
 AsmErr:     .asc "ASSEMBL",$d9
 
-; Tuplet and Char3 are used to decode instruction names. Tuplet should be padded
-; to 64 characters, and Char3 should be padded to 16 characters, to support
-; language table extensions.           
-Tuplet:     .asc "ASEORTANOADEBPLSBMTXCMCPHBCLDBNJMTSTYBINBEBVBROJS"
-Char3:      .asc "ACDEIKLPQRSTVXY"
-
 ; 6502 Instructions
 ; Each instruction is encoded as three bytes.
 ; (1) The first byte is the 6502 opcode of the instruction
@@ -1048,7 +1052,7 @@ Char3:      .asc "ACDEIKLPQRSTVXY"
 ;     mode of the insruction, as shown in the Constants labels at the top
 ;     of the source code
 ;
-Instr6502:  .byte $09,$01       ; ADC
+Instr6502:  .byte $09,$07       ; ADC
             .byte $69,$a0       ; * ADC #immediate
             .byte $65,$70       ; * ADC zeropage
             .byte $75,$80       ; * ADC zeropage,X
@@ -1057,7 +1061,7 @@ Instr6502:  .byte $09,$01       ; ADC
             .byte $79,$60       ; * ADC absolute,Y
             .byte $61,$20       ; * ADC (indirect,X)
             .byte $71,$30       ; * ADC (indirect),Y
-            .byte $06,$02       ; AND
+            .byte $0b,$89       ; AND
             .byte $29,$a0       ; * AND #immediate
             .byte $25,$70       ; * AND zeropage
             .byte $35,$80       ; * AND zeropage,X
@@ -1066,42 +1070,42 @@ Instr6502:  .byte $09,$01       ; ADC
             .byte $39,$60       ; * AND absolute,Y
             .byte $21,$20       ; * AND (indirect,X)
             .byte $31,$30       ; * AND (indirect),Y
-            .byte $00,$06       ; ASL
+            .byte $0c,$d9       ; ASL
             .byte $0a,$a0       ; * ASL accumulator
             .byte $06,$70       ; * ASL zeropage
             .byte $16,$80       ; * ASL zeropage,X
             .byte $0e,$40       ; * ASL absolute
             .byte $1e,$50       ; * ASL absolute,X
-            .byte $19,$01       ; BCC
+            .byte $10,$c7       ; BCC
             .byte $90,$c0       ; * BCC relative
-            .byte $19,$0a       ; BCS
+            .byte $10,$e7       ; BCS
             .byte $b0,$c0       ; * BCS relative
-            .byte $28,$08       ; BEQ
+            .byte $11,$63       ; BEQ
             .byte $f0,$c0       ; * BEQ relative
-            .byte $25,$0b       ; BIT
+            .byte $12,$69       ; BIT
             .byte $24,$70       ; * BIT zeropage
             .byte $2c,$40       ; * BIT absolute
-            .byte $10,$04       ; BMI
+            .byte $13,$53       ; BMI
             .byte $30,$c0       ; * BMI relative
-            .byte $1d,$03       ; BNE
+            .byte $13,$8b       ; BNE
             .byte $d0,$c0       ; * BNE relative
-            .byte $0c,$06       ; BPL
+            .byte $14,$19       ; BPL
             .byte $10,$c0       ; * BPL relative
-            .byte $2c,$05       ; BRK
-            .byte $00,$b0       ; * BRK 
-            .byte $2a,$01       ; BVC
+            .byte $14,$97       ; BRK
+            .byte $00,$b0       ; * BRK implied
+            .byte $15,$87       ; BVC
             .byte $50,$c0       ; * BVC relative
-            .byte $2a,$0a       ; BVS
+            .byte $15,$a7       ; BVS
             .byte $70,$c0       ; * BVS relative
-            .byte $1a,$01       ; CLC
-            .byte $18,$b0       ; * CLC 
-            .byte $1a,$02       ; CLD
-            .byte $d8,$b0       ; * CLD 
-            .byte $1a,$04       ; CLI
-            .byte $58,$b0       ; * CLI 
-            .byte $1a,$0c       ; CLV
-            .byte $b8,$b0       ; * CLV 
-            .byte $14,$07       ; CMP
+            .byte $1b,$07       ; CLC
+            .byte $18,$b0       ; * CLC implied
+            .byte $1b,$09       ; CLD
+            .byte $d8,$b0       ; * CLD implied
+            .byte $1b,$13       ; CLI
+            .byte $58,$b0       ; * CLI implied
+            .byte $1b,$2d       ; CLV
+            .byte $b8,$b0       ; * CLV implied
+            .byte $1b,$61       ; CMP
             .byte $c9,$a0       ; * CMP #immediate
             .byte $c5,$70       ; * CMP zeropage
             .byte $d5,$80       ; * CMP zeropage,X
@@ -1110,24 +1114,24 @@ Instr6502:  .byte $09,$01       ; ADC
             .byte $d9,$60       ; * CMP absolute,Y
             .byte $c1,$20       ; * CMP (indirect,X)
             .byte $d1,$30       ; * CMP (indirect),Y
-            .byte $16,$0d       ; CPX
+            .byte $1c,$31       ; CPX
             .byte $e0,$a0       ; * CPX #immediate
             .byte $e4,$70       ; * CPX zeropage
             .byte $ec,$40       ; * CPX absolute
-            .byte $16,$0e       ; CPY
+            .byte $1c,$33       ; CPY
             .byte $c0,$a0       ; * CPY #immediate
             .byte $c4,$70       ; * CPY zeropage
             .byte $cc,$40       ; * CPY absolute
-            .byte $0a,$01       ; DEC
+            .byte $21,$47       ; DEC
             .byte $c6,$70       ; * DEC zeropage
             .byte $d6,$80       ; * DEC zeropage,X
             .byte $ce,$40       ; * DEC absolute
             .byte $de,$50       ; * DEC absolute,X
-            .byte $0a,$0d       ; DEX
-            .byte $ca,$b0       ; * DEX 
-            .byte $0a,$0e       ; DEY
-            .byte $88,$b0       ; * DEY 
-            .byte $02,$09       ; EOR
+            .byte $21,$71       ; DEX
+            .byte $ca,$b0       ; * DEX implied
+            .byte $21,$73       ; DEY
+            .byte $88,$b0       ; * DEY implied
+            .byte $2b,$e5       ; EOR
             .byte $49,$a0       ; * EOR #immediate
             .byte $45,$70       ; * EOR zeropage
             .byte $55,$80       ; * EOR zeropage,X
@@ -1136,21 +1140,21 @@ Instr6502:  .byte $09,$01       ; ADC
             .byte $59,$60       ; * EOR absolute,Y
             .byte $41,$20       ; * EOR (indirect,X)
             .byte $51,$30       ; * EOR (indirect),Y
-            .byte $26,$01       ; INC
+            .byte $4b,$87       ; INC
             .byte $e6,$70       ; * INC zeropage
             .byte $f6,$80       ; * INC zeropage,X
             .byte $ee,$40       ; * INC absolute
             .byte $fe,$50       ; * INC absolute,X
-            .byte $26,$0d       ; INX
-            .byte $e8,$b0       ; * INX 
-            .byte $26,$0e       ; INY
-            .byte $c8,$b0       ; * INY 
-            .byte $1f,$07       ; JMP
+            .byte $4b,$b1       ; INX
+            .byte $e8,$b0       ; * INX implied
+            .byte $4b,$b3       ; INY
+            .byte $c8,$b0       ; * INY implied
+            .byte $53,$61       ; JMP
             .byte $4c,$40       ; * JMP absolute
             .byte $6c,$10       ; * JMP indirect
-            .byte $2f,$09       ; JSR
+            .byte $54,$e5       ; JSR
             .byte $20,$40       ; * JSR absolute
-            .byte $1b,$00       ; LDA
+            .byte $61,$03       ; LDA
             .byte $a9,$a0       ; * LDA #immediate
             .byte $a5,$70       ; * LDA zeropage
             .byte $b5,$80       ; * LDA zeropage,X
@@ -1159,27 +1163,27 @@ Instr6502:  .byte $09,$01       ; ADC
             .byte $b9,$60       ; * LDA absolute,Y
             .byte $a1,$20       ; * LDA (indirect,X)
             .byte $b1,$30       ; * LDA (indirect),Y
-            .byte $1b,$0d       ; LDX
+            .byte $61,$31       ; LDX
             .byte $a2,$a0       ; * LDX #immediate
             .byte $a6,$70       ; * LDX zeropage
             .byte $b6,$90       ; * LDX zeropage,Y
             .byte $ae,$40       ; * LDX absolute
             .byte $be,$60       ; * LDX absolute,Y
-            .byte $1b,$0e       ; LDY
+            .byte $61,$33       ; LDY
             .byte $a0,$a0       ; * LDY #immediate
             .byte $a4,$70       ; * LDY zeropage
             .byte $b4,$80       ; * LDY zeropage,X
             .byte $ac,$40       ; * LDY absolute
             .byte $bc,$50       ; * LDY absolute,X
-            .byte $0e,$09       ; LSR
+            .byte $64,$e5       ; LSR
             .byte $4a,$a0       ; * LSR accumulator
             .byte $46,$70       ; * LSR zeropage
             .byte $56,$80       ; * LSR zeropage,X
             .byte $4e,$40       ; * LSR absolute
             .byte $5e,$50       ; * LSR absolute,X
-            .byte $07,$07       ; NOP
-            .byte $ea,$b0       ; * NOP 
-            .byte $03,$00       ; ORA
+            .byte $73,$e1       ; NOP
+            .byte $ea,$b0       ; * NOP implied
+            .byte $7c,$83       ; ORA
             .byte $09,$a0       ; * ORA #immediate
             .byte $05,$70       ; * ORA zeropage
             .byte $15,$80       ; * ORA zeropage,X
@@ -1188,31 +1192,31 @@ Instr6502:  .byte $09,$01       ; ADC
             .byte $19,$60       ; * ORA absolute,Y
             .byte $01,$20       ; * ORA (indirect,X)
             .byte $11,$30       ; * ORA (indirect),Y
-            .byte $17,$00       ; PHA
-            .byte $48,$b0       ; * PHA 
-            .byte $17,$07       ; PHP
-            .byte $08,$b0       ; * PHP 
-            .byte $0d,$00       ; PLA
-            .byte $68,$b0       ; * PLA 
-            .byte $0d,$07       ; PLP
-            .byte $28,$b0       ; * PLP 
-            .byte $2d,$06       ; ROL
+            .byte $82,$03       ; PHA
+            .byte $48,$b0       ; * PHA implied
+            .byte $82,$21       ; PHP
+            .byte $08,$b0       ; * PHP implied
+            .byte $83,$03       ; PLA
+            .byte $68,$b0       ; * PLA implied
+            .byte $83,$21       ; PLP
+            .byte $28,$b0       ; * PLP implied
+            .byte $93,$d9       ; ROL
             .byte $2a,$a0       ; * ROL accumulator
             .byte $26,$70       ; * ROL zeropage
             .byte $36,$80       ; * ROL zeropage,X
             .byte $2e,$40       ; * ROL absolute
             .byte $3e,$50       ; * ROL absolute,X
-            .byte $2d,$09       ; ROR
+            .byte $93,$e5       ; ROR
             .byte $6a,$a0       ; * ROR accumulator
             .byte $66,$70       ; * ROR zeropage
             .byte $76,$80       ; * ROR zeropage,X
             .byte $6e,$40       ; * ROR absolute
             .byte $7e,$50       ; * ROR absolute,X
-            .byte $04,$04       ; RTI
-            .byte $40,$b0       ; * RTI 
-            .byte $04,$0a       ; RTS
-            .byte $60,$b0       ; * RTS 
-            .byte $0f,$01       ; SBC
+            .byte $95,$13       ; RTI
+            .byte $40,$b0       ; * RTI implied
+            .byte $95,$27       ; RTS
+            .byte $60,$b0       ; * RTS implied
+            .byte $98,$87       ; SBC
             .byte $e9,$a0       ; * SBC #immediate
             .byte $e5,$70       ; * SBC zeropage
             .byte $f5,$80       ; * SBC zeropage,X
@@ -1221,13 +1225,13 @@ Instr6502:  .byte $09,$01       ; ADC
             .byte $f9,$60       ; * SBC absolute,Y
             .byte $e1,$20       ; * SBC (indirect,X)
             .byte $f1,$30       ; * SBC (indirect),Y
-            .byte $01,$01       ; SEC
-            .byte $38,$b0       ; * SEC 
-            .byte $01,$02       ; SED
-            .byte $f8,$b0       ; * SED 
-            .byte $01,$04       ; SEI
-            .byte $78,$b0       ; * SEI 
-            .byte $22,$00       ; STA
+            .byte $99,$47       ; SEC
+            .byte $38,$b0       ; * SEC implied
+            .byte $99,$49       ; SED
+            .byte $f8,$b0       ; * SED implied
+            .byte $99,$53       ; SEI
+            .byte $78,$b0       ; * SEI implied
+            .byte $9d,$03       ; STA
             .byte $85,$70       ; * STA zeropage
             .byte $95,$80       ; * STA zeropage,X
             .byte $8d,$40       ; * STA absolute
@@ -1235,24 +1239,24 @@ Instr6502:  .byte $09,$01       ; ADC
             .byte $99,$60       ; * STA absolute,Y
             .byte $81,$20       ; * STA (indirect,X)
             .byte $91,$30       ; * STA (indirect),Y
-            .byte $22,$0d       ; STX
+            .byte $9d,$31       ; STX
             .byte $86,$70       ; * STX zeropage
             .byte $96,$90       ; * STX zeropage,Y
             .byte $8e,$40       ; * STX absolute
-            .byte $22,$0e       ; STY
+            .byte $9d,$33       ; STY
             .byte $84,$70       ; * STY zeropage
             .byte $94,$80       ; * STY zeropage,X
             .byte $8c,$40       ; * STY absolute
-            .byte $05,$0d       ; TAX
-            .byte $aa,$b0       ; * TAX 
-            .byte $05,$0e       ; TAY
-            .byte $a8,$b0       ; * TAY 
-            .byte $21,$0d       ; TSX
-            .byte $ba,$b0       ; * TSX 
-            .byte $12,$00       ; TXA
-            .byte $8a,$b0       ; * TXA 
-            .byte $12,$0a       ; TXS
-            .byte $9a,$b0       ; * TXS 
-            .byte $23,$00       ; TYA
-            .byte $98,$b0       ; * TYA 
-            .byte TABLE_END     ; End of 6502 table
+            .byte $a0,$71       ; TAX
+            .byte $aa,$b0       ; * TAX implied
+            .byte $a0,$73       ; TAY
+            .byte $a8,$b0       ; * TAY implied
+            .byte $a4,$f1       ; TSX
+            .byte $ba,$b0       ; * TSX implied
+            .byte $a6,$03       ; TXA
+            .byte $8a,$b0       ; * TXA implied
+            .byte $a6,$27       ; TXS
+            .byte $9a,$b0       ; * TXS implied
+            .byte $a6,$43       ; TYA
+            .byte $98,$b0       ; * TYA implied
+Expand:     .byte TABLE_END     ; End of 6502 table
