@@ -37,7 +37,7 @@
 
 ; Configuration
 DISPLAYC    = $10               ; Display this many lines of code
-DISPLAYM    = $08               ; Display this many lines of memory
+DISPLAYM    = $10               ; Display this many lines of memory
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
@@ -92,7 +92,7 @@ IMPLIED     = $b0               ; e.g., INY
 RELATIVE    = $c0               ; e.g., BCC $181E
 
 ; Other constants
-TABLE_END   = $ff               ; Indicates the end of mnemonic table
+TABLE_END   = $f2               ; Indicates the end of mnemonic table
 QUOTE       = $22               ; Quote character
 
 ; Assembler workspace
@@ -1088,7 +1088,7 @@ AsmErr:     .asc "ASSEMBL",$d9
 ; Pad to 2048 characters so that
 ; (1) The obj file can be used to burn 2KBx8 ROMs
 ; (2) Language extensions have a known starting offset
-Pad:        .asc "JJ"
+Pad:        .asc "J"
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
@@ -1313,4 +1313,4 @@ InstrSet:   .byte $09,$07       ; ADC
             .byte $9a,$b0       ; * TXS implied
             .byte $a6,$43       ; TYA
             .byte $98,$b0       ; * TYA implied
-Expand:     .byte TABLE_END     ; End of 6502 table
+Expand:     .byte TABLE_END,$00 ; End of 6502 table
