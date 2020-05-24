@@ -61,6 +61,7 @@ CHROUT      = $ffd2
 WARM_START  = $0302             ; BASIC warm start vector
 READY       = $c002             ; BASIC warm start with READY.
 NX_BASIC    = $c7ae             ; Get next BASIC command
+LSTX        = $c5               ; Keyboard matrix
 BASICERR    = $c447             ; Basic error message
 BUFPTR      = $7a               ; Pointer to buffer
 CHARAC      = $07               ; Temporary character
@@ -742,8 +743,9 @@ Search:     jsr Disasm          ; Disassmble the code at the program counter
             jsr IsMatch         ; If it matches the input, show the address
             bcc check_end       ; ,,
             jsr PrintBuff       ; ,,
-check_end:  jsr ShiftDown       ; Keep searching code until the user presses
-            beq Search          ;   Shift key
+check_end:  lda LSTX            ; Keep searching code until the user presses
+            cmp #$18            ;   Stop key
+            bne Search          ;   ,,
             lda #$00            ; Start a new output buffer to indicate the
             sta IDX_OUT         ;   ending search address
             lda #"*"            ;   ,,
@@ -1084,11 +1086,6 @@ HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
 Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
 AsmErr:     .asc "ASSEMBL",$d9
-
-; Pad to 2048 characters so that
-; (1) The obj file can be used to burn 2KBx8 ROMs
-; (2) Language extensions have a known starting offset
-Pad:        .asc "J"
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
