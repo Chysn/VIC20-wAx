@@ -36,7 +36,8 @@
 * = $a000 
 
 ; Configuration
-DISPLAYL    = $10               ; Display this many lines of code or memory
+DISPLAYC    = $10               ; Display this many lines of code
+DISPLAYM    = $08               ; Display this many lines of memory
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
@@ -91,7 +92,7 @@ IMPLIED     = $b0               ; e.g., INY
 RELATIVE    = $c0               ; e.g., BCC $181E
 
 ; Other constants
-TABLE_END   = $f2               ; Indicates the end of mnemonic table
+TABLE_END   = $ff               ; Indicates the end of mnemonic table
 QUOTE       = $22               ; Quote character
 
 ; Assembler workspace
@@ -226,7 +227,7 @@ DisList:    jsr DirectMode      ; If the command is run in Direct Mode,
             bne d_listing       ;   cursor up to overwrite the original input
             lda #$91            ;   ,,
             jsr CHROUT          ;   ,,
-d_listing:  ldx #DISPLAYL       ; Show this many lines of code
+d_listing:  ldx #DISPLAYC       ; Show this many lines of code
 -loop:      txa
             pha
             jsr Disasm          ; Disassmble the code at the program counter
@@ -264,12 +265,14 @@ skip_space: jsr DOperand        ; Display operand
 disasm_r:   jsr NextValue       ; Advance to the next line of code
             rts
 
-Unknown:    jsr HexPrefix       ;
+Unknown:    jsr HexPrefix
             lda INSTDATA        ; The unknown opcode is still here   
-            jsr Hex             ;
+            jsr Hex             
+            lda #"?"
+            jsr CharOut            
             jmp disasm_r
             
-; Write Mnemonic and Parameters
+; Mnemonic Display
 DMnemonic:  lda MNEM+1          ; Strip off the low bit of the low byte, which
             pha
             and #$fe            ;   indicates that the record is a mnemonic
@@ -280,7 +283,7 @@ DMnemonic:  lda MNEM+1          ; Strip off the low bit of the low byte, which
 -loop:      lda #$00
             sta CHARAC
             ldy #$05            ; Each character encoded in five bits, shifted
--shift_l:   lda #$00            ;   as a 24-bit register into CHARAC, which
+shift_l:    lda #$00            ;   as a 24-bit register into CHARAC, which
             asl MNEM+1          ;   winds up as a ROT0 code (A=1 ... Z=26)
             rol MNEM            ;   ,,
             rol CHARAC          ;   ,,
@@ -434,8 +437,9 @@ nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
             jsr Prompt          ; Prompt for next line if in direct mode
 asm_r:      rts
             
-; Assembly Fail
-; Invalid opcode or formatting, or test failure
+; Error Message
+; Invalid opcode or formatting (ASSEMBLY)
+; Failed boolean assertion (MISMATCH, borrowed from ROM)
 Error:      ldy FUNCTION        ; Stash which function is active
             jsr Restore         ; Restore zeropage state
             lda #<AsmErr        ; Default to ASSMEBLY Error
@@ -470,20 +474,14 @@ getop_r:    rts
 ; the opcode provided for the candidate instruction. If there's a match, then
 ; that's the instruction to assemble at the program counter. If Hypotest tries
 ; all the opcodes without a match, then the candidate instruction is invalid.
-Hypotest:   lda PRGCTR+1        ; Save the program counter from the assembler
-            pha                 ;   so it can be used by the disassembler
-            lda PRGCTR
-            pha
-            jsr ResetLang       ; Reset language table
-reset:      lda #OPCODE         ; Write location to PC for hypotesting
+Hypotest:   jsr ResetLang       ; Reset language table
+reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match   
+            sty IDX_OUT         ;   b/c output buffer will be "$00AC INST"
+            lda #OPCODE         ; Write location to PC for hypotesting
             sta PRGCTR          ; ,,
             ldy #$00            ; Set the program counter high byte
             sty PRGCTR+1        ; ,,
-            ldy #$06            ; Offset disassembly by 5 bytes for buffer match
-            sty IDX_OUT         ; Reset the output buffer for disassembly
             jsr NextInst        ; Get next instruction in 6502 table
-            ldy #$00            ; Get the instruction's opcode
-            lda (LANG_PTR),y    ;   ,,
             cmp #TABLE_END      ; If we've reached the end of the table,
             beq bad_code        ;   the assembly candidate is no good
             sta OPCODE          ; Store opcode to hypotesting location
@@ -504,10 +502,8 @@ match:      jsr NextValue
             sec                 ;   bytes that need to be programmed
             sbc #OPCODE         ;   ,,
             sta CHRCOUNT        ;   ,,
-            pla                 ; Restore the program counter so that the
-            sta PRGCTR          ;   instruction is loaded to the right place
-            pla                 ;   ,,
-            sta PRGCTR+1        ;   ,,
+            lda #$00            ; Restore the progran counter so that the
+            jsr refresh_pc      ;   instruction is loaded to the right place
             sec                 ; Set Carry flag to indicate success
             rts
 test_rel:   lda IDX_OUT
@@ -522,9 +518,7 @@ test_rel:   lda IDX_OUT
             sta OPERAND         ;   branch operand to the working operand
             jsr NextValue
             jmp match           ; Treat this like a regular match from here
-bad_code:   pla                 ; Pull the program counter off the stack, but
-            pla                 ;   there's no need to do anything with it
-            clc                 ;   because we're giving up.
+bad_code:   clc                 ; Clear carry flag to indicate failure
             rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -534,7 +528,7 @@ Memory:     jsr DirectMode      ; If the command is run in Direct Mode,
             bne m_listing       ;   cursor up to hide the original input
             lda #$91            ;   ,, 
             jsr CHROUT          ;   ,,
-m_listing:  ldx #DISPLAYL       ; Show this many groups of four
+m_listing:  ldx #DISPLAYM       ; Show this many groups of four
 -next:      txa
             pha
             lda #$00
@@ -571,9 +565,9 @@ add_char:   jsr CharOut         ; ,,
             sta PRGCTR          ;   ,,
             bcc rev_off         ;   ,,
             inc PRGCTR+1        ;   ,,
-rev_off:    lda #$92            ; Reverse off after the characters
+rev_off:    jsr PrintBuff
+            lda #$92            ; Reverse off after the characters
             jsr CHROUT          ; ,,
-            jsr PrintBuff       ; Display the buffer
             pla                 ; Restore iterator
             tax                 ; ,,
             dex
@@ -752,7 +746,7 @@ check_end:  jsr ShiftDown       ; Keep searching code until the user presses
             beq Search          ;   Shift key
             lda #$00            ; Start a new output buffer to indicate the
             sta IDX_OUT         ;   ending search address
-            lda #"/"            ;   ,,
+            lda #"*"            ;   ,,
             jsr CharOut         ;   ,,
             jsr Address         ;   ,,
             jsr PrintBuff       ;   ,,
@@ -776,7 +770,7 @@ Prepare:    tay                 ; Y = the wedge character for function dispatch
             lda #$00            ; Initialize the input index for write
             sta IDX_IN          ; ,,
             jsr Transcribe      ; Transcribe from CHRGET to INBUFFER
-            sta IDX_IN          ; Re-initialize for buffer read
+refresh_pc: sta IDX_IN          ; Re-initialize for buffer read
             jsr Buff2Byte       ; Convert 2 characters to a byte   
             php                 ; Use this byte to determine success         
             sta PRGCTR+1        ; Save to the PRGCTR high byte
@@ -798,8 +792,6 @@ Restore:    ldx #$00            ; Restore workspace memory to zeropage
 Lookup:     sta INSTDATA
             jsr ResetLang
 -loop:      jsr NextInst
-            ldy #$00
-            lda (LANG_PTR),y
             cmp #TABLE_END
             beq not_found
             cmp INSTDATA
@@ -821,7 +813,7 @@ ResetLang:  lda #<InstrSet-2    ; Start two bytes before the Instruction Set
             
 ; Next Instruction in Language Table
 ; Handle mnemonics by recording the last found mnemonic and then advancing
-; to the following instruction.
+; to the following instruction. The opcode is returned in A.
 NextInst:   lda #$02            ; Each language entry is two bytes
             clc
             adc LANG_PTR
@@ -838,7 +830,9 @@ ch_mnem:    ldy #$01            ; Is this entry an instruction record?
             lda (LANG_PTR),y
             sta MNEM
             jmp NextInst        ; Go to what should now be an instruction
-adv_lang_r: rts
+adv_lang_r: ldy #$00
+            lda (LANG_PTR),y
+            rts
             
 ; Get Character
 ; Akin to CHRGET, but scans the INBUFFER, which has already been detokenized            
@@ -971,9 +965,11 @@ xscribe_r:  jsr AddInput        ; Add the final zero
 ; Add Input
 ; Add a character to the input buffer and advance the counter
 AddInput:   ldx IDX_IN
+            cpx #$16            ; Wedge lines are limited to the physical
+            bcs add_r           ;   line length
             sta INBUFFER,x
             inc IDX_IN
-            rts
+add_r:      rts
            
 ; Detokenize
 ; If one of a specific set of tokens (AND, OR, DEF) is found, explode that
@@ -1086,8 +1082,13 @@ Token:      .byte $96,$44,$45,$46   ; DEF
 ; Miscellaneous data tables
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
-Registers:  .asc $0d,"*",$0d," Y: X: A: P: S: PC::",$0d,";",$00
+Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
 AsmErr:     .asc "ASSEMBL",$d9
+
+; Pad to 2048 characters so that
+; (1) The obj file can be used to burn 2KBx8 ROMs
+; (2) Language extensions have a known starting offset
+Pad:        .asc "JJ"
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
