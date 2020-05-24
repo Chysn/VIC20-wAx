@@ -752,7 +752,7 @@ check_end:  jsr ShiftDown       ; Keep searching code until the user presses
             beq Search          ;   Shift key
             lda #$00            ; Start a new output buffer to indicate the
             sta IDX_OUT         ;   ending search address
-            lda "/"             ;   ,,
+            lda #"/"            ;   ,,
             jsr CharOut         ;   ,,
             jsr Address         ;   ,,
             jsr PrintBuff       ;   ,,
