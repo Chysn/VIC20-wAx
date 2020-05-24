@@ -95,6 +95,7 @@ QUOTE       = $22               ; Quote character
 
 ; Assembler workspace
 WORK        = $a3               ; Temporary workspace (2 bytes)
+MNEM        = $a3               ; Current Mnemonic (2 bytes)
 PRGCTR      = $a5               ; Program Counter (2 bytes)
 CHARDISP    = $a7               ; Character display for Memory (2 bytes)
 LANG_PTR    = $a7               ; Language Pointer (2 bytes)
@@ -262,16 +263,19 @@ Unknown:    jsr HexPrefix       ;
             jmp disasm_r
             
 ; Write Mnemonic and Parameters
-DMnemonic:  lda WORK+1          ; Strip off the low bit of the low byte, which
+DMnemonic:  lda MNEM+1          ; Strip off the low bit of the low byte, which
+            pha
             and #$fe            ;   indicates that the record is a mnemonic
-            sta WORK+1          ;   (encoding is big-endian)
+            sta MNEM+1          ;   (encoding is big-endian)
+            lda MNEM
+            pha
             ldx #$03            ; Three characters...
 -loop:      lda #$00
             sta CHARAC
             ldy #$05            ; Each character encoded in five bits, shifted
 -shift_l:   lda #$00            ;   as a 24-bit register into CHARAC, which
-            asl WORK+1          ;   winds up as a ROT0 code (A=1 ... Z=26)
-            rol WORK            ;   ,,
+            asl MNEM+1          ;   winds up as a ROT0 code (A=1 ... Z=26)
+            rol MNEM            ;   ,,
             rol CHARAC          ;   ,,
             dey
             bne shift_l
@@ -280,6 +284,10 @@ DMnemonic:  lda WORK+1          ; Strip off the low bit of the low byte, which
             jsr CharOut         ;   the last ROL
             dex
             bne loop
+            pla
+            sta MNEM
+            pla
+            sta MNEM+1
             rts
 
 ; Operand Display
@@ -507,7 +515,7 @@ test_rel:   ldy #$03            ; Here, relative branching instructions are
             bpl loop            ;   low byte, and then treat this as a regular
             lda RB_OPERAND      ;   match after that
             sta OPERAND         ;   ,,
-            jsr NextValue       ; Advance program counter for instruction
+            jsr NextValue
             jmp match           ; Treat this like a regular match from here
 bad_code:   pla                 ; Pull the program counter off the stack, but
             pla                 ;   there's no need to do anything with it
@@ -809,10 +817,10 @@ ch_mnem:    ldy #$01            ; Is this entry an instruction record?
             and #$01            ; ,,
             beq adv_lang_r      ; If it's an instruction, return
             lda (LANG_PTR),y    ; Otherwise, set the mnemonic in the workspace
-            sta WORK+1
+            sta MNEM+1
             dey
             lda (LANG_PTR),y
-            sta WORK
+            sta MNEM
             jmp NextInst        ; Go to what should now be an instruction
 adv_lang_r: rts
             
@@ -1052,7 +1060,7 @@ AsmErr:     .asc "ASSEMBL",$d9
 ; (1) ROM images for 2716s
 ; (2) So that extended instructions sets can always be loaded into the
 ;     same place (base + $7ff)
-Padding:    .asc "12345678901234567890123456789012345678901234567890"
+Padding:    .asc "1234567890123456789012345678901234567890"
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
