@@ -45,6 +45,7 @@ TCHAR       = $b2               ; Wedge character = for tester
 BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
 ECHAR       = $5f               ; Wedge character arrow for code execute
+SCHAR       = $ad               ; Wedge character / for code search
 
 ; System resources
 IGONE       = $0308             ; Vector to GONE
@@ -147,6 +148,8 @@ main:       jsr CHRGET
             beq Disp_Reg        ; ,,
             cmp #ECHAR          ; Execute
             beq Disp_Exec       ; ,,
+            cmp #SCHAR          ; Code Search
+            beq Disp_Srch       ; ,,
             jsr CHRGOT          ; Restore flags for the found character
             jmp GONE+3          ; +3 because the CHRGET is already done
                         
@@ -196,6 +199,12 @@ Disp_Test:  jsr Prepare
 ; https://github.com/Chysn/wAx/wiki/7-Breakpoint-Manager
 Disp_BP:    jsr Prepare
             jsr BPManager
+            jmp Return
+
+; Dispatch Code Search
+; https://github.com/Chysn/wAx/wiki/9-Code-Search
+Disp_Srch:  jsr Prepare
+            jsr Search
             ; Falls through to Return
     
 ; Return from Wedge
@@ -224,8 +233,6 @@ d_listing:  ldx #DISPLAYL       ; Show this many lines of code
             jsr PrintBuff       ; Display the buffer
             lda #$92            ; Reverse off after each instruction
             jsr CHROUT          ; ,,
-            lda #$0d            ; Carriage return after each instruction
-            jsr CHROUT          ; ,,
             pla                 ; Restore iterator
             tax                 ; ,,
             dex
@@ -249,17 +256,17 @@ op_start:   ldy #$00            ; Get the opcode
             jsr Lookup          ; Look it up
             bcc Unknown         ; Clear carry indicates an unknown opcode
             jsr DMnemonic       ; Display mnemonic
+            lda FUNCTION        ; If searching for code, omit the space
+            cmp #SCHAR          ;   ,,
+            beq skip_space      ;
             jsr Space
-            jsr DOperand        ; Display operand
-            lda #$00            ; Write $00 to the buffer for printing
-disasm_r:   jsr CharOut         ;   purposes
-            jsr NextValue       ; Advance to the next line of code
+skip_space: jsr DOperand        ; Display operand
+disasm_r:   jsr NextValue       ; Advance to the next line of code
             rts
 
 Unknown:    jsr HexPrefix       ;
             lda INSTDATA        ; The unknown opcode is still here   
             jsr Hex             ;
-            lda #"?"            ;
             jmp disasm_r
             
 ; Write Mnemonic and Parameters
@@ -472,6 +479,7 @@ reset:      lda #OPCODE         ; Write location to PC for hypotesting
             sta PRGCTR          ; ,,
             ldy #$00            ; Set the program counter high byte
             sty PRGCTR+1        ; ,,
+            ldy #$06            ; Offset disassembly by 5 bytes for buffer match
             sty IDX_OUT         ; Reset the output buffer for disassembly
             jsr NextInst        ; Get next instruction in 6502 table
             ldy #$00            ; Get the instruction's opcode
@@ -489,13 +497,8 @@ reset:      lda #OPCODE         ; Write location to PC for hypotesting
             jsr DOperand        ; Add formatted operand to buffer
             lda #$00            ; Add a $00 to the end of the disassembly as a
             jsr CharOut         ;   delimiter
-            ldy #$00
--loop:      lda INBUFFER+4,y    ; Compare the assembly with the disassembly
-            cmp OUTBUFFER,y     ;   in the buffers
-            bne reset           ; If any bytes don't match, then skip
-            iny
-            cmp #$00
-            bne loop            ; Loop until the buffer is done
+            jsr IsMatch
+            bcc reset
 match:      jsr NextValue
             lda PRGCTR          ; Set the CHRCOUNT location to the number of
             sec                 ;   bytes that need to be programmed
@@ -507,14 +510,16 @@ match:      jsr NextValue
             sta PRGCTR+1        ;   ,,
             sec                 ; Set Carry flag to indicate success
             rts
-test_rel:   ldy #$03            ; Here, relative branching instructions are
--loop:      lda OUTBUFFER,y     ;   handled. Only the first four characters
-            cmp INBUFFER+4,y    ;   are compared. If there's a match on the
-            bne reset           ;   mnemonic + $, then move the computed
-            dey                 ;   relative operand into the regular operand
-            bpl loop            ;   low byte, and then treat this as a regular
-            lda RB_OPERAND      ;   match after that
-            sta OPERAND         ;   ,,
+test_rel:   lda IDX_OUT
+            pha
+            lda #$0a            ; Handle relative branch operands here; set
+            sta IDX_OUT         ;   a stop after four characters in output
+            jsr IsMatch         ;   buffer and check for a match
+            pla
+            sta IDX_OUT
+            bcc reset          
+            lda RB_OPERAND      ; If the instruction matches, move the relative
+            sta OPERAND         ;   branch operand to the working operand
             jsr NextValue
             jmp match           ; Treat this like a regular match from here
 bad_code:   pla                 ; Pull the program counter off the stack, but
@@ -568,8 +573,6 @@ add_char:   jsr CharOut         ; ,,
             inc PRGCTR+1        ;   ,,
 rev_off:    lda #$92            ; Reverse off after the characters
             jsr CHROUT          ; ,,
-            lda #$0d
-            jsr CharOut
             jsr PrintBuff       ; Display the buffer
             pla                 ; Restore iterator
             tax                 ; ,,
@@ -634,8 +637,6 @@ BPManager:  php
             lda #$91            ;   for the user to review
             jsr CHROUT          ;   ,,
             jsr PrintBuff       ;   ,,
-            lda #$0d            ;   ,,
-            jsr CHROUT          ;   ,,
             jsr EnableBP        ; Enable the breakpoint after disassembly
 bpm_r:      jsr SetupVec        ; Make sure that the BRK handler is on
             rts
@@ -666,8 +667,6 @@ Break:      cld                 ; Escape hatch for accidentally-set Decimal flag
             tya                 ; ,, 
             jsr Hex             ; Low to buffer with no space
             jsr PrintBuff       ; Print the buffer
-            lda #$0d            ; Drop to the next line
-            jsr CHROUT          ; ,,
             jmp (WARM_START)    
             
 ; Clear Breakpoint   
@@ -742,6 +741,23 @@ Execute:    jsr SetupVec        ; Make sure the BRK handler is enabled
             jsr SYS             ; Call BASIC SYS from where it pushes RTS values
 ex_r:       brk                 ; Trigger the BRK handler
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; CODE SEARCH COMPONENTS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Search:     jsr Disasm          ; Disassmble the code at the program counter
+            jsr IsMatch         ; If it matches the input, show the address
+            bcc check_end       ; ,,
+            jsr PrintBuff       ; ,,
+check_end:  jsr ShiftDown       ; Keep searching code until the user presses
+            beq Search          ;   Shift key
+            lda #$00            ; Start a new output buffer to indicate the
+            sta IDX_OUT         ;   ending search address
+            lda "/"             ;   ,,
+            jsr CharOut         ;   ,,
+            jsr Address         ;   ,,
+            jsr PrintBuff       ;   ,,
+search_r:   rts
+            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
@@ -977,7 +993,7 @@ get_next:   iny
             jsr AddInput        ; Add it to input buffer
             dec CHRCOUNT
             bne get_next
-detoken_r: jmp Transcribe
+detoken_r:  jmp Transcribe
  
 ; Print Buffer
 ; Add a $00 delimiter to the end of the output buffer, and print it out           
@@ -986,6 +1002,8 @@ PrintBuff:  lda #$00            ; End the buffer with 0
             lda #<OUTBUFFER     ; Print the line
             ldy #>OUTBUFFER     ; ,,
             jsr PRTSTR          ; ,,
+            lda #$0d            ; Linefeed after each buffer print
+            jsr CHROUT
             rts 
             
 ; Prompt for Next Line
@@ -1041,6 +1059,21 @@ DirectMode: ldy CURLIN+1
             iny
             rts     
             
+; Is Buffer Match            
+; Does the input buffer match the output buffer?
+; Carry is set if there's a match, clear if not
+IsMatch:    ldy #$06
+-loop:      lda OUTBUFFER,y     ; Compare the assembly with the disassembly
+            cmp INBUFFER-2,y    ;   in the buffers
+            bne no_match        ; If any bytes don't match, then skip
+            iny
+            cpy IDX_OUT
+            bne loop            ; Loop until the buffer is done
+            sec                 ; This matches; set carry
+            rts
+no_match:   clc                 ; Clear carry for no match
+            rts
+            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1053,14 +1086,8 @@ Token:      .byte $96,$44,$45,$46   ; DEF
 ; Miscellaneous data tables
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
-Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
+Registers:  .asc $0d,"*",$0d," Y: X: A: P: S: PC::",$0d,";",$00
 AsmErr:     .asc "ASSEMBL",$d9
-
-; Padding to 2048 bytes, done for two reasons
-; (1) ROM images for 2716s
-; (2) So that extended instructions sets can always be loaded into the
-;     same place (base + $7ff)
-Padding:    .asc "1234567890123456789012345678901234567890"
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
