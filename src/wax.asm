@@ -54,6 +54,7 @@ CBINV       = $0316             ; BRK vector
 GONE        = $c7e4
 CHRGET      = $0073
 CHRGOT      = $0079
+KEYWORDS    = $c09e             ; Start of BASIC kewords for detokenize
 BUF         = $0200             ; Input buffer
 PRTSTR      = $cb1e             ; Print from data (Y,A)
 SYS         = $e133             ; BASIC SYS start
@@ -957,8 +958,7 @@ write_r:    rts
 Transcribe: jsr CHRGET
             cmp #$00
             beq xscribe_r
-            cmp #$80
-            bcs Detokenize
+            bmi Detokenize
 x_add:      jsr AddInput
             jmp Transcribe
 xscribe_r:  jsr AddInput        ; Add the final zero
@@ -975,23 +975,24 @@ add_r:      rts
            
 ; Detokenize
 ; If one of a specific set of tokens (AND, OR, DEF) is found, explode that
-; token into PETSCII characters so it can be disassembled
-Detokenize: ldy #$00            ; Iterate through the token table looking
--loop:      cmp Token,y         ;   for the possible token
-            beq explode         ; Found the token, so explode it
-            iny
-            cpy #$0f
-            bne loop
-            jmp Transcribe      ; Ignore invalid tokens and move on
-explode:    lda #$03
-            sta CHRCOUNT
-get_next:   iny
-            lda Token,y         ; Character from the table
-            beq detoken_r
-            jsr AddInput        ; Add it to input buffer
-            dec CHRCOUNT
-            bne get_next
-detoken_r:  jmp Transcribe
+; token into PETSCII characters so it can be disassembled. This is based
+; on the ROM uncrunch code around $c71a.
+Detokenize: ldy #$65
+            tax                 ; Copy token number to X
+get_next:   dex
+            beq explode         ; Token found, go write
+-loop       iny                 ; Else increment index
+            lda KEYWORDS,y      ; Get byte from keyword table
+            bpl loop            ; Loop until end marker
+            bmi get_next
+explode:    iny                 ; Found the keyword; get characters from
+            lda KEYWORDS,y      ;   table
+            bmi last_char       ; If there's an end marker, mask byte and
+            jsr AddInput        ;   add to input buffer
+            bne explode
+last_char:  and #$7f            ; Take out bit 7 and
+            jsr AddInput        ;   add to input buffer
+            bne Transcribe      ; Pick up where we left off earlier
  
 ; Print Buffer
 ; Add a $00 delimiter to the end of the output buffer, and print it out           
@@ -1075,17 +1076,11 @@ no_match:   clc                 ; Clear carry for no match
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; The Token table is used to detokenize certain BASIC keywords that might
-; appear in assembly or addresses
-Token:      .byte $96,$44,$45,$46   ; DEF
-            .byte $af,$41,$4e,$44   ; AND
-            .byte $b0,$4f,$52,$00   ; OR
-
-; Miscellaneous data tables
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
 Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
 AsmErr:     .asc "ASSEMBL",$d9
+Pad:        .asc "2020 JASONJUSTIAN"
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
