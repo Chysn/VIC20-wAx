@@ -107,7 +107,6 @@ FUNCTION    = $ab               ; Current function (ACHAR, DCHAR)
 OPCODE      = $ac               ; Assembly target for hypotesting
 OPERAND     = $ad               ; Operand storage (2 bytes)
 RB_OPERAND  = $af               ; Hypothetical relative branch operand
-QUOTES_ON   = $af               ; Quote flag for transcribe
 INSTSIZE    = $b0               ; Instruction size
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
@@ -602,9 +601,6 @@ TextEdit:   lda #$00            ; Truncate string; make sure there's a
             beq edit_exit       ; Return to MemEditor if 0
             cmp #QUOTE          ; Is this the closing quote?
             beq edit_exit       ; Return to MemEditor if quote
-            cmp #$a0            ; Convert a Shift-Space into Space because
-            bne pop             ;   CHRGET filters real spaces
-            lda #$20            ;   ,,
 pop:        sta (PRGCTR),y      ; Populate data
             iny
             jmp loop
@@ -767,6 +763,8 @@ Prepare:    tay                 ; Y = the wedge character for function dispatch
             lda #$00            ; Initialize the input index for write
             sta IDX_IN          ; ,,
             jsr Transcribe      ; Transcribe from CHRGET to INBUFFER
+            lda #$ef            ; $0082 BEQ $008a -> BEQ $0073
+            sta $83             ; ,,
 refresh_pc: lda #$00            ; Re-initialize for buffer read
             sta IDX_IN          ; ,,
             jsr Buff2Byte       ; Convert 2 characters to a byte   
@@ -950,20 +948,23 @@ write_r:    rts
 ; Get a character from the input buffer and transcribe it to the
 ; input buffer. If the character is a BASIC token, then possibly
 ; explode it into individual characters.
-Transcribe: lda #$00            ; Reset quotes flag
-            sta QUOTES_ON
-next_char:  jsr CHRGET
+Transcribe: jsr CHRGET
             cmp #$00
             beq xscribe_r
             cmp #QUOTE          ; If a quote is found, modify CHRGET so that
             bne ch_token        ;   spaces are no longer filtered out
-            inc QUOTES_ON
-ch_token:   bmi Detokenize
+            lda #$06            ; $0082 BEQ $0073 -> BEQ $008a
+            sta $83             ; ,,
+            lda #QUOTE          ; Put quote back so it can be added to buffer
+ch_token:   bpl x_add
+            ldy $83
+            cpy #$06
+            beq x_add
+            jsr Detokenize
+            jmp Transcribe
 x_add:      jsr AddInput
-            jmp next_char
+            jmp Transcribe
 xscribe_r:  jsr AddInput        ; Add the final zero, and fix CHRGET...
-            lda #$c9            ; $007e BEQ $008a  ->  BEQ $0073
-            sta $7c             ; ,,
             rts
 
 ; Add Input
@@ -979,9 +980,7 @@ add_r:      rts
 ; If one of a specific set of tokens (AND, OR, DEF) is found, explode that
 ; token into PETSCII characters so it can be disassembled. This is based
 ; on the ROM uncrunch code around $c71a.
-Detokenize: lda QUOTES_ON       ; Don't detokenize if quote has been entereed
-            bne next_char       ; ,,
-            ldy #$65
+Detokenize: ldy #$65
             tax                 ; Copy token number to X
 get_next:   dex
             beq explode         ; Token found, go write
@@ -996,7 +995,7 @@ explode:    iny                 ; Found the keyword; get characters from
             bne explode
 last_char:  and #$7f            ; Take out bit 7 and
             jsr AddInput        ;   add to input buffer
-            bne next_char       ; Pick up where we left off earlier
+detok_r:    rts
  
 ; Print Buffer
 ; Add a $00 delimiter to the end of the output buffer, and print it out           
