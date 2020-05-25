@@ -172,7 +172,7 @@ Disp_Mem:   jsr Prepare
             jmp Return  
 
 ; Dispatch Data Editor 
-; https://github.com/Chysn/wAx/wiki/4-Data-Editor           
+; https://github.com/Chysn/wAx/wiki/4-Memory-Editor          
 Disp_Edit:  jsr Prepare
             jsr MemEditor
             jmp Return 
