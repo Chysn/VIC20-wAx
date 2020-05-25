@@ -38,7 +38,6 @@
 ; Configuration
 DISPLAYC    = $10               ; Display this many lines of code
 DISPLAYM    = $10               ; Display this many lines of memory
-SEARCHL     = $10               ; Search this many pages (s * 256 bytes)
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
@@ -47,7 +46,6 @@ TCHAR       = $b2               ; Wedge character = for tester
 BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
 ECHAR       = $5f               ; Wedge character arrow for code execute
-SCHAR       = $ad               ; Wedge character / for code search
 
 ; System resources
 IGONE       = $0308             ; Vector to GONE
@@ -110,7 +108,6 @@ OPCODE      = $ac               ; Assembly target for hypotesting
 OPERAND     = $ad               ; Operand storage (2 bytes)
 RB_OPERAND  = $af               ; Hypothetical relative branch operand
 INSTSIZE    = $b0               ; Instruction size
-SEARCHC     = $b0               ; Find count
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
@@ -153,8 +150,6 @@ main:       jsr CHRGET
             beq Disp_Reg        ; ,,
             cmp #ECHAR          ; Execute
             beq Disp_Exec       ; ,,
-            cmp #SCHAR          ; Code Search
-            beq Disp_Srch       ; ,,
             jsr CHRGOT          ; Restore flags for the found character
             jmp GONE+3          ; +3 because the CHRGET is already done
                         
@@ -204,12 +199,6 @@ Disp_Test:  jsr Prepare
 ; https://github.com/Chysn/wAx/wiki/7-Breakpoint-Manager
 Disp_BP:    jsr Prepare
             jsr BPManager
-            jmp Return
-
-; Dispatch Code Search
-; https://github.com/Chysn/wAx/wiki/9-Code-Search
-Disp_Srch:  jsr Prepare
-            jsr Search
             ; Falls through to Return
     
 ; Return from Wedge
@@ -261,9 +250,6 @@ op_start:   ldy #$00            ; Get the opcode
             jsr Lookup          ; Look it up
             bcc Unknown         ; Clear carry indicates an unknown opcode
             jsr DMnemonic       ; Display mnemonic
-            lda FUNCTION        ; If searching for code, omit the space
-            cmp #SCHAR          ;   ,,
-            beq skip_space      ;   ,,
             jsr Space
 skip_space: jsr DOperand        ; Display operand
 disasm_r:   jsr NextValue       ; Advance to the next line of code
@@ -738,34 +724,6 @@ Execute:    jsr SetupVec        ; Make sure the BRK handler is enabled
             jsr Restore         ; Restore the zeropage locations used
             jsr SYS             ; Call BASIC SYS from where it pushes RTS values
 ex_r:       brk                 ; Trigger the BRK handler
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; CODE SEARCH COMPONENTS
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Search:     lda #SEARCHL        ; Set the search counter
-            sta SEARCHC         ; ,,
-next_inst:  jsr Disasm          ; Disassmble the code at the program counter
-            jsr IsMatch         ; If it matches the input, show the address
-            bcc check_end       ; ,,
-            jsr PrintBuff       ; Print address
-check_end:  lda LSTX            ; Keep searching code until the user presses
-            cmp #$18            ;   Stop key
-            beq search_r        ;   ,,
-            lda PRGCTR          ; Check the program counter; have we gone
-            cmp #$04            ;   to another page?
-            bcs next_inst       ; If not, continue the search
-            dec SEARCHC         ; If so, decrement the search counter, and
-            bne next_inst       ;   end the search if it's done
-search_r:   inc SEARCHC         ; If the shift key is held down, keep the
-            jsr ShiftDown       ;   search going
-            bne next_inst       ;   ,,
-            lda #$00            ; Start a new output buffer to indicate the
-            sta IDX_OUT         ;   ending search address
-            lda #"*"            ;   ,,
-            jsr CharOut         ;   ,,
-            jsr Address         ;   ,,
-            jsr PrintBuff       ;   ,,
-            rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES

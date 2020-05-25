@@ -38,16 +38,14 @@
 ; Configuration
 DISPLAYC    = $10               ; Display this many lines of code
 DISPLAYM    = $10               ; Display this many lines of memory
-SEARCHL     = $10               ; Search this many pages (s * 256 bytes)
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
-HCHAR       = ":"               ; Wedge character : for hex entry
+ECHAR       = ":"               ; Wedge character : for data editor
 TCHAR       = $b2               ; Wedge character = for tester
 BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
-ECHAR       = $5f               ; Wedge character arrow for code execute
-SCHAR       = $ad               ; Wedge character / for code search
+XCHAR       = $5f               ; Wedge character arrow for code execute
 
 ; System resources
 IGONE       = $0308             ; Vector to GONE
@@ -109,8 +107,8 @@ FUNCTION    = $ab               ; Current function (ACHAR, DCHAR)
 OPCODE      = $ac               ; Assembly target for hypotesting
 OPERAND     = $ad               ; Operand storage (2 bytes)
 RB_OPERAND  = $af               ; Hypothetical relative branch operand
+QUOTES_ON   = $af               ; Quote flag for transcribe
 INSTSIZE    = $b0               ; Instruction size
-SEARCHC     = $b0               ; Find count
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
@@ -143,18 +141,16 @@ main:       jsr CHRGET
             beq Disp_Asm        ; ,,
             cmp #MCHAR          ; Memory Dump
             beq Disp_Mem        ; ,,
-            cmp #HCHAR          ; Hex Editor
-            beq Disp_Hex        ; ,,
+            cmp #ECHAR          ; Memory Editor
+            beq Disp_Edit       ; ,,
             cmp #TCHAR          ; Tester
             beq Disp_Test       ; ,,
             cmp #BCHAR          ; Breakpoint Manager
             beq Disp_BP         ; ,,
             cmp #RCHAR          ; Register Setter
             beq Disp_Reg        ; ,,
-            cmp #ECHAR          ; Execute
+            cmp #XCHAR          ; Execute
             beq Disp_Exec       ; ,,
-            cmp #SCHAR          ; Code Search
-            beq Disp_Srch       ; ,,
             jsr CHRGOT          ; Restore flags for the found character
             jmp GONE+3          ; +3 because the CHRGET is already done
                         
@@ -176,10 +172,10 @@ Disp_Mem:   jsr Prepare
             jsr Memory
             jmp Return  
 
-; Dispatch Hex Editor 
-; https://github.com/Chysn/wAx/wiki/4-Hex-Editor           
-Disp_Hex:   jsr Prepare
-            jsr HexEditor
+; Dispatch Data Editor 
+; https://github.com/Chysn/wAx/wiki/4-Data-Editor           
+Disp_Edit:  jsr Prepare
+            jsr MemEditor
             jmp Return 
   
 ; Dispatch Register Editor           
@@ -204,12 +200,6 @@ Disp_Test:  jsr Prepare
 ; https://github.com/Chysn/wAx/wiki/7-Breakpoint-Manager
 Disp_BP:    jsr Prepare
             jsr BPManager
-            jmp Return
-
-; Dispatch Code Search
-; https://github.com/Chysn/wAx/wiki/9-Code-Search
-Disp_Srch:  jsr Prepare
-            jsr Search
             ; Falls through to Return
     
 ; Return from Wedge
@@ -261,9 +251,6 @@ op_start:   ldy #$00            ; Get the opcode
             jsr Lookup          ; Look it up
             bcc Unknown         ; Clear carry indicates an unknown opcode
             jsr DMnemonic       ; Display mnemonic
-            lda FUNCTION        ; If searching for code, omit the space
-            cmp #SCHAR          ;   ,,
-            beq skip_space      ;   ,,
             jsr Space
 skip_space: jsr DOperand        ; Display operand
 disasm_r:   jsr NextValue       ; Advance to the next line of code
@@ -506,8 +493,7 @@ match:      jsr NextValue
             sec                 ;   bytes that need to be programmed
             sbc #OPCODE         ;   ,,
             sta INSTSIZE        ;   ,,
-            lda #$00            ; Restore the progran counter so that the
-            jsr refresh_pc      ;   instruction is loaded to the right place
+            jsr refresh_pc      ; Restore the program counter to target address
             sec                 ; Set Carry flag to indicate success
             rts
 test_rel:   lda IDX_OUT
@@ -582,22 +568,46 @@ rev_off:    jsr PrintBuff
             rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; HEX EDITOR COMPONENT
+; MEMORY EDITOR COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-HexEditor:  ldy #$00
+MemEditor:  lda INBUFFER+4      ; Is there a double-quote after the address?
+            cmp #QUOTE          ; ,,
+            beq TextEdit        ; If so, route to Text Editor
+            ldy #$00            ; Y=Data index
 -loop:      jsr Buff2Byte
-            bcc hex_exit        ; Bail out on the first non-hex byte
+            bcc edit_exit       ; Bail out on the first non-hex byte
             sta (PRGCTR),y      
             iny
             cpy #$04
             bne loop
-hex_exit:   cpy #$00
-            beq hex_r
+edit_exit:  cpy #$00
+            beq edit_r
             tya
             tax
             jsr Prompt          ; Prompt for the next address
             jsr ClearBP         ; Clear breakpoint if anything was changed
-hex_r:      rts
+edit_r:     rts
+
+; Text Editor
+; If the input starts with a quote, add characters until we reach another
+; quote, or 0
+TextEdit:   lda #$00            ; Truncate string; make sure there's a
+            sta OUTBUFFER-1     ;   terminator
+-loop:      jsr CharGet         ; Look for the starting quote that MemEditor
+            cmp #QUOTE          ;   promised
+            bne TextEdit
+            ldy #$00            ; Y=Data Index
+-loop:      jsr CharGet
+            cmp #$00            ; (This is necessary due to INC in CharGet)
+            beq edit_exit       ; Return to MemEditor if 0
+            cmp #QUOTE          ; Is this the closing quote?
+            beq edit_exit       ; Return to MemEditor if quote
+            cmp #$a0            ; Convert a Shift-Space into Space because
+            bne pop             ;   CHRGET filters real spaces
+            lda #$20            ;   ,,
+pop:        sta (PRGCTR),y      ; Populate data
+            iny
+            jmp loop
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; TEST COMPONENT
@@ -738,34 +748,6 @@ Execute:    jsr SetupVec        ; Make sure the BRK handler is enabled
             jsr Restore         ; Restore the zeropage locations used
             jsr SYS             ; Call BASIC SYS from where it pushes RTS values
 ex_r:       brk                 ; Trigger the BRK handler
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; CODE SEARCH COMPONENTS
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Search:     lda #SEARCHL        ; Set the search counter
-            sta SEARCHC         ; ,,
-next_inst:  jsr Disasm          ; Disassmble the code at the program counter
-            jsr IsMatch         ; If it matches the input, show the address
-            bcc check_end       ; ,,
-            jsr PrintBuff       ; Print address
-check_end:  lda LSTX            ; Keep searching code until the user presses
-            cmp #$18            ;   Stop key
-            beq search_r        ;   ,,
-            lda PRGCTR          ; Check the program counter; have we gone
-            cmp #$04            ;   to another page?
-            bcs next_inst       ; If not, continue the search
-            dec SEARCHC         ; If so, decrement the search counter, and
-            bne next_inst       ;   end the search if it's done
-search_r:   inc SEARCHC         ; If the shift key is held down, keep the
-            jsr ShiftDown       ;   search going
-            bne next_inst       ;   ,,
-            lda #$00            ; Start a new output buffer to indicate the
-            sta IDX_OUT         ;   ending search address
-            lda #"*"            ;   ,,
-            jsr CharOut         ;   ,,
-            jsr Address         ;   ,,
-            jsr PrintBuff       ;   ,,
-            rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -785,7 +767,8 @@ Prepare:    tay                 ; Y = the wedge character for function dispatch
             lda #$00            ; Initialize the input index for write
             sta IDX_IN          ; ,,
             jsr Transcribe      ; Transcribe from CHRGET to INBUFFER
-refresh_pc: sta IDX_IN          ; Re-initialize for buffer read
+refresh_pc: lda #$00            ; Re-initialize for buffer read
+            sta IDX_IN          ; ,,
             jsr Buff2Byte       ; Convert 2 characters to a byte   
             php                 ; Use this byte to determine success         
             sta PRGCTR+1        ; Save to the PRGCTR high byte
@@ -967,13 +950,20 @@ write_r:    rts
 ; Get a character from the input buffer and transcribe it to the
 ; input buffer. If the character is a BASIC token, then possibly
 ; explode it into individual characters.
-Transcribe: jsr CHRGET
+Transcribe: lda #$00            ; Reset quotes flag
+            sta QUOTES_ON
+next_char:  jsr CHRGET
             cmp #$00
             beq xscribe_r
-            bmi Detokenize
+            cmp #QUOTE          ; If a quote is found, modify CHRGET so that
+            bne ch_token        ;   spaces are no longer filtered out
+            inc QUOTES_ON
+ch_token:   bmi Detokenize
 x_add:      jsr AddInput
-            jmp Transcribe
-xscribe_r:  jsr AddInput        ; Add the final zero
+            jmp next_char
+xscribe_r:  jsr AddInput        ; Add the final zero, and fix CHRGET...
+            lda #$c9            ; $007e BEQ $008a  ->  BEQ $0073
+            sta $7c             ; ,,
             rts
 
 ; Add Input
@@ -989,7 +979,9 @@ add_r:      rts
 ; If one of a specific set of tokens (AND, OR, DEF) is found, explode that
 ; token into PETSCII characters so it can be disassembled. This is based
 ; on the ROM uncrunch code around $c71a.
-Detokenize: ldy #$65
+Detokenize: lda QUOTES_ON       ; Don't detokenize if quote has been entereed
+            bne next_char       ; ,,
+            ldy #$65
             tax                 ; Copy token number to X
 get_next:   dex
             beq explode         ; Token found, go write
@@ -1004,7 +996,7 @@ explode:    iny                 ; Found the keyword; get characters from
             bne explode
 last_char:  and #$7f            ; Take out bit 7 and
             jsr AddInput        ;   add to input buffer
-            bne Transcribe      ; Pick up where we left off earlier
+            bne next_char       ; Pick up where we left off earlier
  
 ; Print Buffer
 ; Add a $00 delimiter to the end of the output buffer, and print it out           
