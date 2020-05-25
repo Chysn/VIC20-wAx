@@ -216,7 +216,8 @@ in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Disassembly Listing
 ; Disassemble multiple instructions, starting from the program counter
-DisList:    jsr DirectMode      ; If the command is run in Direct Mode,
+DisList:    bcc list_r          ; Bail if the address is no good
+            jsr DirectMode      ; If the command is run in Direct Mode,
             bne d_listing       ;   cursor up to overwrite the original input
             lda #$91            ;   ,,
             jsr CHROUT          ;   ,,
@@ -235,7 +236,7 @@ d_listing:  ldx #DISPLAYC       ; Show this many lines of code
             jsr ShiftDown       ; Keep scrolling if the Shift Key
             bne loop            ;   is held down
             jsr EnableBP        ; Re-enable breakpoint, if necessary
-            rts
+list_r:     rts
 
 ; Disassemble
 ; Disassemble a single instruction at the program counter
@@ -513,7 +514,8 @@ bad_code:   clc                 ; Clear carry flag to indicate failure
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY DUMP COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Memory:     jsr DirectMode      ; If the command is run in Direct Mode,
+Memory:     bcc mem_r           ; Bail if address is no good
+            jsr DirectMode      ; If the command is run in Direct Mode,
             bne m_listing       ;   cursor up to hide the original input
             lda #$91            ;   ,, 
             jsr CHROUT          ;   ,,
@@ -564,7 +566,7 @@ rev_off:    jsr PrintBuff
             inx
             jsr ShiftDown       ; Keep scrolling if the Shift Key
             bne next            ;   is held down
-            rts
+mem_r:      rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY EDITOR COMPONENTS
@@ -1081,8 +1083,9 @@ no_match:   clc                 ; Clear carry for no match
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
-Registers:  .asc $0d,"*Y: X: A: P: S: PC::",$0d,";",$00
+Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
 AsmErr:     .asc "ASSEMBL",$d9
+Pad2048:    .asc "JJ"
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
