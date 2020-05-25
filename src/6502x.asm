@@ -13,24 +13,24 @@
 TABLE_END   = $f2
 
 Extended:   .byte $0b,$87       ; ANC
-            .byte $0b,$a0       ; * ANC #immediate
-            .byte $2b,$a0       ; * ANC #immediate
+            .byte $0b,$a0       ; * ANC immediate
+            .byte $2b,$a0       ; * ANC immediate
             .byte $98,$71       ; SAX
             .byte $87,$70       ; * SAX zero page
             .byte $97,$90       ; * SAX zero page,y
             .byte $83,$20       ; * SAX (indirect,x)
             .byte $8f,$40       ; * SAX absolute
             .byte $0c,$a5       ; ARR
-            .byte $6b,$a0       ; * ARR #immediate
+            .byte $6b,$a0       ; * ARR immediate
             .byte $0c,$e5       ; ASR
-            .byte $4b,$a0       ; * ASR #immediate
+            .byte $4b,$a0       ; * ASR immediate
             .byte $66,$03       ; LXA
-            .byte $ab,$a0       ; * LXA #immediate
+            .byte $ab,$a0       ; * LXA immediate
             .byte $9a,$03       ; SHA
             .byte $9f,$60       ; * SHA absolute,y
             .byte $93,$30       ; * SHA (indirect),y
             .byte $98,$b1       ; SBX
-            .byte $cb,$a0       ; * SBX #immediate
+            .byte $cb,$a0       ; * SBX immediate
             .byte $20,$e1       ; DCP
             .byte $c7,$70       ; * DCP zero page
             .byte $d7,$80       ; * DCP zero page,x
@@ -39,6 +39,21 @@ Extended:   .byte $0b,$87       ; ANC
             .byte $db,$60       ; * DCP absolute,y
             .byte $c3,$20       ; * DCP (indirect,x)
             .byte $d3,$30       ; * DCP (indirect),y
+            .byte $23,$e1       ; DOP
+            .byte $04,$70       ; * DOP zero page
+            .byte $14,$80       ; * DOP zero page,x
+            .byte $34,$80       ; * DOP zero page,x
+            .byte $44,$70       ; * DOP zero page
+            .byte $54,$80       ; * DOP zero page,x
+            .byte $64,$70       ; * DOP zero page
+            .byte $74,$80       ; * DOP zero page,x
+            .byte $80,$a0       ; * DOP immediate
+            .byte $82,$a0       ; * DOP immediate
+            .byte $89,$a0       ; * DOP immediate
+            .byte $c2,$a0       ; * DOP immediate
+            .byte $d4,$80       ; * DOP zero page,x
+            .byte $e2,$a0       ; * DOP immediate
+            .byte $f4,$80       ; * DOP zero page,x
             .byte $4c,$c5       ; ISB
             .byte $e7,$70       ; * ISB zero page
             .byte $f7,$80       ; * ISB zero page,x
@@ -57,33 +72,12 @@ Extended:   .byte $0b,$87       ; ANC
             .byte $a3,$20       ; * LAX (indirect,x)
             .byte $b3,$30       ; * LAX (indirect),y
             .byte $73,$e1       ; NOP
-            .byte $1a,$b0       ; * NOP 
-            .byte $3a,$b0       ; * NOP 
-            .byte $5a,$b0       ; * NOP 
-            .byte $7a,$b0       ; * NOP 
-            .byte $da,$b0       ; * NOP 
-            .byte $fa,$b0       ; * NOP 
-            .byte $04,$70       ; * NOP zero page
-            .byte $14,$80       ; * NOP zero page,x
-            .byte $34,$80       ; * NOP zero page,x
-            .byte $44,$70       ; * NOP zero page
-            .byte $54,$80       ; * NOP zero page,x
-            .byte $64,$70       ; * NOP zero page
-            .byte $74,$80       ; * NOP zero page,x
-            .byte $80,$a0       ; * NOP #immediate
-            .byte $82,$a0       ; * NOP #immediate
-            .byte $89,$a0       ; * NOP #immediate
-            .byte $c2,$a0       ; * NOP #immediate
-            .byte $d4,$80       ; * NOP zero page,x
-            .byte $e2,$a0       ; * NOP #immediate
-            .byte $f4,$80       ; * NOP zero page,x
-            .byte $0c,$40       ; * NOP absolute
-            .byte $1c,$50       ; * NOP absolute,x
-            .byte $3c,$50       ; * NOP absolute,x
-            .byte $5c,$50       ; * NOP absolute,x
-            .byte $7c,$50       ; * NOP absolute,x
-            .byte $dc,$50       ; * NOP absolute,x
-            .byte $fc,$50       ; * NOP absolute,x            
+            .byte $1a,$b0       ; * NOP implied
+            .byte $3a,$b0       ; * NOP implied
+            .byte $5a,$b0       ; * NOP implied
+            .byte $7a,$b0       ; * NOP implied
+            .byte $da,$b0       ; * NOP implied
+            .byte $fa,$b0       ; * NOP implied
             .byte $93,$03       ; RLA
             .byte $27,$70       ; * RLA zero page
             .byte $37,$80       ; * RLA zero page,x
@@ -101,7 +95,7 @@ Extended:   .byte $0b,$87       ; ANC
             .byte $63,$20       ; * RRA (indirect,x)
             .byte $73,$30       ; * RRA (indirect),y
             .byte $98,$87       ; SBC
-            .byte $eb,$a0       ; * SBC #immediate
+            .byte $eb,$a0       ; * SBC immediate
             .byte $9b,$1f       ; SLO
             .byte $07,$70       ; * SLO zero page
             .byte $17,$80       ; * SLO zero page,x
@@ -122,12 +116,20 @@ Extended:   .byte $0b,$87       ; ANC
             .byte $9e,$60       ; * SHX absolute,y
             .byte $9a,$33       ; SHY
             .byte $9c,$50       ; * SHY absolute,x
+            .byte $a3,$e1       ; TOP
+            .byte $0c,$40       ; * TOP absolute
+            .byte $1c,$50       ; * TOP absolute,x
+            .byte $3c,$50       ; * TOP absolute,x
+            .byte $5c,$50       ; * TOP absolute,x
+            .byte $7c,$50       ; * TOP absolute,x
+            .byte $dc,$50       ; * TOP absolute,x
+            .byte $fc,$50       ; * TOP absolute,x
             .byte $0b,$8b       ; ANE
-            .byte $8b,$a0       ; * ANE #immediate
+            .byte $8b,$a0       ; * ANE immediate
             .byte $9a,$27       ; SHS
             .byte $9b,$60       ; * SHS absolute,y
             .byte $50,$5b       ; JAM
-            .byte $02,$b0       ; * JAM            
+            .byte $02,$b0       ; * JAM implied           
             .byte $43,$29       ; HLT
-            .byte $02,$b0       ; * HLT 
+            .byte $02,$b0       ; * HLT implied
             .byte TABLE_END     ; End of 6502 extended table
