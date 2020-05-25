@@ -748,14 +748,14 @@ next_inst:  jsr Disasm          ; Disassmble the code at the program counter
             jsr IsMatch         ; If it matches the input, show the address
             bcc check_end       ; ,,
             jsr PrintBuff       ; Print address
-check_end:  lda PRGCTR          ; Check the program counter; have we gone
+check_end:  lda LSTX            ; Keep searching code until the user presses
+            cmp #$18            ;   Stop key
+            beq search_r        ;   ,,
+            lda PRGCTR          ; Check the program counter; have we gone
             cmp #$04            ;   to another page?
             bcs next_inst       ; If not, continue the search
             dec SEARCHC         ; If so, decrement the search counter, and
-            beq search_r        ;   end the search if it's done
-            lda LSTX            ; Keep searching code until the user presses
-            cmp #$18            ;   Stop key
-            bne next_inst       ;   ,,
+            bne next_inst       ;   end the search if it's done
 search_r:   inc SEARCHC         ; If the shift key is held down, keep the
             jsr ShiftDown       ;   search going
             bne next_inst       ;   ,,
