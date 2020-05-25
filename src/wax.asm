@@ -38,7 +38,7 @@
 ; Configuration
 DISPLAYC    = $10               ; Display this many lines of code
 DISPLAYM    = $10               ; Display this many lines of memory
-SEARCHL     = $08               ; Search this many pages (s * 256 bytes)
+SEARCHL     = $10               ; Search this many pages (s * 256 bytes)
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
