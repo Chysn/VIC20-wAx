@@ -38,6 +38,7 @@
 ; Configuration
 DISPLAYC    = $10               ; Display this many lines of code
 DISPLAYM    = $10               ; Display this many lines of memory
+SEARCHL     = $08               ; Search this many pages (s * 256 bytes)
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
@@ -108,7 +109,8 @@ FUNCTION    = $ab               ; Current function (ACHAR, DCHAR)
 OPCODE      = $ac               ; Assembly target for hypotesting
 OPERAND     = $ad               ; Operand storage (2 bytes)
 RB_OPERAND  = $af               ; Hypothetical relative branch operand
-CHRCOUNT    = $b0               ; Detokenization count
+INSTSIZE    = $b0               ; Instruction size
+SEARCHC     = $b0               ; Find count
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
@@ -261,7 +263,7 @@ op_start:   ldy #$00            ; Get the opcode
             jsr DMnemonic       ; Display mnemonic
             lda FUNCTION        ; If searching for code, omit the space
             cmp #SCHAR          ;   ,,
-            beq skip_space      ;
+            beq skip_space      ;   ,,
             jsr Space
 skip_space: jsr DOperand        ; Display operand
 disasm_r:   jsr NextValue       ; Advance to the next line of code
@@ -423,8 +425,8 @@ test:       lda IDX_IN          ; If not enough characters have been entered to
             bcc Error           ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
             lda OPCODE          ;   to the program counter. The number of bytes
-            sta (PRGCTR),y      ;   to transcribe is stored in the CHRCOUNT memory
-            ldx CHRCOUNT        ;   location.
+            sta (PRGCTR),y      ;   to transcribe is stored in the INSTSIZE memory
+            ldx INSTSIZE        ;   location.
             cpx #$02            ; Store the low operand byte, if indicated
             bcc nextline        ; ,,
             lda OPERAND         ; ,,
@@ -500,10 +502,10 @@ reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match
             jsr IsMatch
             bcc reset
 match:      jsr NextValue
-            lda PRGCTR          ; Set the CHRCOUNT location to the number of
+            lda PRGCTR          ; Set the INSTSIZE location to the number of
             sec                 ;   bytes that need to be programmed
             sbc #OPCODE         ;   ,,
-            sta CHRCOUNT        ;   ,,
+            sta INSTSIZE        ;   ,,
             lda #$00            ; Restore the progran counter so that the
             jsr refresh_pc      ;   instruction is loaded to the right place
             sec                 ; Set Carry flag to indicate success
@@ -740,20 +742,30 @@ ex_r:       brk                 ; Trigger the BRK handler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; CODE SEARCH COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Search:     jsr Disasm          ; Disassmble the code at the program counter
+Search:     lda #SEARCHL        ; Set the search counter
+            sta SEARCHC         ; ,,
+next_inst:  jsr Disasm          ; Disassmble the code at the program counter
             jsr IsMatch         ; If it matches the input, show the address
             bcc check_end       ; ,,
-            jsr PrintBuff       ; ,,
-check_end:  lda LSTX            ; Keep searching code until the user presses
+            jsr PrintBuff       ; Print address
+check_end:  lda PRGCTR          ; Check the program counter; have we gone
+            cmp #$04            ;   to another page?
+            bcs next_inst       ; If not, continue the search
+            dec SEARCHC         ; If so, decrement the search counter, and
+            beq search_r        ;   end the search if it's done
+            lda LSTX            ; Keep searching code until the user presses
             cmp #$18            ;   Stop key
-            bne Search          ;   ,,
+            bne next_inst       ;   ,,
+search_r:   inc SEARCHC         ; If the shift key is held down, keep the
+            jsr ShiftDown       ;   search going
+            bne next_inst       ;   ,,
             lda #$00            ; Start a new output buffer to indicate the
             sta IDX_OUT         ;   ending search address
             lda #"*"            ;   ,,
             jsr CharOut         ;   ,,
             jsr Address         ;   ,,
             jsr PrintBuff       ;   ,,
-search_r:   rts
+            rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -1078,9 +1090,8 @@ no_match:   clc                 ; Clear carry for no match
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
-Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
+Registers:  .asc $0d,"*Y: X: A: P: S: PC::",$0d,";",$00
 AsmErr:     .asc "ASSEMBL",$d9
-Pad:        .asc "2020 JASONJUSTIAN"
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
