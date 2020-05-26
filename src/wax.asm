@@ -294,16 +294,15 @@ shift_l:    lda #$00            ;   as a 24-bit register into CHARAC, which
 ; Operand Display
 ; Dispatch display routines based on addressing mode
 DOperand:   lda INSTDATA+1
-            and #$f0            ; Isolate addressing mode from data table
             cmp #IMPLIED        ; Handle each addressing mode with a subroutine
-            beq DisImp
+            beq DisImp          ; Implied has no operand, so it goes to some RTS
             cmp #RELATIVE
             beq DisRel
             cmp #IMMEDIATE
             beq DisImm
-            cmp #ZEROPAGE
+            cmp #ZEROPAGE       ; Subsumes all zeropage modes
             bcs DisZP
-            cmp #ABSOLUTE
+            cmp #ABSOLUTE       ; Subsumes all absolute modes
             bcs DisAbs
             ; Fall through to DisInd, because it's the only one left
 
@@ -770,12 +769,15 @@ Prepare:    tay                 ; Y = the wedge character for function dispatch
 refresh_pc: lda #$00            ; Re-initialize for buffer read
             sta IDX_IN          ; ,,
             jsr Buff2Byte       ; Convert 2 characters to a byte   
-            php                 ; Use this byte to determine success         
+            bcc addr_fail       ; Fail if the byte couldn't be parsed
             sta PRGCTR+1        ; Save to the PRGCTR high byte
             jsr Buff2Byte       ; Convert next 2 characters to byte
+            bcc addr_fail       ; Fail if the byte couldn't be parsed
             sta PRGCTR          ; Save to the PRGCTR low byte
-            plp
             rts
+addr_fail:  clc                 ; If either address byte fails, clear Carry
+            rts
+            
 ; Restore
 ; Put back temporary zeropage workspace            
 Restore:    ldx #$00            ; Restore workspace memory to zeropage
@@ -1085,7 +1087,6 @@ HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
 Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
 AsmErr:     .asc "ASSEMBL",$d9
-Pad2048:    .asc "JJ"
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
