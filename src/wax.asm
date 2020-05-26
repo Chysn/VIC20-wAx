@@ -38,6 +38,7 @@
 ; Configuration
 DISPLAYC    = $10               ; Display this many lines of code
 DISPLAYM    = $10               ; Display this many lines of memory
+TOOL_COUNT  = $08               ; How many tools are there?
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
@@ -134,72 +135,27 @@ installed:  jsr SetupVec        ; Set up vectors (IGONE and BRK)
 ; MAIN PROGRAM
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;              
 main:       jsr CHRGET
-            cmp #DCHAR          ; Disassembler
-            beq Disp_Dasm       ; ,,
-            cmp #ACHAR          ; Assembler
-            beq Disp_Asm        ; ,,
-            cmp #MCHAR          ; Memory Dump
-            beq Disp_Mem        ; ,,
-            cmp #ECHAR          ; Memory Editor
-            beq Disp_Edit       ; ,,
-            cmp #TCHAR          ; Tester
-            beq Disp_Test       ; ,,
-            cmp #BCHAR          ; Breakpoint Manager
-            beq Disp_BP         ; ,,
-            cmp #RCHAR          ; Register Setter
-            beq Disp_Reg        ; ,,
-            cmp #XCHAR          ; Execute
-            beq Disp_Exec       ; ,,
-            jsr CHRGOT          ; Restore flags for the found character
+            ldy #$00
+-loop:      cmp ToolTable,y
+            beq run_tool
+            iny                 ; Go to the next table entry
+            cpy #TOOL_COUNT
+            beq to_gone
+            bne loop
+to_gone:    jsr CHRGOT          ; Restore flags for the found character
             jmp GONE+3          ; +3 because the CHRGET is already done
-                        
-; Dispatch Disassembler  
-; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler          
-Disp_Dasm:  jsr Prepare
-            jsr DisList
-            jmp Return    
-
-; Dispatch Assembler
-; https://github.com/Chysn/wAx/wiki/2-6502-Assembler
-Disp_Asm:   jsr Prepare
-            jsr Assemble
-            jmp Return
-            
-; Dispatch Memory Dump 
-; https://github.com/Chysn/wAx/wiki/3-Memory-Dump           
-Disp_Mem:   jsr Prepare
-            jsr Memory
-            jmp Return  
-
-; Dispatch Data Editor 
-; https://github.com/Chysn/wAx/wiki/4-Memory-Editor          
-Disp_Edit:  jsr Prepare
-            jsr MemEditor
-            jmp Return 
-  
-; Dispatch Register Editor           
-; https://github.com/Chysn/wAx/wiki/5-Register-Editor
-Disp_Reg:   jsr Prepare
-            jsr Register
-            jmp Return     
-
-; Dispatch Subroutine Execution   
-; https://github.com/Chysn/wAx/wiki/6-Subroutine-Execution    
-Disp_Exec:  jsr Prepare
-            jmp Execute
-            
-; Dispatch Assertion Tester           
-; https://github.com/Chysn/wAx/wiki/8-Assertion-Tester
-Disp_Test:  jsr Prepare
-            jsr Tester
-            bcs Return
-            jmp Error
-                                          
-; Dispatch Breakpoint Manager
-; https://github.com/Chysn/wAx/wiki/7-Breakpoint-Manager
-Disp_BP:    jsr Prepare
-            jsr BPManager
-            ; Falls through to Return
+run_tool:   tax                 ; Save A in X so Prepare can set FUNCTION
+            lda #>Return-1      ; Push the address-1 of Return onto the stack
+            pha                 ;   as the destination for RTS of the
+            lda #<Return-1      ;   selected tool
+            pha                 ;   ,,
+            lda ToolAddr_H,y    ; Push the looked-up address-1 of the selected
+            pha                 ;   tool onto the stack. The RTS below will
+            lda ToolAddr_L,y    ;   pull off the address and route execution
+            pha                 ;   to the appropriate tool
+            txa                 ; Pass A to Prepare as FUNCTION
+            jsr Prepare         ; ,,
+            rts                 ; Pull address-1 off stack and go there
     
 ; Return from Wedge
 ; Return in one of two ways:
@@ -617,10 +573,8 @@ Tester:     ldy #$00
             iny
             cpy #$04
             bne loop
-test_r:     sec
-            rts
-test_err:   clc
-            rts
+test_r:     rts
+test_err:   jmp Error
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BREAKPOINT COMPONENTS
@@ -744,7 +698,9 @@ Execute:    jsr SetupVec        ; Make sure the BRK handler is enabled
             sta SYS_DEST+1      ;   system.
             jsr Restore         ; Restore the zeropage locations used
             jsr SYS             ; Call BASIC SYS from where it pushes RTS values
-ex_r:       brk                 ; Trigger the BRK handler
+ex_r:       pla                 ; Pull the stack entries to Return off the
+            pla                 ;   stack, as we don't need them
+            brk                 ; Trigger the BRK handler
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -1083,6 +1039,28 @@ no_match:   clc                 ; Clear carry for no match
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; ToolTable contains the list of commands and addresses for each command
+ToolTable:	; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler 
+            .byte DCHAR                  
+            ; https://github.com/Chysn/wAx/wiki/2-6502-Assembler
+            .byte ACHAR         
+            ; https://github.com/Chysn/wAx/wiki/3-Memory-Dump
+            .byte MCHAR          
+            ; https://github.com/Chysn/wAx/wiki/4-Memory-Editor  
+            .byte ECHAR                 
+            ; https://github.com/Chysn/wAx/wiki/5-Register-Editor
+            .byte RCHAR         
+            ; https://github.com/Chysn/wAx/wiki/6-Subroutine-Execution 
+            .byte XCHAR         
+            ; https://github.com/Chysn/wAx/wiki/7-Breakpoint-Manager
+            .byte BCHAR         
+            ; https://github.com/Chysn/wAx/wiki/8-Assertion-Tester    
+            .byte TCHAR           
+ToolAddr_L: .byte <DisList-1,<Assemble-1,<Memory-1,<MemEditor-1
+            .byte <Register-1,<Execute-1,<BPManager-1,<Tester-1
+ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1
+            .byte >Register-1,>Execute-1,>BPManager-1,>Tester-1
+                      
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
 Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00

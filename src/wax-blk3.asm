@@ -294,16 +294,15 @@ shift_l:    lda #$00            ;   as a 24-bit register into CHARAC, which
 ; Operand Display
 ; Dispatch display routines based on addressing mode
 DOperand:   lda INSTDATA+1
-            and #$f0            ; Isolate addressing mode from data table
             cmp #IMPLIED        ; Handle each addressing mode with a subroutine
-            beq DisImp
+            beq DisImp          ; Implied has no operand, so it goes to some RTS
             cmp #RELATIVE
             beq DisRel
             cmp #IMMEDIATE
             beq DisImm
-            cmp #ZEROPAGE
+            cmp #ZEROPAGE       ; Subsumes all zeropage modes
             bcs DisZP
-            cmp #ABSOLUTE
+            cmp #ABSOLUTE       ; Subsumes all absolute modes
             bcs DisAbs
             ; Fall through to DisInd, because it's the only one left
 
