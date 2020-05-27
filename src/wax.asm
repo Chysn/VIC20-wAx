@@ -107,7 +107,7 @@ CHARDISP    = $a7               ; Character display for Memory (2 bytes)
 DESTINATION = $a7               ; Move destination for Transfer (2 bytes)
 LANG_PTR    = $a7               ; Language Pointer (2 bytes)
 INSTDATA    = $a9               ; Instruction data (2 bytes)
-FUNCTION    = $ab               ; Current function (ACHAR, DCHAR)
+TOOL_CHR    = $ab               ; Current function (ACHAR, DCHAR)
 OPCODE      = $ac               ; Assembly target for hypotesting
 OPERAND     = $ad               ; Operand storage (2 bytes)
 RB_OPERAND  = $af               ; Hypothetical relative branch operand
@@ -147,7 +147,7 @@ main:       jsr CHRGET
             bne loop
 to_gone:    jsr CHRGOT          ; Restore flags for the found character
             jmp GONE+3          ; +3 because the CHRGET is already done
-run_tool:   tax                 ; Save A in X so Prepare can set FUNCTION
+run_tool:   tax                 ; Save A in X so Prepare can set TOOL_CHR
             lda #>Return-1      ; Push the address-1 of Return onto the stack
             pha                 ;   as the destination for RTS of the
             lda #<Return-1      ;   selected tool
@@ -156,7 +156,6 @@ run_tool:   tax                 ; Save A in X so Prepare can set FUNCTION
             pha                 ;   tool onto the stack. The RTS below will
             lda ToolAddr_L,y    ;   pull off the address and route execution
             pha                 ;   to the appropriate tool
-            txa                 ; Pass A to Prepare as FUNCTION
             jsr Prepare         ; ,,
             rts                 ; Pull address-1 off stack and go there
     
@@ -200,7 +199,7 @@ list_r:     rts
 Disasm:     lda #$00            ; Reset the buffer index
             sta IDX_OUT         ; ,,
             jsr BreakInd        ; Indicate breakpoint, if it's here
-            lda FUNCTION        ; Start each line with the wedge character, so
+            lda TOOL_CHR        ; Start each line with the wedge character, so
             jsr CharOut         ;   the user can chain invocations
             jsr Address
 op_start:   ldy #$00            ; Get the opcode
@@ -365,7 +364,7 @@ test:       lda IDX_IN          ; If not enough characters have been entered to
             cmp #$06            ;   be mistaken for an intentional instrution,
             bcc asm_r           ;   just go to BASIC
 -loop:      jsr Hypotest        ; Line is done; hypothesis test for a match
-            bcc Error           ; Clear carry means the test failed
+            bcc AsmError        ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
             lda OPCODE          ;   to the program counter. The number of bytes
             sta (PRGCTR),y      ;   to transcribe is stored in the INSTSIZE memory
@@ -387,16 +386,14 @@ asm_r:      rts
 ; Error Message
 ; Invalid opcode or formatting (ASSEMBLY)
 ; Failed boolean assertion (MISMATCH, borrowed from ROM)
-Error:      ldy FUNCTION        ; Stash which function is active
-            jsr Restore         ; Restore zeropage state
-            lda #<AsmErr        ; Default to ASSMEBLY Error
-            ldx #>AsmErr        ; ,,
-            cpy #TCHAR          ; If the function is Assertion Test,
-            bne show_err        ;   then change the error to
-            lda #<MISMATCH      ;   MISMATCH Error
+AsmError:   lda #<AsmErrMsg     ; Default to ASSMEBLY Error
+            ldx #>AsmErrMsg     ; ,,
+            bne show_err
+MisError:   lda #<MISMATCH      ;   MISMATCH Error
             ldx #>MISMATCH      ;   ,,
 show_err:   sta ERROR_PTR       ; Set the selected pointer
             stx ERROR_PTR+1     ;   ,,
+            jsr Restore         ; Return zeropage workspace to original
             jmp BASICERR        ; And emit the error
 
 ; Get Operand
@@ -573,7 +570,7 @@ Tester:     ldy #$00
             cpy #$04
             bne loop
 test_r:     rts
-test_err:   jmp Error
+test_err:   jmp MisError
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BREAKPOINT COMPONENTS
@@ -676,7 +673,8 @@ enable_r:   rts
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; REGISTER COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Register:   lda PRGCTR+1        ; Two bytes are already set in the program
+Register:   bcc register_r      ; Don't set Y and X if they're not provided
+            lda PRGCTR+1        ; Two bytes are already set in the program
             sta YREG            ;   counter. These are Y and X
             lda PRGCTR          ;   ,,
             sta XREG            ;   ,,
@@ -684,6 +682,7 @@ Register:   lda PRGCTR+1        ; Two bytes are already set in the program
             bcc register_r      ; Don't set A if the byte is not provided
             sta ACC             ;   ,,
             jsr Buff2Byte       ; Get a fourth byte to set Processor Status
+            bcc register_r      ; Don't set P if the byte is not provided
             sta PROC            ;   ,,
 register_r: rts
                                                 
@@ -705,7 +704,7 @@ ex_r:       pla                 ; Pull the stack entries to Return off the
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; CONVERT COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Hex2Base10: bcc xfer_r          ; Bail if the start address is no good
+Hex2Base10: bcc xfer_r          ; Bail if the hex input is no good
             lda #$91            ; Cursor up to the previous line
             jsr CHROUT          ; ,,
             lda #$1d            ; Cursor over to the right side of the line
@@ -731,14 +730,15 @@ xfer_r:     rts
 ; (1) Save registers for Return
 ; (2) Save the current Function
 ; (3) Get the program counter address from the input
-Prepare:    tay                 ; Y = the wedge character for function dispatch
-            ldx #$00            ; wAx is to be zeropage-neutral, so preserve
--loop:      lda WORK,x          ;   its workspace in temp storage. When this
-            sta ZP_TMP,x        ;   routine is done, the data will be restored
-            inx                 ;   in Return
-            cpx #$10            ;   ,,
+;
+; The caller should pass the current tool character in X for storage in TOOL_CHR
+Prepare:    ldy #$00            ; wAx is to be zeropage-neutral, so preserve
+-loop:      lda WORK,y          ;   its workspace in temp storage. When this
+            sta ZP_TMP,y        ;   routine is done, the data will be restored
+            iny                 ;   in Return
+            cpy #$10            ;   ,,
             bne loop            ;   ,,
-            sty FUNCTION        ; Store the mode (to normalize spaces in buffer)
+            stx TOOL_CHR        ; Store the tool character
             lda #$00            ; Initialize the input index for write
             sta IDX_IN          ; ,,
             jsr Transcribe      ; Transcribe from CHRGET to INBUFFER
@@ -931,7 +931,8 @@ write_r:    rts
 ; input buffer. If the character is a BASIC token, then possibly
 ; explode it into individual characters.
 Transcribe: jsr CHRGET          ; Get character from input buffer
-            beq xscribe_r       ; If it's 0, then quit transcribing and return
+            cmp #$00            ; If it's 0, then quit transcribing and return
+            beq xscribe_r       ; ,,
             cmp #QUOTE          ; If a quote is found, modify CHRGET so that
             bne ch_token        ;   spaces are no longer filtered out
             lda #$06            ; $0082 BEQ $0073 -> BEQ $008a
@@ -998,7 +999,7 @@ Prompt:     jsr DirectMode      ; If a tool is in Direct Mode, increase
             bne prompt_r        ;   the PC by the size of the instruction
             tya                 ;   and write it to the keyboard buffer (by
             sta IDX_OUT         ;   way of populating the output buffer)
-            lda FUNCTION        ;   ,,
+            lda TOOL_CHR        ;   ,,
             jsr CharOut         ;   ,,
             txa                 ;   ,,
             clc                 ;   ,,
@@ -1088,8 +1089,8 @@ ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
                       
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
-Registers:  .asc $0d,"*BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
-AsmErr:     .asc "ASSEMBL",$d9
+Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
+AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
