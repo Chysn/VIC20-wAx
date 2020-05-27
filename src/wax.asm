@@ -38,7 +38,7 @@
 ; Configuration
 DISPLAYC    = $10               ; Display this many lines of code
 DISPLAYM    = $10               ; Display this many lines of memory
-TOOL_COUNT  = $08               ; How many tools are there?
+TOOL_COUNT  = $09               ; How many tools are there?
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
@@ -47,6 +47,7 @@ TCHAR       = $b2               ; Wedge character = for tester
 BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
 XCHAR       = $5f               ; Wedge character arrow for code execute
+CCHAR       = "#"               ; Wedge character > for copy
 
 ; System resources
 IGONE       = $0308             ; Vector to GONE
@@ -57,6 +58,7 @@ CHRGOT      = $0079
 KEYWORDS    = $c09e             ; Start of BASIC kewords for detokenize
 BUF         = $0200             ; Input buffer
 PRTSTR      = $cb1e             ; Print from data (Y,A)
+PRTFIX      = $ddcd             ; Print base-10 number
 SYS         = $e133             ; BASIC SYS start
 CHROUT      = $ffd2
 WARM_START  = $0302             ; BASIC warm start vector
@@ -102,6 +104,7 @@ WORK        = $a3               ; Temporary workspace (2 bytes)
 MNEM        = $a3               ; Current Mnemonic (2 bytes)
 PRGCTR      = $a5               ; Program Counter (2 bytes)
 CHARDISP    = $a7               ; Character display for Memory (2 bytes)
+DESTINATION = $a7               ; Move destination for Transfer (2 bytes)
 LANG_PTR    = $a7               ; Language Pointer (2 bytes)
 INSTDATA    = $a9               ; Instruction data (2 bytes)
 FUNCTION    = $ab               ; Current function (ACHAR, DCHAR)
@@ -128,7 +131,8 @@ Install:    jsr $c533           ; Re-chain BASIC program to set BASIC
 installed:  jsr SetupVec        ; Set up vectors (IGONE and BRK)
             lda #<Intro         ; Announce that wAx is on
             ldy #>Intro         ; ,,
-            jsr PRTSTR          ; ,,            
+            jsr PRTSTR          ; ,,
+            jsr ClearBP         ; Clear breakpoint on install            
             jmp (READY)
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -140,7 +144,6 @@ main:       jsr CHRGET
             beq run_tool
             iny                 ; Go to the next table entry
             cpy #TOOL_COUNT
-            beq to_gone
             bne loop
 to_gone:    jsr CHRGOT          ; Restore flags for the found character
             jmp GONE+3          ; +3 because the CHRGET is already done
@@ -173,7 +176,7 @@ in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command
 ; Disassembly Listing
 ; Disassemble multiple instructions, starting from the program counter
 DisList:    bcc list_r          ; Bail if the address is no good
-            jsr DirectMode      ; If the command is run in Direct Mode,
+            jsr DirectMode      ; If the tool is run in Direct Mode,
             bne d_listing       ;   cursor up to overwrite the original input
             lda #$91            ;   ,,
             jsr CHROUT          ;   ,,
@@ -182,8 +185,6 @@ d_listing:  ldx #DISPLAYC       ; Show this many lines of code
             pha
             jsr Disasm          ; Disassmble the code at the program counter
             jsr PrintBuff       ; Display the buffer
-            lda #$92            ; Reverse off after each instruction
-            jsr CHROUT          ; ,,
             pla                 ; Restore iterator
             tax                 ; ,,
             dex
@@ -200,7 +201,7 @@ Disasm:     lda #$00            ; Reset the buffer index
             sta IDX_OUT         ; ,,
             jsr BreakInd        ; Indicate breakpoint, if it's here
             lda FUNCTION        ; Start each line with the wedge character, so
-            jsr CharOut         ;   the user can chain commands
+            jsr CharOut         ;   the user can chain invocations
             jsr Address
 op_start:   ldy #$00            ; Get the opcode
             lda (PRGCTR),y      ;   ,,
@@ -470,7 +471,7 @@ bad_code:   clc                 ; Clear carry flag to indicate failure
 ; MEMORY DUMP COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Memory:     bcc mem_r           ; Bail if address is no good
-            jsr DirectMode      ; If the command is run in Direct Mode,
+            jsr DirectMode      ; If the tool is run in Direct Mode,
             bne m_listing       ;   cursor up to hide the original input
             lda #$91            ;   ,, 
             jsr CHROUT          ;   ,,
@@ -480,7 +481,7 @@ m_listing:  ldx #DISPLAYM       ; Show this many groups of four
             lda #$00
             sta IDX_OUT
             lda #MCHAR          ; Start each line with the wedge character, so
-            jsr CharOut         ;   the user can chain commands
+            jsr CharOut         ;   the user can chain invocations
             jsr Address
             ldy #$00
 -loop:      lda (PRGCTR),y
@@ -512,8 +513,6 @@ add_char:   jsr CharOut         ; ,,
             bcc rev_off         ;   ,,
             inc PRGCTR+1        ;   ,,
 rev_off:    jsr PrintBuff
-            lda #$92            ; Reverse off after the characters
-            jsr CHROUT          ; ,,
             pla                 ; Restore iterator
             tax                 ; ,,
             dex
@@ -702,6 +701,28 @@ ex_r:       pla                 ; Pull the stack entries to Return off the
             pla                 ;   stack, as we don't need them
             brk                 ; Trigger the BRK handler
             
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; CONVERT COMPONENT
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Hex2Base10: bcc xfer_r          ; Bail if the start address is no good
+            lda #$91            ; Cursor up to the previous line
+            jsr CHROUT          ; ,,
+            lda #$1d            ; Cursor over to the right side of the line
+            ldy #$10            ; ,,
+-loop:      jsr CHROUT          ; ,,
+            dey                 ; ,,
+            bne loop            ; ,,
+            lda #$12            ; Reverse on after the characters
+            jsr CHROUT          ; ,,
+            ldx PRGCTR          ; Use PRTFIX to print the program counter
+            lda PRGCTR+1        ;   as a base-10 number
+            jsr PRTFIX          ;   ,,
+            lda #$92            ; Reverse off after the characters
+            jsr CHROUT          ; ,,
+            lda #$0d            ;   ,,
+            jsr CHROUT          ;   ,,
+xfer_r:     rts
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
@@ -964,6 +985,8 @@ PrintBuff:  lda #$00            ; End the buffer with 0
             lda #<OUTBUFFER     ; Print the line
             ldy #>OUTBUFFER     ; ,,
             jsr PRTSTR          ; ,,
+            lda #$92            ; Reverse off after each line
+            jsr CHROUT          ; ,,
             lda #$0d            ; Linefeed after each buffer print
             jsr CHROUT
             rts 
@@ -971,7 +994,7 @@ PrintBuff:  lda #$00            ; End the buffer with 0
 ; Prompt for Next Line
 ; X should be set to the number of bytes the program counter should be
 ; advanced
-Prompt:     jsr DirectMode      ; If a command is in Direct Mode, increase
+Prompt:     jsr DirectMode      ; If a tool is in Direct Mode, increase
             bne prompt_r        ;   the PC by the size of the instruction
             tya                 ;   and write it to the keyboard buffer (by
             sta IDX_OUT         ;   way of populating the output buffer)
@@ -1000,7 +1023,7 @@ prompt_r:   rts
 ; Set Up Vectors
 ; Used by installation, and also by the breakpoint manager                    
 SetupVec:   lda #<main          ; Intercept GONE to process wedge
-            sta IGONE           ;   commands
+            sta IGONE           ;   tool invocations
             lda #>main          ;   ,,
             sta IGONE+1         ;   ,,
             lda #<Break         ; Set the BRK interrupt vector
@@ -1016,7 +1039,7 @@ ShiftDown:  lda KEYCVTRS
             rts    
             
 ; In Direct Mode
-; If the wAx command is running in Direct Mode, the Zero flag will be set
+; If the wAx tool is running in Direct Mode, the Zero flag will be set
 DirectMode: ldy CURLIN+1
             iny
             rts     
@@ -1039,7 +1062,7 @@ no_match:   clc                 ; Clear carry for no match
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; ToolTable contains the list of commands and addresses for each command
+; ToolTable contains the list of tools and addresses for each tool
 ToolTable:	; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler 
             .byte DCHAR                  
             ; https://github.com/Chysn/wAx/wiki/2-6502-Assembler
@@ -1056,14 +1079,16 @@ ToolTable:	; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler
             .byte BCHAR         
             ; https://github.com/Chysn/wAx/wiki/8-Assertion-Tester    
             .byte TCHAR           
-ToolAddr_L: .byte <DisList-1,<Assemble-1,<Memory-1,<MemEditor-1
-            .byte <Register-1,<Execute-1,<BPManager-1,<Tester-1
-ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1
-            .byte >Register-1,>Execute-1,>BPManager-1,>Tester-1
+            ; https://github.com/Chysn/wAx/wiki/9-Hex-to-Decimal
+            .byte CCHAR
+ToolAddr_L: .byte <DisList-1,<Assemble-1,<Memory-1,<MemEditor-1,<Register-1
+            .byte <Execute-1,<BPManager-1,<Tester-1,<Hex2Base10-1
+ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
+            .byte >Execute-1,>BPManager-1,>Tester-1,>Hex2Base10-1
                       
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
-Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
+Registers:  .asc $0d,"*BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
 AsmErr:     .asc "ASSEMBL",$d9
 
 ; Instruction Set
