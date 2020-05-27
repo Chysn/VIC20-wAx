@@ -1079,7 +1079,7 @@ ToolTable:	; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler
             .byte BCHAR         
             ; https://github.com/Chysn/wAx/wiki/8-Assertion-Tester    
             .byte TCHAR           
-            ; https://github.com/Chysn/wAx/wiki/9-Hex-to-Decimal
+            ; https://github.com/Chysn/wAx/wiki/9-Hexadecimal-to-Base-10-Converter
             .byte CCHAR
 ToolAddr_L: .byte <DisList-1,<Assemble-1,<Memory-1,<MemEditor-1,<Register-1
             .byte <Execute-1,<BPManager-1,<Tester-1,<Hex2Base10-1
