@@ -681,10 +681,11 @@ Register:   lda PRGCTR+1        ; Two bytes are already set in the program
             lda PRGCTR          ;   ,,
             sta XREG            ;   ,,
             jsr Buff2Byte       ; Get a third byte to set Accumulator
+            bcc register_r      ; Don't set A if the byte is not provided
             sta ACC             ;   ,,
             jsr Buff2Byte       ; Get a fourth byte to set Processor Status
             sta PROC            ;   ,,
-            rts
+register_r: rts
                                                 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; EXECUTE COMPONENT
@@ -766,13 +767,13 @@ Restore:    ldx #$00            ; Restore workspace memory to zeropage
             rts       
 
 ; Look up opcode
-Lookup:     sta INSTDATA
-            jsr ResetLang
--loop:      jsr NextInst
-            cmp #TABLE_END
-            beq not_found
-            cmp INSTDATA
-            bne loop
+Lookup:     sta INSTDATA        ; INSTDATA is the found opcode
+            jsr ResetLang       ; Reset the language table reference
+-loop:      jsr NextInst        ; Get the next 6502 instruction in the table
+            cmp #TABLE_END      ; If we've reached the end of the table,
+            beq not_found       ;   then the instruction is invalid
+            cmp INSTDATA        ; If the instruction doesn't match the opcode,
+            bne loop            ;   keep searching.
 found:      iny
             lda (LANG_PTR),y    ; A match was found! Set the addressing mode
             sta INSTDATA+1      ;   to the instruction data structure
@@ -791,24 +792,24 @@ ResetLang:  lda #<InstrSet-2    ; Start two bytes before the Instruction Set
 ; Next Instruction in Language Table
 ; Handle mnemonics by recording the last found mnemonic and then advancing
 ; to the following instruction. The opcode is returned in A.
-NextInst:   lda #$02            ; Each language entry is two bytes
-            clc
-            adc LANG_PTR
-            sta LANG_PTR
-            bcc ch_mnem
-            inc LANG_PTR+1
+NextInst:   lda #$02            ; Each language entry is two bytes. Advance to
+            clc                 ;   the next entry in the table
+            adc LANG_PTR        ;   ,,
+            sta LANG_PTR        ;   ,,
+            bcc ch_mnem         ;   ,,
+            inc LANG_PTR+1      ;   ,,
 ch_mnem:    ldy #$01            ; Is this entry an instruction record?
             lda (LANG_PTR),y    ; ,,
             and #$01            ; ,,
             beq adv_lang_r      ; If it's an instruction, return
             lda (LANG_PTR),y    ; Otherwise, set the mnemonic in the workspace
-            sta MNEM+1
-            dey
-            lda (LANG_PTR),y
-            sta MNEM
+            sta MNEM+1          ;   as two bytes, five bits per character for
+            dey                 ;   three characters. See the 6502 table for
+            lda (LANG_PTR),y    ;   a description of the data encoding
+            sta MNEM            ;   ,,
             jmp NextInst        ; Go to what should now be an instruction
-adv_lang_r: ldy #$00
-            lda (LANG_PTR),y
+adv_lang_r: ldy #$00            ; When an instruction is found, set A to its
+            lda (LANG_PTR),y    ;   opcode and return
             rts
             
 ; Get Character
@@ -825,7 +826,7 @@ Buff2Byte:  jsr CharGet
             jsr Char2Nyb
             cmp #TABLE_END
             beq byte_err
-            asl                 ; Multiple high nybble by 16
+            asl                 ; Multiply high nybble by 16
             asl                 ;   ,,
             asl                 ;   ,,
             asl                 ;   ,,
@@ -837,8 +838,8 @@ Buff2Byte:  jsr CharGet
             ora WORK            ; Combine high and low nybbles
             sec                 ; Set Carry flag indicates success
             rts
-byte_err:   clc
-            rts
+byte_err:   clc                 ; Clear Carry flag indicates that this isn't a
+            rts                 ;   hexadecimal number
        
 ; Character to Nybble
 ; A is the character in the text buffer to be converted into a nybble
@@ -860,12 +861,12 @@ next_r:     ldy #$00
             lda (PRGCTR),y
             rts
 
-; Show Hex Prefix
+; Write hex prefix to buffer
 HexPrefix:  lda #"$"
             jsr CharOut
             rts
 
-; Show Space           
+; Write space to buffer          
 Space:      lda #" "
             jsr CharOut
             rts
@@ -878,12 +879,12 @@ Address:    lda PRGCTR+1        ; Show the address
             jsr Space
             rts
 
-; Show Hex Byte
+; Write hex byte to buffer
 Hex:        pha                 ; Show the high nybble first
-            lsr
-            lsr
-            lsr
-            lsr
+            lsr                 ; Multiply by 4
+            lsr                 ; ,,
+            lsr                 ; ,,
+            lsr                 ; ,,
             tax
             lda HexDigit,x
             jsr CharOut
@@ -929,21 +930,20 @@ write_r:    rts
 ; Get a character from the input buffer and transcribe it to the
 ; input buffer. If the character is a BASIC token, then possibly
 ; explode it into individual characters.
-Transcribe: jsr CHRGET
-            cmp #$00
-            beq xscribe_r
+Transcribe: jsr CHRGET          ; Get character from input buffer
+            beq xscribe_r       ; If it's 0, then quit transcribing and return
             cmp #QUOTE          ; If a quote is found, modify CHRGET so that
             bne ch_token        ;   spaces are no longer filtered out
             lda #$06            ; $0082 BEQ $0073 -> BEQ $008a
             sta $83             ; ,,
             lda #QUOTE          ; Put quote back so it can be added to buffer
-ch_token:   bpl x_add
-            ldy $83
-            cpy #$06
-            beq x_add
-            jsr Detokenize
-            jmp Transcribe
-x_add:      jsr AddInput
+ch_token:   bpl x_add           ; If it's not a token, just add it to buffer
+            ldy $83             ; If it's a token, check the CHRGET routine
+            cpy #$06            ;  and skip detokenization if it's been
+            beq x_add           ;  modified.
+            jsr Detokenize      ; Detokenize and continue transciption
+            jmp Transcribe      ; ,,
+x_add:      jsr AddInput        ; Add the text to the buffer
             jmp Transcribe
 xscribe_r:  jsr AddInput        ; Add the final zero, and fix CHRGET...
             rts
