@@ -522,7 +522,8 @@ mem_r:      rts
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY EDITOR COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-MemEditor:  lda INBUFFER+4      ; Is there a double-quote after the address?
+MemEditor:  bcc edit_r          ; Bail out of the address is no good
+            lda INBUFFER+4      ; Is there a double-quote after the address?
             cmp #QUOTE          ; ,,
             beq TextEdit        ; If so, route to Text Editor
             ldy #$00            ; Y=Data index
@@ -543,9 +544,7 @@ edit_r:     rts
 ; Text Editor
 ; If the input starts with a quote, add characters until we reach another
 ; quote, or 0
-TextEdit:   lda #$00            ; Truncate string; make sure there's a
-            sta OUTBUFFER-1     ;   terminator
--loop:      jsr CharGet         ; Look for the starting quote that MemEditor
+TextEdit:   jsr CharGet         ; Look for the starting quote that MemEditor
             cmp #QUOTE          ;   promised
             bne TextEdit
             ldy #$00            ; Y=Data Index
@@ -556,6 +555,8 @@ TextEdit:   lda #$00            ; Truncate string; make sure there's a
             beq edit_exit       ; Return to MemEditor if quote
 pop:        sta (PRGCTR),y      ; Populate data
             iny
+            cpy #$10            ; String size limit
+            beq edit_exit
             jmp loop
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -679,27 +680,27 @@ Register:   bcc register_r      ; Don't set Y and X if they're not provided
             lda PRGCTR          ;   ,,
             sta XREG            ;   ,,
             jsr Buff2Byte       ; Get a third byte to set Accumulator
-            bcc register_r      ; Don't set A if the byte is not provided
             sta ACC             ;   ,,
             jsr Buff2Byte       ; Get a fourth byte to set Processor Status
-            bcc register_r      ; Don't set P if the byte is not provided
             sta PROC            ;   ,,
 register_r: rts
                                                 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; EXECUTE COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Execute:    jsr SetupVec        ; Make sure the BRK handler is enabled
-            bcc ex_r            ; BRK if the provided address was no good
+Execute:    pla                 ; Get rid of the return address to Return, as
+            pla                 ;   it will not be needed (see BRK below)
+            php                 ; Save the Processor status for the Carry flag
+            jsr Restore         ; Put the zeropage workspace back in place
+            jsr SetupVec        ; Make sure the BRK handler is enabled
+            plp                 ; The Carry flag indicates whether the address
+            bcc ex_r            ;   was provided; go to BRK if it was not
             lda PRGCTR          ; Set the temporary INT storage to the program
             sta SYS_DEST        ;   counter. This is what SYS uses for its
             lda PRGCTR+1        ;   execution address, and we're using that
             sta SYS_DEST+1      ;   system.
-            jsr Restore         ; Restore the zeropage locations used
-            jsr SYS             ; Call BASIC SYS from where it pushes RTS values
-ex_r:       pla                 ; Pull the stack entries to Return off the
-            pla                 ;   stack, as we don't need them
-            brk                 ; Trigger the BRK handler
+            jsr SYS             ; Call BASIC SYS
+ex_r:       brk                 ; Trigger the BRK handler
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; CONVERT COMPONENT
@@ -1089,7 +1090,7 @@ ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
                       
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
-Registers:  .asc $0d,"BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
+Registers:  .asc $0d,"*BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
