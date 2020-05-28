@@ -690,15 +690,15 @@ register_r: rts
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Execute:    pla                 ; Get rid of the return address to Return, as
             pla                 ;   it will not be needed (see BRK below)
-            php                 ; Save the Processor status for the Carry flag
-            jsr Restore         ; Put the zeropage workspace back in place
-            jsr SetupVec        ; Make sure the BRK handler is enabled
-            plp                 ; The Carry flag indicates whether the address
-            bcc ex_r            ;   was provided; go to BRK if it was not
             lda PRGCTR          ; Set the temporary INT storage to the program
             sta SYS_DEST        ;   counter. This is what SYS uses for its
             lda PRGCTR+1        ;   execution address, and I'm using that
             sta SYS_DEST+1      ;   system to borrow saved Y,X,A,P values
+            jsr SetupVec        ; Make sure the BRK handler is enabled
+            php                 ; Store P to preserve Carry flag
+            jsr Restore         ; Restore zeropage workspace
+            plp                 ; The Carry flag indicates that no valid address
+            bcc ex_r            ;   was provided; go to BRK if it was not
             jsr SYS             ; Call BASIC SYS, but a little downline
                                 ;   This starts SYS at the register setup,
                                 ;   leaving out the part that adds a return
@@ -713,7 +713,7 @@ Execute:    pla                 ; Get rid of the return address to Return, as
                                 ;   second half of SYS messes with A, and you
                                 ;   want the BRK interrupt to get it right.
 ex_r:       brk                 ; Trigger the BRK handler
-            
+           
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; CONVERT COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
