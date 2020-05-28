@@ -48,16 +48,12 @@ BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
 XCHAR       = $5f               ; Wedge character left-arrow for code execute
 CCHAR       = "#"               ; Wedge character > for hex to base-10
-PCHAR       = $ae               ; Wedge character up-arrow for copy
+PCHAR       = "%"               ; Wedge character up-arrow for copy
 
-; System resources
-IGONE       = $0308             ; Vector to GONE
-CBINV       = $0316             ; BRK vector
+; System resources - Routines
 GONE        = $c7e4
 CHRGET      = $0073
 CHRGOT      = $0079
-KEYWORDS    = $c09e             ; Start of BASIC kewords for detokenize
-BUF         = $0200             ; Input buffer
 PRTSTR      = $cb1e             ; Print from data (Y,A)
 PRTFIX      = $ddcd             ; Print base-10 number
 SYS         = $e133             ; BASIC SYS start
@@ -65,21 +61,29 @@ CHROUT      = $ffd2
 WARM_START  = $0302             ; BASIC warm start vector
 READY       = $c002             ; BASIC warm start with READY.
 NX_BASIC    = $c7ae             ; Get next BASIC command
-LSTX        = $c5               ; Keyboard matrix
 BASICERR    = $c447             ; Basic error message
+
+; System resources - Vectors and Pointers
+IGONE       = $0308             ; Vector to GONE
+CBINV       = $0316             ; BRK vector
 BUFPTR      = $7a               ; Pointer to buffer
+ERROR_PTR   = $22               ; BASIC error text pointer
+SYS_DEST    = $14               ; Pointer for SYS destination
+
+; System resources - Data
+KEYWORDS    = $c09e             ; Start of BASIC kewords for detokenize
+BUF         = $0200             ; Input buffer
 CHARAC      = $07               ; Temporary character
-CURLIN      = $39
 KEYBUFF     = $0277             ; Keyboard buffer and size, for automatically
+CURLIN      = $39               ; Current line number
 KBSIZE      = $c6               ;   advancing the assembly address
-KEYCVTRS    = $028d             ; Keyboard codes
+MISMATCH    = $c2cd             ; "MISMATCH"
+
+; System resources - Registers
 ACC         = $030c             ; Saved Accumulator
 XREG        = $030d             ; Saved X Register
 YREG        = $030e             ; Saved Y Register
 PROC        = $030f             ; Saved Processor Status
-ERROR_PTR   = $22               ; BASIC error text pointer
-SYS_DEST    = $14               ; Pointer for SYS destination
-MISMATCH    = $c2cd             ; "MISMATCH"
 
 ; Constants
 ; Addressing mode encodings
@@ -99,6 +103,10 @@ RELATIVE    = $c0               ; e.g., BCC $181E
 ; Other constants
 TABLE_END   = $f2               ; Indicates the end of mnemonic table
 QUOTE       = $22               ; Quote character
+LF          = $0d               ; Linefeed
+CRSRUP      = $91               ; Cursor up
+RVS_ON      = $12               ; Reverse on
+RVS_OFF     = $92               ; Reverse off
 
 ; Assembler workspace
 WORK        = $a3               ; Temporary workspace (2 bytes)
@@ -197,7 +205,7 @@ in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command
 DisList:    bcc list_r          ; Bail if the address is no good
             jsr DirectMode      ; If the tool is run in Direct Mode,
             bne d_listing       ;   cursor up to overwrite the original input
-            lda #$91            ;   ,,
+            lda #CRSRUP         ;   ,,
             jsr CHROUT          ;   ,,
 d_listing:  ldx #DISPLAYC       ; Show this many lines of code
 -loop:      txa
@@ -314,6 +322,7 @@ DisImm:     lda #"#"
             jsr CharOut
             jmp Param_8
 
+; Disassemble Zeropage Operand
 DisZP:      pha
             jsr Param_8
             pla
@@ -321,6 +330,7 @@ DisZP:      pha
             sbc #ZEROPAGE
             jmp draw_xy         ; From this point, it's the same as Absolute            
 
+; Disassemble Relative Operand
 DisRel:     jsr HexPrefix
             jsr NextValue       ; Get the operand of the instruction, advance
                                 ;   the program counter. It might seem weird to
@@ -483,7 +493,7 @@ bad_code:   clc                 ; Clear carry flag to indicate failure
 Memory:     bcc mem_r           ; Bail if address is no good
             jsr DirectMode      ; If the tool is run in Direct Mode,
             bne m_listing       ;   cursor up to hide the original input
-            lda #$91            ;   ,, 
+            lda #CRSRUP         ;   ,, 
             jsr CHROUT          ;   ,,
 m_listing:  ldx #DISPLAYM       ; Show this many groups of four
 -next:      txa
@@ -502,7 +512,7 @@ m_listing:  ldx #DISPLAYM       ; Show this many groups of four
             beq show_char
             jsr Space
             jmp loop       
-show_char:  lda #$12            ; Reverse on for the characters
+show_char:  lda #RVS_ON         ; Reverse on for the characters
             jsr CharOut
             ldy #$00
 -loop:      lda CHARDISP,y
@@ -600,7 +610,7 @@ BPManager:  php
             lda #$00            ; Write BRK to the breakpoint location
             sta (PRGCTR),y      ;   ,,
             jsr Disasm          ; Disassemble the line at the breakpoint
-            lda #$91            ;   for the user to review
+            lda #CRSRUP         ;   for the user to review
             jsr CHROUT          ;   ,,
             jsr PrintBuff       ;   ,,
             jsr EnableBP        ; Enable the breakpoint after disassembly
@@ -661,7 +671,7 @@ BreakInd:   ldy #$00            ; Is this a BRK instruction?
             lda BREAKPOINT+1    ; ,,
             cmp PRGCTR+1        ; ,,
             bne ind_r           ; ,,
-            lda #$12            ; Reverse on for the breakpoint
+            lda #RVS_ON         ; Reverse on for the breakpoint
             jsr CharOut
             lda BREAKPOINT+2    ; Temporarily restore the breakpoint byte
             sta (PRGCTR),y      ;   for disassembly purposes
@@ -727,36 +737,39 @@ ex_r:       brk                 ; Trigger the BRK handler
 ; CONVERT COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Hex2Base10: bcc xfer_r          ; Bail if the hex input is no good
-            lda #$91            ; Cursor up to the previous line
+            lda #CRSRUP         ; Cursor up to the previous line
             jsr CHROUT          ; ,,
             lda #$1d            ; Cursor over to the right side of the line
-            ldy #$10            ; ,,
+            ldy #$0f            ; ,,
 -loop:      jsr CHROUT          ; ,,
             dey                 ; ,,
             bne loop            ; ,,
-            lda #$12            ; Reverse on after the characters
+            lda #RVS_ON         ; Reverse on after the characters
             jsr CHROUT          ; ,,
             ldx PRGCTR          ; Use PRTFIX to print the program counter
             lda PRGCTR+1        ;   as a base-10 number
             jsr PRTFIX          ;   ,,
-            lda #$92            ; Reverse off after the characters
+            lda #RVS_OFF        ; Reverse off after the characters
             jsr CHROUT          ; ,,
-            lda #$0d            ;   ,,
+            lda #LF             ;   ,,
             jsr CHROUT          ;   ,,
 xfer_r:     rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; COPY COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Copy:       bcc copy_r
+Copy:       bcc copy_r          ; Bail if the address is no good
             jsr Buff2Byte       ; Get the number of bytes to be copied
-            bcc copy_r
-            tax
-            lda BREAKPOINT
-            sta WORK
-            lda BREAKPOINT+1
-            sta WORK+1
-            jsr ClearBP
+            bcc copy_r          ; If not a valid number, bail
+            beq copy_r          ; If zero, bail
+            pha
+            lda BREAKPOINT      ; Stash the breakpoint in WORK
+            sta WORK            ; ,,
+            lda BREAKPOINT+1    ; ,,
+            sta WORK+1          ; ,,
+            jsr ClearBP         ; Clear breakpoint to avoid BRK in the copy
+            pla                 ; Pulling the number of bytes
+            tay
 -loop:      dey
             lda (WORK),y        ; Copy from the breakpoint
             sta (PRGCTR),y      ; To the destination
@@ -1001,9 +1014,9 @@ PrintBuff:  lda #$00            ; End the buffer with 0
             lda #<OUTBUFFER     ; Print the line
             ldy #>OUTBUFFER     ; ,,
             jsr PRTSTR          ; ,,
-            lda #$92            ; Reverse off after each line
+            lda #RVS_OFF        ; Reverse off after each line
             jsr CHROUT          ; ,,
-            lda #$0d            ; Linefeed after each buffer print
+            lda #LF             ; Linefeed after each buffer print
             jmp CHROUT
             
 ; Prompt for Next Line
@@ -1082,8 +1095,8 @@ ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
             .byte >Execute-1,>BPManager-1,>Tester-1,>Hex2Base10-1,>Copy
                       
 HexDigit:   .asc "0123456789ABCDEF"
-Intro:      .asc $0d,"WAX ON",$00
-Registers:  .asc $0d,"*BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
+Intro:      .asc LF,"WAX ON",$00
+Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
