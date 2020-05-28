@@ -38,7 +38,7 @@
 ; Configuration
 DISPLAYC    = $10               ; Display this many lines of code
 DISPLAYM    = $10               ; Display this many lines of memory
-TOOL_COUNT  = $09               ; How many tools are there?
+TOOL_COUNT  = $0a               ; How many tools are there?
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
@@ -46,8 +46,9 @@ ECHAR       = ":"               ; Wedge character : for data editor
 TCHAR       = $b2               ; Wedge character = for tester
 BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
-XCHAR       = $5f               ; Wedge character arrow for code execute
-CCHAR       = "#"               ; Wedge character > for copy
+XCHAR       = $5f               ; Wedge character left-arrow for code execute
+CCHAR       = "#"               ; Wedge character > for hex to base-10
+PCHAR       = $ae               ; Wedge character up-arrow for copy
 
 ; System resources
 IGONE       = $0308             ; Vector to GONE
@@ -207,9 +208,6 @@ d_listing:  ldx #DISPLAYC       ; Show this many lines of code
             tax                 ; ,,
             dex
             bne loop
-            inx
-            jsr ShiftDown       ; Keep scrolling if the Shift Key
-            bne loop            ;   is held down
             jsr EnableBP        ; Re-enable breakpoint, if necessary
 list_r:     rts
 
@@ -368,17 +366,17 @@ abs_ind:    lda #","            ; This is an indexed addressing mode, so
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSEMBLER COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Assemble:   jsr CharGet         ; Look through the buffer for one of two things
+Assemble:   bcc asm_r           ; Bail if the address is no good
+            lda INBUFFER+4      ; If the user just pressed Return at the prompt,
+            beq asm_r           ;   go back to BASIC
+            jsr CharGet         ; Look through the buffer for one of two things
             cmp #"$"            ;   A $ indicates there's an operand. I need to
             beq get_oprd        ;   parse that operand, or...
             cmp #$00            ;   If we reach the end of the buffer, it's an
             beq test            ;   implied mode instruction (presumably), so
             bne Assemble        ;   just go test it
 get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
-test:       lda IDX_IN          ; If not enough characters have been entered to
-            cmp #$06            ;   be mistaken for an intentional instrution,
-            bcc asm_r           ;   just go to BASIC
--loop:      jsr Hypotest        ; Line is done; hypothesis test for a match
+test:       jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc AsmError        ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
             lda OPCODE          ;   to the program counter. The number of bytes
@@ -529,9 +527,6 @@ rev_off:    jsr PrintBuff
             tax                 ; ,,
             dex
             bne next
-            inx
-            jsr ShiftDown       ; Keep scrolling if the Shift Key
-            bne next            ;   is held down
 mem_r:      rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -749,6 +744,26 @@ Hex2Base10: bcc xfer_r          ; Bail if the hex input is no good
             lda #$0d            ;   ,,
             jsr CHROUT          ;   ,,
 xfer_r:     rts
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; COPY COMPONENT
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Copy:       bcc copy_r
+            jsr Buff2Byte       ; Get the number of bytes to be copied
+            bcc copy_r
+            tax
+            lda BREAKPOINT
+            sta WORK
+            lda BREAKPOINT+1
+            sta WORK+1
+            jsr ClearBP
+-loop:      dey
+            lda (WORK),y        ; Copy from the breakpoint
+            sta (PRGCTR),y      ; To the destination
+            cpy #$00
+            bne loop
+            jmp (READY)         ; Indicates completion
+copy_r:     rts            
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -1032,12 +1047,6 @@ SetupVec:   lda #<main          ; Intercept GONE to process wedge
             sta CBINV+1         ; ,,
             rts
             
-; Check Shift Key
-; If it's held down, Zero flag will be clear
-ShiftDown:  lda KEYCVTRS   
-            and #$01
-            rts    
-            
 ; In Direct Mode
 ; If the wAx tool is running in Direct Mode, the Zero flag will be set
 DirectMode: ldy CURLIN+1
@@ -1066,10 +1075,11 @@ ToolTable:	; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler
             .byte TCHAR           
             ; https://github.com/Chysn/wAx/wiki/9-Hexadecimal-to-Base-10-Converter
             .byte CCHAR
+            .byte PCHAR
 ToolAddr_L: .byte <DisList-1,<Assemble-1,<Memory-1,<MemEditor-1,<Register-1
-            .byte <Execute-1,<BPManager-1,<Tester-1,<Hex2Base10-1
+            .byte <Execute-1,<BPManager-1,<Tester-1,<Hex2Base10-1,<Copy
 ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
-            .byte >Execute-1,>BPManager-1,>Tester-1,>Hex2Base10-1
+            .byte >Execute-1,>BPManager-1,>Tester-1,>Hex2Base10-1,>Copy
                       
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc $0d,"WAX ON",$00
