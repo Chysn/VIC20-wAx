@@ -707,7 +707,7 @@ Execute:    pla                 ; Get rid of the return address to Return, as
                                 ;   updates the saved register values. I want
                                 ;   those values to remain as they are, for
                                 ;   repeat testing. To change this behavior,
-                                ;   you would do two things: 1) Set the value
+                                ;   you would do two things 1) Set the value
                                 ;   of the SYS label to $e127, and 2) Add
                                 ;   lda ACC right after jsr SYS, because the
                                 ;   second half of SYS messes with A, and you

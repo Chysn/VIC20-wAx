@@ -309,8 +309,8 @@ DisZP:      pha
 DisRel:     jsr HexPrefix
             jsr NextValue       ; Get the operand of the instruction, advance
                                 ;   the program counter. It might seem weird to
-                                ;   advance the PC when we're operating on it a
-                                ;   few lines down, but we need to add two
+                                ;   advance the PC when I'm operating on it a
+                                ;   few lines down, but I need to add two
                                 ;   bytes to get the offset to the right spot.
                                 ;   One of those bytes is here, and the other
                                 ;   comes from setting the Carry flag before
@@ -354,11 +354,11 @@ abs_ind:    lda #","            ; This is an indexed addressing mode, so
 ; ASSEMBLER COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Assemble:   jsr CharGet         ; Look through the buffer for one of two things
-            cmp #"$"            ;   A $ indicates there's an operand. We need to
-            beq get_oprd        ;   parse that operand, or
-            cmp #$00            ;   If we reach the end of the buffer, there's
-            beq test            ;   no operand, so go to test the instruction
-            bne Assemble        ;   ,,
+            cmp #"$"            ;   A $ indicates there's an operand. I need to
+            beq get_oprd        ;   parse that operand, or...
+            cmp #$00            ;   If we reach the end of the buffer, it's an
+            beq test            ;   implied mode instruction (presumably), so
+            bne Assemble        ;   just go test it
 get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
 test:       lda IDX_IN          ; If not enough characters have been entered to
             cmp #$06            ;   be mistaken for an intentional instrution,
@@ -386,11 +386,11 @@ asm_r:      rts
 ; Error Message
 ; Invalid opcode or formatting (ASSEMBLY)
 ; Failed boolean assertion (MISMATCH, borrowed from ROM)
-AsmError:   lda #<AsmErrMsg     ; Default to ASSMEBLY Error
-            ldx #>AsmErrMsg     ; ,,
+AsmError:   lda #<AsmErrMsg     ; ?ASSMEBLY
+            ldx #>AsmErrMsg     ;   ERROR
             bne show_err
-MisError:   lda #<MISMATCH      ;   MISMATCH Error
-            ldx #>MISMATCH      ;   ,,
+MisError:   lda #<MISMATCH      ; ?MISMATCH
+            ldx #>MISMATCH      ;   ERROR
 show_err:   sta ERROR_PTR       ; Set the selected pointer
             stx ERROR_PTR+1     ;   ,,
             jsr Restore         ; Return zeropage workspace to original
@@ -697,9 +697,21 @@ Execute:    pla                 ; Get rid of the return address to Return, as
             bcc ex_r            ;   was provided; go to BRK if it was not
             lda PRGCTR          ; Set the temporary INT storage to the program
             sta SYS_DEST        ;   counter. This is what SYS uses for its
-            lda PRGCTR+1        ;   execution address, and we're using that
-            sta SYS_DEST+1      ;   system.
-            jsr SYS             ; Call BASIC SYS
+            lda PRGCTR+1        ;   execution address, and I'm using that
+            sta SYS_DEST+1      ;   system to borrow saved Y,X,A,P values
+            jsr SYS             ; Call BASIC SYS, but a little downline
+                                ;   This starts SYS at the register setup,
+                                ;   leaving out the part that adds a return
+                                ;   address to the stack. This omitted part
+                                ;   sends BASIC's SYS to a second half, which
+                                ;   updates the saved register values. I want
+                                ;   those values to remain as they are, for
+                                ;   repeat testing. To change this behavior,
+                                ;   you would do two things 1) Set the value
+                                ;   of the SYS label to $e127, and 2) Add
+                                ;   lda ACC right after jsr SYS, because the
+                                ;   second half of SYS messes with A, and you
+                                ;   want the BRK interrupt to get it right.
 ex_r:       brk                 ; Trigger the BRK handler
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
