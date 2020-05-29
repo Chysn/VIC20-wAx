@@ -61,12 +61,13 @@ CHROUT      = $ffd2
 WARM_START  = $0302             ; BASIC warm start vector
 READY       = $c002             ; BASIC warm start with READY.
 NX_BASIC    = $c7ae             ; Get next BASIC command
-BASICERR    = $c447             ; Basic error message
+CUST_ERR    = $c447             ; Custom BASIC error message
+SYNTAX_ERR  = $cf08             ; BASIC syntax error
+ERROR_NO    = $c43b             ; Show error in Accumulator
 SETLFS      = $ffba             ; Setup logical file
 SETNAM      = $ffbd             ; Setup file name
 SAVE        = $ffd8             ; Save
 CLOSE       = $ffc3             ; Close logical file
-ERROR_NO    = $c43b             ; Show error in Accumulator
 
 ; System resources - Vectors and Pointers
 IGONE       = $0308             ; Vector to GONE
@@ -182,7 +183,7 @@ Prepare:    ldy #$00            ; wAx is to be zeropage-neutral, so preserve
             jsr Transcribe      ; Transcribe from CHRGET to INBUFFER
             lda #$ef            ; $0082 BEQ $008a -> BEQ $0073
             sta $83             ; ,,
-refresh_pc: lda #$00            ; Re-initialize for buffer read
+RefreshPC:  lda #$00            ; Re-initialize for buffer read
             sta IDX_IN          ; ,,
             jsr Buff2Byte       ; Convert 2 characters to a byte   
             bcc main_r          ; Fail if the byte couldn't be parsed
@@ -204,6 +205,7 @@ in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DISASSEMBLER COMPONENTS
+; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Disassembly Listing
 ; Disassemble multiple instructions, starting from the program counter
@@ -250,12 +252,10 @@ Unknown:    jsr HexPrefix
             jmp disasm_r
             
 ; Mnemonic Display
-DMnemonic:  lda MNEM+1          ; Strip off the low bit of the low byte, which
-            pha
-            and #$fe            ;   indicates that the record is a mnemonic
-            sta MNEM+1          ;   (encoding is big-endian)
-            lda MNEM
-            pha
+DMnemonic:  lda MNEM+1          ; These locations are going to rotated, so
+            pha                 ;   save them on a stack for after the
+            lda MNEM            ;   display
+            pha                 ;   ,,
             ldx #$03            ; Three characters...
 -loop:      lda #$00
             sta CHARAC
@@ -380,6 +380,7 @@ abs_ind:    lda #","            ; This is an indexed addressing mode, so
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSEMBLER COMPONENTS
+; https://github.com/Chysn/wAx/wiki/2-6502-Assembler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Assemble:   bcc asm_r           ; Bail if the address is no good
             lda INBUFFER+4      ; If the user just pressed Return at the prompt,
@@ -422,7 +423,7 @@ MisError:   lda #<MISMATCH      ; ?MISMATCH
 show_err:   sta ERROR_PTR       ; Set the selected pointer
             stx ERROR_PTR+1     ;   ,,
             jsr Restore         ; Return zeropage workspace to original
-            jmp BASICERR        ; And emit the error
+            jmp CUST_ERR        ; And emit the error
 
 ; Get Operand
 ; Populate the operand for an instruction by looking forward in the buffer and
@@ -474,7 +475,7 @@ match:      jsr NextValue
             sec                 ;   bytes that need to be programmed
             sbc #OPCODE         ;   ,,
             sta INSTSIZE        ;   ,,
-            jsr refresh_pc      ; Restore the program counter to target address
+            jsr RefreshPC       ; Restore the program counter to target address
             sec                 ; Set Carry flag to indicate success
             rts
 test_rel:   lda IDX_OUT
@@ -494,6 +495,7 @@ bad_code:   clc                 ; Clear carry flag to indicate failure
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY DUMP COMPONENT
+; https://github.com/Chysn/wAx/wiki/3-Memory-Dump
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Memory:     bcc mem_r           ; Bail if address is no good
             jsr DirectMode      ; If the tool is run in Direct Mode,
@@ -546,6 +548,7 @@ mem_r:      rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY EDITOR COMPONENTS
+; https://github.com/Chysn/wAx/wiki/4-Memory-Editor
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 MemEditor:  bcc edit_r          ; Bail out of the address is no good
             lda INBUFFER+4      ; Is there a double-quote after the address?
@@ -585,7 +588,8 @@ pop:        sta (PRGCTR),y      ; Populate data
             jmp loop
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; TEST COMPONENT
+; ASSERTION TESTER COMPONENT
+; https://github.com/Chysn/wAx/wiki/8-Assertion-Tester 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Tester:     ldy #$00
 -loop:      jsr Buff2Byte
@@ -600,6 +604,7 @@ test_err:   jmp MisError
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BREAKPOINT COMPONENTS
+; https://github.com/Chysn/wAx/wiki/7-Breakpoint-Manager
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 BPManager:  php
             jsr ClearBP         ; Clear the old breakpoint, if it exists
@@ -697,6 +702,7 @@ enable_r:   rts
              
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; REGISTER COMPONENT
+; https://github.com/Chysn/wAx/wiki/5-Register-Editor
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Register:   bcc register_r      ; Don't set Y and X if they're not provided
             lda PRGCTR+1        ; Two bytes are already set in the program
@@ -710,7 +716,8 @@ Register:   bcc register_r      ; Don't set Y and X if they're not provided
 register_r: rts
                                                 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; EXECUTE COMPONENT
+; SUBROUTINE EXECUTION COMPONENT
+; https://github.com/Chysn/wAx/wiki/6-Subroutine-Execution
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Execute:    pla                 ; Get rid of the return address to Return, as
             pla                 ;   it will not be needed (see BRK below)
@@ -739,17 +746,18 @@ Execute:    pla                 ; Get rid of the return address to Return, as
 ex_r:       brk                 ; Trigger the BRK handler
            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; SAVE COMPONENT
+; MEMORY SAVE COMPONENT
+; https://github.com/Chysn/wAx/wiki/9-Memory-Save
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Save:       bcc save_r          ; Bail if the address is no good
+Save:       bcc save_err        ; Bail if the address is no good
             lda INBUFFER+8      ; Is the character after the addresses a quote?
             cmp #QUOTE          ; ,,
-            bne save_r          ; If not, bail
+            bne save_err        ; If not, bail
             jsr Buff2Byte       ; Get the end address high byte
-            bcc save_r          ; ,,
+            bcc save_err        ; ,,
             sta WORK+1          ; ,,
             jsr Buff2Byte       ; Get the end address low byte
-            bcc save_r          ; ,,
+            bcc save_err        ; ,,
             sta WORK            ; ,,
 set_lfs:    lda #$42            ; Setup logical file
             ldx #DEVICE         ; ,,
@@ -776,7 +784,7 @@ do_save:    jsr ClearBP         ; Clear breakpoint so the BRK doesn't get in
 save_ok:    lda #$42            ; Close the file
             jsr CLOSE           ; ,,
             jmp (READY)         ; BASIC warm start
-save_r:     rts           
+save_err:   jmp SYNTAX_ERR      ; Syntax error           
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -940,7 +948,9 @@ Param_16:   jsr HexPrefix
             jsr Hex
             pla
             jmp Hex
-            
+
+; Character to Output
+; Add the character in A to the outut byffer            
 CharOut:    sta CHARAC          ; Save temporary character
 write_ok:   tya                 ; Save registers
             pha                 ; ,,
@@ -1070,32 +1080,16 @@ DirectMode: ldy CURLIN+1
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
-ToolTable:	; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler 
-            .byte DCHAR                  
-            ; https://github.com/Chysn/wAx/wiki/2-6502-Assembler
-            .byte ACHAR         
-            ; https://github.com/Chysn/wAx/wiki/3-Memory-Dump
-            .byte MCHAR          
-            ; https://github.com/Chysn/wAx/wiki/4-Memory-Editor  
-            .byte ECHAR                 
-            ; https://github.com/Chysn/wAx/wiki/5-Register-Editor
-            .byte RCHAR         
-            ; https://github.com/Chysn/wAx/wiki/6-Subroutine-Execution 
-            .byte XCHAR         
-            ; https://github.com/Chysn/wAx/wiki/7-Breakpoint-Manager
-            .byte BCHAR         
-            ; https://github.com/Chysn/wAx/wiki/8-Assertion-Tester    
-            .byte TCHAR           
-            ; https://github.com/Chysn/wAx/wiki/9-Save-to-Disk
-            .byte SCHAR
+ToolTable:	.byte DCHAR,ACHAR,MCHAR,ECHAR,RCHAR,XCHAR,BCHAR,TCHAR,SCHAR
 ToolAddr_L: .byte <DisList-1,<Assemble-1,<Memory-1,<MemEditor-1,<Register-1
             .byte <Execute-1,<BPManager-1,<Tester-1,<Save-1
 ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
             .byte >Execute-1,>BPManager-1,>Tester-1,>Save-1
-                      
+
+; Text display tables                      
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"*BRK*",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
