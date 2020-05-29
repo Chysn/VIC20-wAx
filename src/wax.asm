@@ -756,15 +756,18 @@ set_lfs:    lda #$42            ; Setup logical file
             ldy #$ff            ; ,,
             jsr SETLFS          ; ,,
 -loop:      iny                 ; Count characters in the name; Y started at $ff
-            lda INBUFFER+9,y   ; ,,
-            beq set_name
-            cmp #QUOTE
-            bne loop
+            lda INBUFFER+9,y    ; ,,
+            beq set_name        ; If we've reached the end of the line
+            cmp #QUOTE          ;   or reached a quote
+            beq set_name        ;   the name is done
+            cpy #$08            ; If the name gets to 8 characters, it's done
+            bne loop            ; ,,
 set_name:   tya                 ; Set the filename for SETNAM call
-            ldx #<INBUFFER+9   ; ,,
-            ldy #>INBUFFER+9   ; ,,
+            ldx #<INBUFFER+9    ; ,,
+            ldy #>INBUFFER+9    ; ,,
             jsr SETNAM          ; ,,
-do_save:    lda #PRGCTR         ; Set up SAVE call
+do_save:    jsr ClearBP         ; Clear breakpoint so the BRK doesn't get in
+            lda #PRGCTR         ; Set up SAVE call
             ldx WORK            ; ,,
             ldy WORK+1          ; ,,
             jsr SAVE            ; ,,
@@ -1092,7 +1095,7 @@ ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
                       
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
