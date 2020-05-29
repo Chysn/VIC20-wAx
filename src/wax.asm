@@ -398,12 +398,14 @@ abs_ind:    lda #","            ; This is an indexed addressing mode, so
 Assemble:   bcc asm_r           ; Bail if the address is no good
             lda INBUFFER+4      ; If the user just pressed Return at the prompt,
             beq asm_r           ;   go back to BASIC
-            jsr CharGet         ; Look through the buffer for one of two things
+-loop:      jsr CharGet         ; Look through the buffer for one of two things
             cmp #"$"            ;   A $ indicates there's an operand. I need to
             beq get_oprd        ;   parse that operand, or...
+            cmp #"%"
+            beq HandleFwd
             cmp #$00            ;   If we reach the end of the buffer, it's an
             beq test            ;   implied mode instruction (presumably), so
-            bne Assemble        ;   just go test it
+            bne loop            ;   just go test it
 get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
 test:       jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc AsmError        ; Clear carry means the test failed
@@ -424,6 +426,26 @@ test:       jsr Hypotest        ; Line is done; hypothesis test for a match
 nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
             jsr Prompt          ; Prompt for next line if in direct mode
 asm_r:      rts
+
+HandleFwd:  lda IDX_IN
+            cmp #$04
+            beq resolve_fw
+set_fw:     lda PRGCTR
+            sta $f9
+            lda PRGCTR+1
+            sta $fa
+            lda #$fe
+            sta RB_OPERAND
+            jmp test
+resolve_fw: lda PRGCTR          ; 
+            sec                 ; Compute hypothetical relative branch
+            sbc $f9             ; Subtract the program counter address from
+            sec                 ;   the instruction target
+            sbc #$02            ; Offset by 2 to account for the instruction
+            ldy #$01
+            sta ($f9),y
+            ldx #$00
+            jmp Prompt
             
 ; Error Message
 ; Invalid opcode or formatting (ASSEMBLY)
@@ -493,8 +515,8 @@ match:      jsr NextValue
             rts
 test_rel:   lda IDX_OUT
             pha
-            lda #$0a            ; Handle relative branch operands here; set
-            sta IDX_OUT         ;   a stop after four characters in output
+            lda #$09            ; Handle relative branch operands here; set
+            sta IDX_OUT         ;   a stop after three characters in output
             jsr IsMatch         ;   buffer and check for a match
             pla
             sta IDX_OUT
