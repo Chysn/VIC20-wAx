@@ -1,3 +1,4 @@
+*=$a000
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
 ;                                      wAx
@@ -33,12 +34,10 @@
 ; LABEL DEFINITIONS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 
-* = $a000 
-
 ; Configuration
 DISPLAYC    = $10               ; Display this many lines of code
 DISPLAYM    = $10               ; Display this many lines of memory
-TOOL_COUNT  = $09               ; How many tools are there?
+TOOL_COUNT  = $0a               ; How many tools are there?
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
@@ -47,8 +46,8 @@ TCHAR       = $b2               ; Wedge character = for tester
 BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
 XCHAR       = $5f               ; Wedge character left-arrow for code execute
-SCHAR       = $b1               ; Wedge character > for save
-DEVICE      = $08               ; Save device
+CCHAR       = "#"               ; Wedge character > for hex to base-10
+PCHAR       = "%"               ; Wedge character up-arrow for copy
 
 ; System resources - Routines
 GONE        = $c7e4
@@ -62,11 +61,6 @@ WARM_START  = $0302             ; BASIC warm start vector
 READY       = $c002             ; BASIC warm start with READY.
 NX_BASIC    = $c7ae             ; Get next BASIC command
 BASICERR    = $c447             ; Basic error message
-SETLFS      = $ffba             ; Setup logical file
-SETNAM      = $ffbd             ; Setup file name
-SAVE        = $ffd8             ; Save
-CLOSE       = $ffc3             ; Close logical file
-ERROR_NO    = $c43b             ; Show error in Accumulator
 
 ; System resources - Vectors and Pointers
 IGONE       = $0308             ; Vector to GONE
@@ -739,41 +733,49 @@ Execute:    pla                 ; Get rid of the return address to Return, as
 ex_r:       brk                 ; Trigger the BRK handler
            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; SAVE COMPONENT
+; CONVERT COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Save:       bcc save_r          ; Bail if the address is no good
-            lda INBUFFER+8      ; Is the character after the addresses a quote?
-            cmp #QUOTE          ; ,,
-            bne save_r          ; If not, bail
-            jsr Buff2Byte       ; Get the end address high byte
-            bcc save_r          ; ,,
-            sta WORK+1          ; ,,
-            jsr Buff2Byte       ; Get the end address low byte
-            bcc save_r          ; ,,
+Hex2Base10: bcc xfer_r          ; Bail if the hex input is no good
+            lda #CRSRUP         ; Cursor up to the previous line
+            jsr CHROUT          ; ,,
+            lda #$1d            ; Cursor over to the right side of the line
+            ldy #$0f            ; ,,
+-loop:      jsr CHROUT          ; ,,
+            dey                 ; ,,
+            bne loop            ; ,,
+            lda #RVS_ON         ; Reverse on after the characters
+            jsr CHROUT          ; ,,
+            ldx PRGCTR          ; Use PRTFIX to print the program counter
+            lda PRGCTR+1        ;   as a base-10 number
+            jsr PRTFIX          ;   ,,
+            lda #RVS_OFF        ; Reverse off after the characters
+            jsr CHROUT          ; ,,
+            lda #LF             ;   ,,
+            jsr CHROUT          ;   ,,
+xfer_r:     rts
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; COPY COMPONENT
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Copy:       bcc copy_r          ; Bail if the address is no good
+            jsr Buff2Byte       ; Get the number of bytes to be copied
+            bcc copy_r          ; If not a valid number, bail
+            beq copy_r          ; If zero, bail
+            pha
+            lda BREAKPOINT      ; Stash the breakpoint in WORK
             sta WORK            ; ,,
-set_lfs:    lda #$42            ; Setup logical file
-            ldx #DEVICE         ; ,,
-            ldy #$ff            ; ,,
-            jsr SETLFS          ; ,,
--loop:      iny                 ; Count characters in the name; Y started at $ff
-            lda INBUFFER+9,y   ; ,,
-            beq set_name
-            cmp #QUOTE
+            lda BREAKPOINT+1    ; ,,
+            sta WORK+1          ; ,,
+            jsr ClearBP         ; Clear breakpoint to avoid BRK in the copy
+            pla                 ; Pulling the number of bytes
+            tay
+-loop:      dey
+            lda (WORK),y        ; Copy from the breakpoint
+            sta (PRGCTR),y      ; To the destination
+            cpy #$00
             bne loop
-set_name:   tya                 ; Set the filename for SETNAM call
-            ldx #<INBUFFER+9   ; ,,
-            ldy #>INBUFFER+9   ; ,,
-            jsr SETNAM          ; ,,
-do_save:    lda #PRGCTR         ; Set up SAVE call
-            ldx WORK            ; ,,
-            ldy WORK+1          ; ,,
-            jsr SAVE            ; ,,
-            bcc save_ok         ; If there was an error, show the BASIC error
-            jmp ERROR_NO        ; ,,
-save_ok:    lda #$42            ; Close the file
-            jsr CLOSE           ; ,,
-            jmp (READY)         ; BASIC warm start
-save_r:     rts           
+            jmp (READY)         ; Indicates completion
+copy_r:     rts            
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -965,8 +967,7 @@ Transcribe: jsr CHRGET          ; Get character from input buffer
             lda #$06            ; $0082 BEQ $0073 -> BEQ $008a
             sta $83             ; ,,
             lda #QUOTE          ; Put quote back so it can be added to buffer
-ch_token:   cmp #$80            ; Is the character in A a BASIC token?
-            bcc x_add           ; If it's not a token, just add it to buffer
+ch_token:   bpl x_add           ; If it's not a token, just add it to buffer
             ldy $83             ; If it's a token, check the CHRGET routine
             cpy #$06            ;  and skip detokenization if it's been
             beq x_add           ;  modified.
@@ -986,8 +987,9 @@ AddInput:   ldx IDX_IN
 add_r:      rts
            
 ; Detokenize
-; If a BASIC token is found, explode that token into PETSCII characters 
-; so it can be disassembled. This is based on the ROM uncrunch code around $c71a
+; If one of a specific set of tokens (AND, OR, DEF) is found, explode that
+; token into PETSCII characters so it can be disassembled. This is based
+; on the ROM uncrunch code around $c71a.
 Detokenize: ldy #$65
             tax                 ; Copy token number to X
 get_next:   dex
@@ -1083,12 +1085,13 @@ ToolTable:	; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler
             .byte BCHAR         
             ; https://github.com/Chysn/wAx/wiki/8-Assertion-Tester    
             .byte TCHAR           
-            ; https://github.com/Chysn/wAx/wiki/9-Save-to-Disk
-            .byte SCHAR
+            ; https://github.com/Chysn/wAx/wiki/9-Hexadecimal-to-Base-10-Converter
+            .byte CCHAR
+            .byte PCHAR
 ToolAddr_L: .byte <DisList-1,<Assemble-1,<Memory-1,<MemEditor-1,<Register-1
-            .byte <Execute-1,<BPManager-1,<Tester-1,<Save-1
+            .byte <Execute-1,<BPManager-1,<Tester-1,<Hex2Base10-1,<Copy
 ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
-            .byte >Execute-1,>BPManager-1,>Tester-1,>Save-1
+            .byte >Execute-1,>BPManager-1,>Tester-1,>Hex2Base10-1,>Copy
                       
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc LF,"WAX ON",$00

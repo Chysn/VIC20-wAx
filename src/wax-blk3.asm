@@ -38,7 +38,7 @@
 ; Configuration
 DISPLAYC    = $10               ; Display this many lines of code
 DISPLAYM    = $10               ; Display this many lines of memory
-TOOL_COUNT  = $09               ; How many tools are there?
+TOOL_COUNT  = $0a               ; How many tools are there?
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
@@ -46,17 +46,14 @@ ECHAR       = ":"               ; Wedge character : for data editor
 TCHAR       = $b2               ; Wedge character = for tester
 BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
-XCHAR       = $5f               ; Wedge character arrow for code execute
-CCHAR       = "#"               ; Wedge character > for copy
+XCHAR       = $5f               ; Wedge character left-arrow for code execute
+CCHAR       = "#"               ; Wedge character > for hex to base-10
+PCHAR       = "%"               ; Wedge character up-arrow for copy
 
-; System resources
-IGONE       = $0308             ; Vector to GONE
-CBINV       = $0316             ; BRK vector
+; System resources - Routines
 GONE        = $c7e4
 CHRGET      = $0073
 CHRGOT      = $0079
-KEYWORDS    = $c09e             ; Start of BASIC kewords for detokenize
-BUF         = $0200             ; Input buffer
 PRTSTR      = $cb1e             ; Print from data (Y,A)
 PRTFIX      = $ddcd             ; Print base-10 number
 SYS         = $e133             ; BASIC SYS start
@@ -64,21 +61,29 @@ CHROUT      = $ffd2
 WARM_START  = $0302             ; BASIC warm start vector
 READY       = $c002             ; BASIC warm start with READY.
 NX_BASIC    = $c7ae             ; Get next BASIC command
-LSTX        = $c5               ; Keyboard matrix
 BASICERR    = $c447             ; Basic error message
+
+; System resources - Vectors and Pointers
+IGONE       = $0308             ; Vector to GONE
+CBINV       = $0316             ; BRK vector
 BUFPTR      = $7a               ; Pointer to buffer
+ERROR_PTR   = $22               ; BASIC error text pointer
+SYS_DEST    = $14               ; Pointer for SYS destination
+
+; System resources - Data
+KEYWORDS    = $c09e             ; Start of BASIC kewords for detokenize
+BUF         = $0200             ; Input buffer
 CHARAC      = $07               ; Temporary character
-CURLIN      = $39
 KEYBUFF     = $0277             ; Keyboard buffer and size, for automatically
+CURLIN      = $39               ; Current line number
 KBSIZE      = $c6               ;   advancing the assembly address
-KEYCVTRS    = $028d             ; Keyboard codes
+MISMATCH    = $c2cd             ; "MISMATCH"
+
+; System resources - Registers
 ACC         = $030c             ; Saved Accumulator
 XREG        = $030d             ; Saved X Register
 YREG        = $030e             ; Saved Y Register
 PROC        = $030f             ; Saved Processor Status
-ERROR_PTR   = $22               ; BASIC error text pointer
-SYS_DEST    = $14               ; Pointer for SYS destination
-MISMATCH    = $c2cd             ; "MISMATCH"
 
 ; Constants
 ; Addressing mode encodings
@@ -98,6 +103,10 @@ RELATIVE    = $c0               ; e.g., BCC $181E
 ; Other constants
 TABLE_END   = $f2               ; Indicates the end of mnemonic table
 QUOTE       = $22               ; Quote character
+LF          = $0d               ; Linefeed
+CRSRUP      = $91               ; Cursor up
+RVS_ON      = $12               ; Reverse on
+RVS_OFF     = $92               ; Reverse off
 
 ; Assembler workspace
 WORK        = $a3               ; Temporary workspace (2 bytes)
@@ -156,8 +165,27 @@ run_tool:   tax                 ; Save A in X so Prepare can set TOOL_CHR
             pha                 ;   tool onto the stack. The RTS below will
             lda ToolAddr_L,y    ;   pull off the address and route execution
             pha                 ;   to the appropriate tool
-            jsr Prepare         ; ,,
-            rts                 ; Pull address-1 off stack and go there
+Prepare:    ldy #$00            ; wAx is to be zeropage-neutral, so preserve
+-loop:      lda WORK,y          ;   its workspace in temp storage. When this
+            sta ZP_TMP,y        ;   routine is done, the data will be restored
+            iny                 ;   in Return
+            cpy #$10            ;   ,,
+            bne loop            ;   ,,
+            stx TOOL_CHR        ; Store the tool character
+            lda #$00            ; Initialize the input index for write
+            sta IDX_IN          ; ,,
+            jsr Transcribe      ; Transcribe from CHRGET to INBUFFER
+            lda #$ef            ; $0082 BEQ $008a -> BEQ $0073
+            sta $83             ; ,,
+refresh_pc: lda #$00            ; Re-initialize for buffer read
+            sta IDX_IN          ; ,,
+            jsr Buff2Byte       ; Convert 2 characters to a byte   
+            bcc main_r          ; Fail if the byte couldn't be parsed
+            sta PRGCTR+1        ; Save to the PRGCTR high byte
+            jsr Buff2Byte       ; Convert next 2 characters to byte
+            bcc main_r          ; Fail if the byte couldn't be parsed
+            sta PRGCTR          ; Save to the PRGCTR low byte
+main_r:     rts                 ; Pull address-1 off stack and go there
     
 ; Return from Wedge
 ; Return in one of two ways:
@@ -177,7 +205,7 @@ in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command
 DisList:    bcc list_r          ; Bail if the address is no good
             jsr DirectMode      ; If the tool is run in Direct Mode,
             bne d_listing       ;   cursor up to overwrite the original input
-            lda #$91            ;   ,,
+            lda #CRSRUP         ;   ,,
             jsr CHROUT          ;   ,,
 d_listing:  ldx #DISPLAYC       ; Show this many lines of code
 -loop:      txa
@@ -188,9 +216,6 @@ d_listing:  ldx #DISPLAYC       ; Show this many lines of code
             tax                 ; ,,
             dex
             bne loop
-            inx
-            jsr ShiftDown       ; Keep scrolling if the Shift Key
-            bne loop            ;   is held down
             jsr EnableBP        ; Re-enable breakpoint, if necessary
 list_r:     rts
 
@@ -245,13 +270,13 @@ shift_l:    lda #$00            ;   as a 24-bit register into CHARAC, which
             sta MNEM
             pla
             sta MNEM+1
-            rts
+mnemonic_r: rts
 
 ; Operand Display
 ; Dispatch display routines based on addressing mode
 DOperand:   lda INSTDATA+1
             cmp #IMPLIED        ; Handle each addressing mode with a subroutine
-            beq DisImp          ; Implied has no operand, so it goes to some RTS
+            beq mnemonic_r      ; Implied has no operand, so it goes to some RTS
             cmp #RELATIVE
             beq DisRel
             cmp #IMMEDIATE
@@ -290,15 +315,14 @@ ind_y:      lda #")"
             lda #","
             jsr CharOut
             lda #"Y"
-            jsr CharOut
-DisImp:     rts                 ; Any convenient rts will do for Implied     
+            jmp CharOut
 
 ; Disassemble Immediate Operand         
 DisImm:     lda #"#"
             jsr CharOut
-            jsr Param_8
-            rts
+            jmp Param_8
 
+; Disassemble Zeropage Operand
 DisZP:      pha
             jsr Param_8
             pla
@@ -306,6 +330,7 @@ DisZP:      pha
             sbc #ZEROPAGE
             jmp draw_xy         ; From this point, it's the same as Absolute            
 
+; Disassemble Relative Operand
 DisRel:     jsr HexPrefix
             jsr NextValue       ; Get the operand of the instruction, advance
                                 ;   the program counter. It might seem weird to
@@ -328,8 +353,7 @@ sign:       sta WORK+1          ; Set the high byte to either $00 or $ff
             adc PRGCTR+1        ;
             jsr Hex             ; No need to save the high byte, just show it
             lda WORK            ; Show the low byte of the computed address
-            jsr Hex             ; ,,
-            rts
+            jmp Hex             ; ,,
                             
 ; Disassemble Absolute Operand           
 DisAbs:     pha                 ; Save addressing mode for use later
@@ -347,23 +371,22 @@ draw_xy:    ldx #"X"
 abs_ind:    lda #","            ; This is an indexed addressing mode, so
             jsr CharOut         ;   write a comma and index register
             txa                 ;   ,,
-            jsr CharOut         ;   ,,
-            rts                      
+            jmp CharOut         ;   ,,
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSEMBLER COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Assemble:   jsr CharGet         ; Look through the buffer for one of two things
+Assemble:   bcc asm_r           ; Bail if the address is no good
+            lda INBUFFER+4      ; If the user just pressed Return at the prompt,
+            beq asm_r           ;   go back to BASIC
+            jsr CharGet         ; Look through the buffer for one of two things
             cmp #"$"            ;   A $ indicates there's an operand. I need to
             beq get_oprd        ;   parse that operand, or...
             cmp #$00            ;   If we reach the end of the buffer, it's an
             beq test            ;   implied mode instruction (presumably), so
             bne Assemble        ;   just go test it
 get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
-test:       lda IDX_IN          ; If not enough characters have been entered to
-            cmp #$06            ;   be mistaken for an intentional instrution,
-            bcc asm_r           ;   just go to BASIC
--loop:      jsr Hypotest        ; Line is done; hypothesis test for a match
+test:       jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc AsmError        ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
             lda OPCODE          ;   to the program counter. The number of bytes
@@ -470,7 +493,7 @@ bad_code:   clc                 ; Clear carry flag to indicate failure
 Memory:     bcc mem_r           ; Bail if address is no good
             jsr DirectMode      ; If the tool is run in Direct Mode,
             bne m_listing       ;   cursor up to hide the original input
-            lda #$91            ;   ,, 
+            lda #CRSRUP         ;   ,, 
             jsr CHROUT          ;   ,,
 m_listing:  ldx #DISPLAYM       ; Show this many groups of four
 -next:      txa
@@ -489,7 +512,7 @@ m_listing:  ldx #DISPLAYM       ; Show this many groups of four
             beq show_char
             jsr Space
             jmp loop       
-show_char:  lda #$12            ; Reverse on for the characters
+show_char:  lda #RVS_ON         ; Reverse on for the characters
             jsr CharOut
             ldy #$00
 -loop:      lda CHARDISP,y
@@ -514,9 +537,6 @@ rev_off:    jsr PrintBuff
             tax                 ; ,,
             dex
             bne next
-            inx
-            jsr ShiftDown       ; Keep scrolling if the Shift Key
-            bne next            ;   is held down
 mem_r:      rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -590,12 +610,11 @@ BPManager:  php
             lda #$00            ; Write BRK to the breakpoint location
             sta (PRGCTR),y      ;   ,,
             jsr Disasm          ; Disassemble the line at the breakpoint
-            lda #$91            ;   for the user to review
+            lda #CRSRUP         ;   for the user to review
             jsr CHROUT          ;   ,,
             jsr PrintBuff       ;   ,,
             jsr EnableBP        ; Enable the breakpoint after disassembly
-bpm_r:      jsr SetupVec        ; Make sure that the BRK handler is on
-            rts
+bpm_r:      jmp SetupVec        ; Make sure that the BRK handler is on
 
 ; BRK Trapper
 ; Replaces the default BRK handler. Shows the register display, goes to warm
@@ -652,7 +671,7 @@ BreakInd:   ldy #$00            ; Is this a BRK instruction?
             lda BREAKPOINT+1    ; ,,
             cmp PRGCTR+1        ; ,,
             bne ind_r           ; ,,
-            lda #$12            ; Reverse on for the breakpoint
+            lda #RVS_ON         ; Reverse on for the breakpoint
             jsr CharOut
             lda BREAKPOINT+2    ; Temporarily restore the breakpoint byte
             sta (PRGCTR),y      ;   for disassembly purposes
@@ -718,57 +737,50 @@ ex_r:       brk                 ; Trigger the BRK handler
 ; CONVERT COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Hex2Base10: bcc xfer_r          ; Bail if the hex input is no good
-            lda #$91            ; Cursor up to the previous line
+            lda #CRSRUP         ; Cursor up to the previous line
             jsr CHROUT          ; ,,
             lda #$1d            ; Cursor over to the right side of the line
-            ldy #$10            ; ,,
+            ldy #$0f            ; ,,
 -loop:      jsr CHROUT          ; ,,
             dey                 ; ,,
             bne loop            ; ,,
-            lda #$12            ; Reverse on after the characters
+            lda #RVS_ON         ; Reverse on after the characters
             jsr CHROUT          ; ,,
             ldx PRGCTR          ; Use PRTFIX to print the program counter
             lda PRGCTR+1        ;   as a base-10 number
             jsr PRTFIX          ;   ,,
-            lda #$92            ; Reverse off after the characters
+            lda #RVS_OFF        ; Reverse off after the characters
             jsr CHROUT          ; ,,
-            lda #$0d            ;   ,,
+            lda #LF             ;   ,,
             jsr CHROUT          ;   ,,
 xfer_r:     rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; COPY COMPONENT
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Copy:       bcc copy_r          ; Bail if the address is no good
+            jsr Buff2Byte       ; Get the number of bytes to be copied
+            bcc copy_r          ; If not a valid number, bail
+            beq copy_r          ; If zero, bail
+            pha
+            lda BREAKPOINT      ; Stash the breakpoint in WORK
+            sta WORK            ; ,,
+            lda BREAKPOINT+1    ; ,,
+            sta WORK+1          ; ,,
+            jsr ClearBP         ; Clear breakpoint to avoid BRK in the copy
+            pla                 ; Pulling the number of bytes
+            tay
+-loop:      dey
+            lda (WORK),y        ; Copy from the breakpoint
+            sta (PRGCTR),y      ; To the destination
+            cpy #$00
+            bne loop
+            jmp (READY)         ; Indicates completion
+copy_r:     rts            
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
-; Prepare
-; (1) Save registers for Return
-; (2) Save the current Function
-; (3) Get the program counter address from the input
-;
-; The caller should pass the current tool character in X for storage in TOOL_CHR
-Prepare:    ldy #$00            ; wAx is to be zeropage-neutral, so preserve
--loop:      lda WORK,y          ;   its workspace in temp storage. When this
-            sta ZP_TMP,y        ;   routine is done, the data will be restored
-            iny                 ;   in Return
-            cpy #$10            ;   ,,
-            bne loop            ;   ,,
-            stx TOOL_CHR        ; Store the tool character
-            lda #$00            ; Initialize the input index for write
-            sta IDX_IN          ; ,,
-            jsr Transcribe      ; Transcribe from CHRGET to INBUFFER
-            lda #$ef            ; $0082 BEQ $008a -> BEQ $0073
-            sta $83             ; ,,
-refresh_pc: lda #$00            ; Re-initialize for buffer read
-            sta IDX_IN          ; ,,
-            jsr Buff2Byte       ; Convert 2 characters to a byte   
-            bcc addr_fail       ; Fail if the byte couldn't be parsed
-            sta PRGCTR+1        ; Save to the PRGCTR high byte
-            jsr Buff2Byte       ; Convert next 2 characters to byte
-            bcc addr_fail       ; Fail if the byte couldn't be parsed
-            sta PRGCTR          ; Save to the PRGCTR low byte
-            rts
-addr_fail:  clc                 ; If either address byte fails, clear Carry
-            rts
-            
 ; Restore
 ; Put back temporary zeropage workspace            
 Restore:    ldx #$00            ; Restore workspace memory to zeropage
@@ -838,7 +850,7 @@ CharGet:    ldx IDX_IN
 Buff2Byte:  jsr CharGet
             jsr Char2Nyb
             cmp #TABLE_END
-            beq byte_err
+            beq not_found       ; See Lookup subroutine above
             asl                 ; Multiply high nybble by 16
             asl                 ;   ,,
             asl                 ;   ,,
@@ -847,13 +859,24 @@ Buff2Byte:  jsr CharGet
             jsr CharGet
             jsr Char2Nyb
             cmp #TABLE_END
-            beq byte_err
+            beq not_found       ; See Lookup subroutine above
             ora WORK            ; Combine high and low nybbles
             sec                 ; Set Carry flag indicates success
             rts
-byte_err:   clc                 ; Clear Carry flag indicates that this isn't a
-            rts                 ;   hexadecimal number
        
+; Is Buffer Match            
+; Does the input buffer match the output buffer?
+; Carry is set if there's a match, clear if not
+IsMatch:    ldy #$06
+-loop:      lda OUTBUFFER,y     ; Compare the assembly with the disassembly
+            cmp INBUFFER-2,y    ;   in the buffers
+            bne not_found       ; See Lookup subroutine above
+            iny
+            cpy IDX_OUT
+            bne loop            ; Loop until the buffer is done
+            sec                 ; This matches; set carry
+            rts
+
 ; Character to Nybble
 ; A is the character in the text buffer to be converted into a nybble
 Char2Nyb:   ldx #$0f            ; Iterate through the HexDigit table
@@ -876,21 +899,18 @@ next_r:     ldy #$00
 
 ; Write hex prefix to buffer
 HexPrefix:  lda #"$"
-            jsr CharOut
-            rts
+            jmp CharOut
 
 ; Write space to buffer          
 Space:      lda #" "
-            jsr CharOut
-            rts
+            jmp CharOut
             
 ; Write Address to Buffer            
 Address:    lda PRGCTR+1        ; Show the address
             jsr Hex             ; ,,
             lda PRGCTR          ; ,,
             jsr Hex             ; ,,
-            jsr Space
-            rts
+            jmp Space
 
 ; Write hex byte to buffer
 Hex:        pha                 ; Show the high nybble first
@@ -905,14 +925,12 @@ Hex:        pha                 ; Show the high nybble first
             and #$0f
             tax
             lda HexDigit,x
-            jsr CharOut
-            rts
+            jmp CharOut
  
 ; Show 8-bit Parameter           
 Param_8:    jsr HexPrefix
             jsr NextValue 
-            jsr Hex            
-            rts
+            jmp Hex            
             
 ; Show 16-Bit Parameter            
 Param_16:   jsr HexPrefix
@@ -921,8 +939,7 @@ Param_16:   jsr HexPrefix
             jsr NextValue 
             jsr Hex
             pla
-            jsr Hex
-            rts
+            jmp Hex
             
 CharOut:    sta CHARAC          ; Save temporary character
 write_ok:   tya                 ; Save registers
@@ -959,8 +976,7 @@ ch_token:   bpl x_add           ; If it's not a token, just add it to buffer
             jmp Transcribe      ; ,,
 x_add:      jsr AddInput        ; Add the text to the buffer
             jmp Transcribe
-xscribe_r:  jsr AddInput        ; Add the final zero, and fix CHRGET...
-            rts
+xscribe_r:  jmp AddInput        ; Add the final zero, and fix CHRGET...
 
 ; Add Input
 ; Add a character to the input buffer and advance the counter
@@ -989,8 +1005,7 @@ explode:    iny                 ; Found the keyword; get characters from
             jsr AddInput        ;   add to input buffer
             bne explode
 last_char:  and #$7f            ; Take out bit 7 and
-            jsr AddInput        ;   add to input buffer
-detok_r:    rts
+            jmp AddInput        ;   add to input buffer
  
 ; Print Buffer
 ; Add a $00 delimiter to the end of the output buffer, and print it out           
@@ -999,11 +1014,10 @@ PrintBuff:  lda #$00            ; End the buffer with 0
             lda #<OUTBUFFER     ; Print the line
             ldy #>OUTBUFFER     ; ,,
             jsr PRTSTR          ; ,,
-            lda #$92            ; Reverse off after each line
+            lda #RVS_OFF        ; Reverse off after each line
             jsr CHROUT          ; ,,
-            lda #$0d            ; Linefeed after each buffer print
-            jsr CHROUT
-            rts 
+            lda #LF             ; Linefeed after each buffer print
+            jmp CHROUT
             
 ; Prompt for Next Line
 ; X should be set to the number of bytes the program counter should be
@@ -1046,33 +1060,12 @@ SetupVec:   lda #<main          ; Intercept GONE to process wedge
             sta CBINV+1         ; ,,
             rts
             
-; Check Shift Key
-; If it's held down, Zero flag will be clear
-ShiftDown:  lda KEYCVTRS   
-            and #$01
-            rts    
-            
 ; In Direct Mode
 ; If the wAx tool is running in Direct Mode, the Zero flag will be set
 DirectMode: ldy CURLIN+1
             iny
             rts     
-            
-; Is Buffer Match            
-; Does the input buffer match the output buffer?
-; Carry is set if there's a match, clear if not
-IsMatch:    ldy #$06
--loop:      lda OUTBUFFER,y     ; Compare the assembly with the disassembly
-            cmp INBUFFER-2,y    ;   in the buffers
-            bne no_match        ; If any bytes don't match, then skip
-            iny
-            cpy IDX_OUT
-            bne loop            ; Loop until the buffer is done
-            sec                 ; This matches; set carry
-            rts
-no_match:   clc                 ; Clear carry for no match
-            rts
-            
+                        
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1095,14 +1088,16 @@ ToolTable:	; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler
             .byte TCHAR           
             ; https://github.com/Chysn/wAx/wiki/9-Hexadecimal-to-Base-10-Converter
             .byte CCHAR
+            ; https://github.com/Chysn/wAx/wiki/10-Memory-Copy
+            .byte PCHAR
 ToolAddr_L: .byte <DisList-1,<Assemble-1,<Memory-1,<MemEditor-1,<Register-1
-            .byte <Execute-1,<BPManager-1,<Tester-1,<Hex2Base10-1
+            .byte <Execute-1,<BPManager-1,<Tester-1,<Hex2Base10-1,<Copy
 ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
-            .byte >Execute-1,>BPManager-1,>Tester-1,>Hex2Base10-1
+            .byte >Execute-1,>BPManager-1,>Tester-1,>Hex2Base10-1,>Copy
                       
 HexDigit:   .asc "0123456789ABCDEF"
-Intro:      .asc $0d,"WAX ON",$00
-Registers:  .asc $0d,"*BRK",$0d," Y: X: A: P: S: PC::",$0d,";",$00
+Intro:      .asc LF,"WAX ON",$00
+Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
