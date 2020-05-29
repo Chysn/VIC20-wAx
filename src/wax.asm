@@ -119,7 +119,6 @@ WORK        = $a3               ; Temporary workspace (2 bytes)
 MNEM        = $a3               ; Current Mnemonic (2 bytes)
 PRGCTR      = $a5               ; Program Counter (2 bytes)
 CHARDISP    = $a7               ; Character display for Memory (2 bytes)
-DESTINATION = $a7               ; Move destination for Transfer (2 bytes)
 LANG_PTR    = $a7               ; Language Pointer (2 bytes)
 INSTDATA    = $a9               ; Instruction data (2 bytes)
 TOOL_CHR    = $ab               ; Current function (ACHAR, DCHAR)
@@ -129,6 +128,7 @@ RB_OPERAND  = $af               ; Hypothetical relative branch operand
 INSTSIZE    = $b0               ; Instruction size
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
+RB_FORWARD  = $10               ; Relative branch address (2 bytes)
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
 INBUFFER    = $0230             ; Input buffer (22 bytes)
 ZP_TMP      = $0246             ; Zeropage Preservation (16 bytes)
@@ -400,6 +400,8 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
 -loop:      jsr CharGet         ; Look through the buffer for either
             cmp #$00            ;   0, which should indicate an implied mode
             beq test            ;   instruction, or
+            cmp #"*"            ; 
+            beq HandleFwd
             cmp #"$"            ;   $, which indiates an operand that needs
             bne loop            ;   to be parsed
 get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
@@ -422,6 +424,30 @@ test:       jsr Hypotest        ; Line is done; hypothesis test for a match
 nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
             jsr Prompt          ; Prompt for next line if in direct mode
 asm_r:      rts
+
+; Handle Forward Branch
+; In cases where the forward branch address is unknown, * may be used as
+; the operand for a relative branch instruction. The branch may be resolved
+; by entering * on a line by itself, after the address.
+HandleFwd:  lda IDX_IN          ; Where in the line does the * appear?
+            cmp #$05            ; If it's right after the address, it's for
+            beq resolve_fw      ;   resolution of the forward branch point
+set_fw:     lda PRGCTR          ; Otherwise, it's to set the forward branch
+            sta RB_FORWARD      ;   point. Store the location of the branch
+            lda PRGCTR+1        ;   instruction.
+            sta RB_FORWARD+1    ;   ,,
+            lda #$00            ; Aim the branch instruction at the next
+            sta RB_OPERAND      ;   instruction by default
+            jmp test            ; Go back to assemble the instruction
+resolve_fw: lda PRGCTR          ; Compute the relative branch offset from the
+            sec                 ;   current program counter
+            sbc RB_FORWARD      ;   ,,
+            sec                 ; Offset by 2 to account for the instruction
+            sbc #$02            ;   ,,
+            ldy #$01            ; Save the computed offset right after the
+            sta (RB_FORWARD),y  ;   original instruction as its operand
+            ldx #$00            ; Prompt for the same memory location again
+            jmp Prompt          ; ,,
             
 ; Error Message
 ; Invalid opcode or formatting (ASSEMBLY)
@@ -489,8 +515,8 @@ match:      jsr NextValue
             jsr RefreshPC       ; Restore the program counter to target address
             sec                 ; Set Carry flag to indicate success
             rts
-test_rel:   lda #$0a            ; Handle relative branch operands here; set
-            sta IDX_OUT         ;   a stop after four characters in output
+test_rel:   lda #$09            ; Handle relative branch operands here; set
+            sta IDX_OUT         ;   a stop after three characters in output
             jsr IsMatch         ;   buffer and check for a match
             bcc reset          
             lda RB_OPERAND      ; If the instruction matches, move the relative
@@ -757,34 +783,22 @@ ex_r:       brk                 ; Trigger the BRK handler
 ; https://github.com/Chysn/wAx/wiki/9-Memory-Save
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Save:       bcc save_err        ; Bail if the address is no good
-            lda INBUFFER+8      ; Is the character after the addresses a quote?
-            cmp #QUOTE          ; ,,
-            bne save_err        ; If not, bail
-            jsr Buff2Byte       ; Get the end address high byte
-            bcc save_err        ; ,,
-            sta WORK+1          ; ,,
-            jsr Buff2Byte       ; Get the end address low byte
-            bcc save_err        ; ,,
-            sta WORK            ; ,,
-set_lfs:    lda #$42            ; Setup logical file
+set_lfs:    lda #$42            ; Set up logical file
             ldx #DEVICE         ; ,,
             ldy #$ff            ; ,,
             jsr SETLFS          ; ,,
 -loop:      iny                 ; Count characters in the name; Y started at $ff
-            lda INBUFFER+9,y    ; ,,
+            lda INBUFFER+4,y    ; ,,
             beq set_name        ; If we've reached the end of the line
-            cmp #QUOTE          ;   or reached a quote
-            beq set_name        ;   the name is done
-            cpy #$08            ; If the name gets to 8 characters, it's done
+            cpy #$0f            ; If the name gets to 10 characters, it's done
             bne loop            ; ,,
 set_name:   tya                 ; Set the filename for SETNAM call
-            ldx #<INBUFFER+9    ; ,,
-            ldy #>INBUFFER+9    ; ,,
+            ldx #<INBUFFER+4    ; ,,
+            ldy #>INBUFFER+4    ; ,,
             jsr SETNAM          ; ,,
-do_save:    jsr ClearBP         ; Clear breakpoint so the BRK doesn't get in
-            lda #PRGCTR         ; Set up SAVE call
-            ldx WORK            ; ,,
-            ldy WORK+1          ; ,,
+do_save:    lda #PRGCTR         ; Set up SAVE call
+            ldx BREAKPOINT      ; ,,
+            ldy BREAKPOINT+1    ; ,,
             jsr SAVE            ; ,,
             bcc save_ok         ; If there was an error, show the BASIC error
             jmp ERROR_NO        ; ,,
