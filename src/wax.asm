@@ -145,7 +145,6 @@ Install:    jsr $c533           ; Re-chain BASIC program to set BASIC
             lda $23             ;   ,,
             jsr $C655           ;   ,,
 installed:  jsr SetupVec        ; Set up vectors (IGONE and BRK)
-            jsr ClearBP         ; Clear breakpoint on install            
             lda #<Intro         ; Announce that wAx is on
             ldy #>Intro         ; ,,
             jsr PRTSTR          ; ,,
@@ -398,12 +397,11 @@ abs_ind:    lda #","            ; This is an indexed addressing mode, so
 Assemble:   bcc asm_r           ; Bail if the address is no good
             lda INBUFFER+4      ; If the user just pressed Return at the prompt,
             beq asm_r           ;   go back to BASIC
-            jsr CharGet         ; Look through the buffer for one of two things
-            cmp #"$"            ;   A $ indicates there's an operand. I need to
-            beq get_oprd        ;   parse that operand, or...
-            cmp #$00            ;   If we reach the end of the buffer, it's an
-            beq test            ;   implied mode instruction (presumably), so
-            bne Assemble        ;   just go test it
+-loop:      jsr CharGet         ; Look through the buffer for either
+            cmp #$00            ;   0, which should indicate an implied mode
+            beq test            ;   instruction, or
+            cmp #"$"            ;   $, which indiates an operand that needs
+            bne loop            ;   to be parsed
 get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
 test:       jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc AsmError        ; Clear carry means the test failed
@@ -491,13 +489,9 @@ match:      jsr NextValue
             jsr RefreshPC       ; Restore the program counter to target address
             sec                 ; Set Carry flag to indicate success
             rts
-test_rel:   lda IDX_OUT
-            pha
-            lda #$0a            ; Handle relative branch operands here; set
+test_rel:   lda #$0a            ; Handle relative branch operands here; set
             sta IDX_OUT         ;   a stop after four characters in output
             jsr IsMatch         ;   buffer and check for a match
-            pla
-            sta IDX_OUT
             bcc reset          
             lda RB_OPERAND      ; If the instruction matches, move the relative
             sta OPERAND         ;   branch operand to the working operand
@@ -627,10 +621,10 @@ BPManager:  php
             sta BREAKPOINT      ; ,,
             lda PRGCTR+1        ; ,,
             sta BREAKPOINT+1    ; ,,
-            ldy #$00            ; Get the previous code
+            ;ldy #$00           ; (Y is already 0 from ClearBP)
             lda (PRGCTR),y      ; Stash it in the Breakpoint data structure,
             sta BREAKPOINT+2    ;   to be restored on the next break
-            lda #$00            ; Write BRK to the breakpoint location
+            tya                 ; Write BRK to the breakpoint location
             sta (PRGCTR),y      ;   ,,
             jsr Disasm          ; Disassemble the line at the breakpoint
             lda #CRSRUP         ;   for the user to review
@@ -709,7 +703,7 @@ EnableBP:   lda BREAKPOINT+2
             lda BREAKPOINT+1
             sta CHARAC+1
             ldy #$00            ; Write BRK to the breakpoint
-            lda #$00            ; ,,
+            tya                 ; ,,
             sta (CHARAC),y      ; ,,
 enable_r:   rts
              
@@ -756,8 +750,7 @@ Execute:    pla                 ; Get rid of the return address to Return, as
                                 ;   lda ACC right after jsr SYS, because the
                                 ;   second half of SYS messes with A, and you
                                 ;   want the BRK interrupt to get it right.
-ex_r:       cld                 ; Clear decimal mode as safeguard
-            brk                 ; Trigger the BRK handler
+ex_r:       brk                 ; Trigger the BRK handler
            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY SAVE COMPONENT
