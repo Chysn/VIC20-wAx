@@ -139,30 +139,42 @@ BREAKPOINT  = $0256             ; Breakpoint data (3 bytes)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 Install:    jsr $c533           ; Re-chain BASIC program to set BASIC
             lda $22             ;   pointers as a courtesy to the user
+            ;clc                ;   ,, ($c533 always exits with Carry clear)
             adc #$02            ;   ,,
             sta $2D             ;   ,,
             lda $23             ;   ,,
             jsr $C655           ;   ,,
 installed:  jsr SetupVec        ; Set up vectors (IGONE and BRK)
+            jsr ClearBP         ; Clear breakpoint on install            
             lda #<Intro         ; Announce that wAx is on
             ldy #>Intro         ; ,,
             jsr PRTSTR          ; ,,
-            jsr ClearBP         ; Clear breakpoint on install            
-            jmp (READY)
+            jmp (READY)         ; READY.
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MAIN PROGRAM
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;              
-main:       jsr CHRGET
-            ldy #$00
--loop:      cmp ToolTable,y
-            beq run_tool
-            iny                 ; Go to the next table entry
-            cpy #TOOL_COUNT
-            bne loop
+main:       jsr CHRGET          ; Get the character from input or BASIC
+            ldy #$00            ; Is it one of the wedge characters?
+-loop:      cmp ToolTable,y     ; ,,
+            beq Prepare         ; If so, run the selected tool
+            iny                 ; Else, check the characters in turn
+            cpy #TOOL_COUNT     ; ,,
+            bne loop            ; ,,
 to_gone:    jsr CHRGOT          ; Restore flags for the found character
             jmp GONE+3          ; +3 because the CHRGET is already done
-run_tool:   tax                 ; Save A in X so Prepare can set TOOL_CHR
+
+; Prepare for Tool Run
+; A wedge character has been entered, and will now be interpreted as a wedge
+; command. Prepare for execution by
+; (1) Setting a return point
+; (2) Putting the tool's start address-1 on the stack
+; (3) Saving the zeropage workspace for future restoration
+; (4) Transcribing from BASIC or input buffer to the wAx input buffer
+; (5) Reading the first four hexadecimal characters used by all wAx tools and
+;     setting the Carry flag if there's a valid 16-bit number provided
+; (6) RTS to route to the selected tool            
+Prepare:    tax                 ; Save A in X so Prepare can set TOOL_CHR
             lda #>Return-1      ; Push the address-1 of Return onto the stack
             pha                 ;   as the destination for RTS of the
             lda #<Return-1      ;   selected tool
@@ -171,7 +183,7 @@ run_tool:   tax                 ; Save A in X so Prepare can set TOOL_CHR
             pha                 ;   tool onto the stack. The RTS below will
             lda ToolAddr_L,y    ;   pull off the address and route execution
             pha                 ;   to the appropriate tool
-Prepare:    ldy #$00            ; wAx is to be zeropage-neutral, so preserve
+            ldy #$00            ; wAx is to be zeropage-neutral, so preserve
 -loop:      lda WORK,y          ;   its workspace in temp storage. When this
             sta ZP_TMP,y        ;   routine is done, the data will be restored
             iny                 ;   in Return
@@ -195,8 +207,8 @@ main_r:     rts                 ; Pull address-1 off stack and go there
     
 ; Return from Wedge
 ; Return in one of two ways:
-; * In direct mode, to a BASIC warm start without READY.
-; * In a program, find the next BASIC command
+; (1) In direct mode, to a BASIC warm start without READY.
+; (2) In a program, find the next BASIC command
 Return:     jsr Restore
             jsr DirectMode      ; If in Direct Mode, warm start without READY.
             bne in_program      ;   ,,
@@ -240,7 +252,7 @@ op_start:   ldy #$00            ; Get the opcode
             bcc Unknown         ; Clear carry indicates an unknown opcode
             jsr DMnemonic       ; Display mnemonic
             jsr Space
-skip_space: jsr DOperand        ; Display operand
+            jsr DOperand        ; Display operand
 disasm_r:   jsr NextValue       ; Advance to the next line of code
             rts
 
@@ -267,8 +279,9 @@ shift_l:    lda #$00            ;   as a 24-bit register into CHARAC, which
             dey
             bne shift_l
             lda CHARAC
-            adc #"@"            ; Get the PETSCII character. Carry is clear from
-            jsr CharOut         ;   the last ROL
+            ;clc                ; Carry is clear from the last ROL
+            adc #"@"            ; Get the PETSCII character
+            jsr CharOut
             dex
             bne loop
             pla
@@ -743,7 +756,8 @@ Execute:    pla                 ; Get rid of the return address to Return, as
                                 ;   lda ACC right after jsr SYS, because the
                                 ;   second half of SYS messes with A, and you
                                 ;   want the BRK interrupt to get it right.
-ex_r:       brk                 ; Trigger the BRK handler
+ex_r:       cld                 ; Clear decimal mode as safeguard
+            brk                 ; Trigger the BRK handler
            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY SAVE COMPONENT
@@ -1089,7 +1103,7 @@ ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
 ; Text display tables                      
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*BRK*",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
