@@ -128,7 +128,7 @@ RB_OPERAND  = $af               ; Hypothetical relative branch operand
 INSTSIZE    = $b0               ; Instruction size
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
-RB_FORWARD  = $10               ; Relative branch address (2 bytes)
+RB_FORWARD  = $10               ; Relative branch instruction address (2 bytes)
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
 INBUFFER    = $0230             ; Input buffer (22 bytes)
 ZP_TMP      = $0246             ; Zeropage Preservation (16 bytes)
@@ -192,7 +192,7 @@ Prepare:    tax                 ; Save A in X so Prepare can set TOOL_CHR
             lda #$00            ; Initialize the input index for write
             sta IDX_IN          ; ,,
             jsr Transcribe      ; Transcribe from CHRGET to INBUFFER
-            lda #$ef            ; $0082 BEQ $008a -> BEQ $0073
+            lda #$ef            ; $0082 BEQ $008a -> BEQ $0073 (maybe)
             sta $83             ; ,,
 RefreshPC:  lda #$00            ; Re-initialize for buffer read
             sta IDX_IN          ; ,,
@@ -255,6 +255,7 @@ op_start:   ldy #$00            ; Get the opcode
 disasm_r:   jsr NextValue       ; Advance to the next line of code
             rts
 
+; Unknown Opcode
 Unknown:    lda #"."            ; Period before an unknown byte for byte-entry
             jsr CharOut         ; ,,
             lda INSTDATA        ; The unknown opcode is still here   

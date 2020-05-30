@@ -119,7 +119,6 @@ WORK        = $a3               ; Temporary workspace (2 bytes)
 MNEM        = $a3               ; Current Mnemonic (2 bytes)
 PRGCTR      = $a5               ; Program Counter (2 bytes)
 CHARDISP    = $a7               ; Character display for Memory (2 bytes)
-DESTINATION = $a7               ; Move destination for Transfer (2 bytes)
 LANG_PTR    = $a7               ; Language Pointer (2 bytes)
 INSTDATA    = $a9               ; Instruction data (2 bytes)
 TOOL_CHR    = $ab               ; Current function (ACHAR, DCHAR)
@@ -129,6 +128,7 @@ RB_OPERAND  = $af               ; Hypothetical relative branch operand
 INSTSIZE    = $b0               ; Instruction size
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
+RB_FORWARD  = $10               ; Relative branch instruction address (2 bytes)
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
 INBUFFER    = $0230             ; Input buffer (22 bytes)
 ZP_TMP      = $0246             ; Zeropage Preservation (16 bytes)
@@ -145,7 +145,6 @@ Install:    jsr $c533           ; Re-chain BASIC program to set BASIC
             lda $23             ;   ,,
             jsr $C655           ;   ,,
 installed:  jsr SetupVec        ; Set up vectors (IGONE and BRK)
-            jsr ClearBP         ; Clear breakpoint on install            
             lda #<Intro         ; Announce that wAx is on
             ldy #>Intro         ; ,,
             jsr PRTSTR          ; ,,
@@ -193,7 +192,7 @@ Prepare:    tax                 ; Save A in X so Prepare can set TOOL_CHR
             lda #$00            ; Initialize the input index for write
             sta IDX_IN          ; ,,
             jsr Transcribe      ; Transcribe from CHRGET to INBUFFER
-            lda #$ef            ; $0082 BEQ $008a -> BEQ $0073
+            lda #$ef            ; $0082 BEQ $008a -> BEQ $0073 (maybe)
             sta $83             ; ,,
 RefreshPC:  lda #$00            ; Re-initialize for buffer read
             sta IDX_IN          ; ,,
@@ -256,11 +255,11 @@ op_start:   ldy #$00            ; Get the opcode
 disasm_r:   jsr NextValue       ; Advance to the next line of code
             rts
 
-Unknown:    jsr HexPrefix
+; Unknown Opcode
+Unknown:    lda #"."            ; Period before an unknown byte for byte-entry
+            jsr CharOut         ; ,,
             lda INSTDATA        ; The unknown opcode is still here   
             jsr Hex             
-            lda #"?"
-            jsr CharOut            
             jmp disasm_r
             
 ; Mnemonic Display
@@ -392,18 +391,62 @@ abs_ind:    lda #","            ; This is an indexed addressing mode, so
             jmp CharOut         ;   ,,
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; MEMORY EDITOR COMPONENTS
+; https://github.com/Chysn/wAx/wiki/4-Memory-Editor
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+MemEditor:  bcc edit_r          ; Bail out of the address is no good
+            lda INBUFFER+4      ; Is there a double-quote after the address?
+            cmp #QUOTE          ; ,,
+            beq TextEdit        ; If so, route to Text Editor
+AsmEntry:   ldy #$00            ; This is Assemble's entry point for .byte
+-loop:      jsr Buff2Byte
+            bcc edit_exit       ; Bail out on the first non-hex byte
+            sta (PRGCTR),y      
+            iny
+            cpy #$04
+            bne loop
+edit_exit:  cpy #$00
+            beq edit_r
+            tya
+            tax
+            jsr Prompt          ; Prompt for the next address
+            jsr ClearBP         ; Clear breakpoint if anything was changed
+edit_r:     rts
+
+; Text Editor
+; If the input starts with a quote, add characters until we reach another
+; quote, or 0
+TextEdit:   jsr CharGet         ; Look for the starting quote that MemEditor
+            cmp #QUOTE          ;   promised
+            bne TextEdit
+            ldy #$00            ; Y=Data Index
+-loop:      jsr CharGet
+            cmp #$00            ; (This is necessary due to INC in CharGet)
+            beq edit_exit       ; Return to MemEditor if 0
+            cmp #QUOTE          ; Is this the closing quote?
+            beq edit_exit       ; Return to MemEditor if quote
+pop:        sta (PRGCTR),y      ; Populate data
+            iny
+            cpy #$10            ; String size limit
+            beq edit_exit
+            jmp loop
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSEMBLER COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/2-6502-Assembler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Assemble:   bcc asm_r           ; Bail if the address is no good
             lda INBUFFER+4      ; If the user just pressed Return at the prompt,
             beq asm_r           ;   go back to BASIC
-            jsr CharGet         ; Look through the buffer for one of two things
-            cmp #"$"            ;   A $ indicates there's an operand. I need to
-            beq get_oprd        ;   parse that operand, or...
-            cmp #$00            ;   If we reach the end of the buffer, it's an
-            beq test            ;   implied mode instruction (presumably), so
-            bne Assemble        ;   just go test it
+-loop:      jsr CharGet         ; Look through the buffer for either
+            cmp #$00            ;   0, which should indicate an implied mode
+            beq test            ;   instruction, or
+            cmp #"*"            ; * = Handle forward relative branching
+            beq HandleFwd       ; ,,
+            cmp #"."            ; . = Start .byte entry (route to hex editor)
+            beq AsmEntry        ; ,,
+            cmp #"$"            ; $ = Parse the operand
+            bne loop            ; ,,
 get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
 test:       jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc AsmError        ; Clear carry means the test failed
@@ -424,6 +467,30 @@ test:       jsr Hypotest        ; Line is done; hypothesis test for a match
 nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
             jsr Prompt          ; Prompt for next line if in direct mode
 asm_r:      rts
+
+; Handle Forward Branch
+; In cases where the forward branch address is unknown, * may be used as
+; the operand for a relative branch instruction. The branch may be resolved
+; by entering * on a line by itself, after the address.
+HandleFwd:  lda IDX_IN          ; Where in the line does the * appear?
+            cmp #$05            ; If it's right after the address, it's for
+            beq resolve_fw      ;   resolution of the forward branch point
+set_fw:     lda PRGCTR          ; Otherwise, it's to set the forward branch
+            sta RB_FORWARD      ;   point. Store the location of the branch
+            lda PRGCTR+1        ;   instruction.
+            sta RB_FORWARD+1    ;   ,,
+            lda #$00            ; Aim the branch instruction at the next
+            sta RB_OPERAND      ;   instruction by default
+            jmp test            ; Go back to assemble the instruction
+resolve_fw: lda PRGCTR          ; Compute the relative branch offset from the
+            sec                 ;   current program counter
+            sbc RB_FORWARD      ;   ,,
+            sec                 ; Offset by 2 to account for the instruction
+            sbc #$02            ;   ,,
+            ldy #$01            ; Save the computed offset right after the
+            sta (RB_FORWARD),y  ;   original instruction as its operand
+            ldx #$00            ; Prompt for the same memory location again
+            jmp Prompt          ; ,,
             
 ; Error Message
 ; Invalid opcode or formatting (ASSEMBLY)
@@ -491,13 +558,9 @@ match:      jsr NextValue
             jsr RefreshPC       ; Restore the program counter to target address
             sec                 ; Set Carry flag to indicate success
             rts
-test_rel:   lda IDX_OUT
-            pha
-            lda #$0a            ; Handle relative branch operands here; set
-            sta IDX_OUT         ;   a stop after four characters in output
+test_rel:   lda #$09            ; Handle relative branch operands here; set
+            sta IDX_OUT         ;   a stop after three characters in output
             jsr IsMatch         ;   buffer and check for a match
-            pla
-            sta IDX_OUT
             bcc reset          
             lda RB_OPERAND      ; If the instruction matches, move the relative
             sta OPERAND         ;   branch operand to the working operand
@@ -558,47 +621,6 @@ rev_off:    jsr PrintBuff
             dex
             bne next
 mem_r:      rts
-            
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; MEMORY EDITOR COMPONENTS
-; https://github.com/Chysn/wAx/wiki/4-Memory-Editor
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-MemEditor:  bcc edit_r          ; Bail out of the address is no good
-            lda INBUFFER+4      ; Is there a double-quote after the address?
-            cmp #QUOTE          ; ,,
-            beq TextEdit        ; If so, route to Text Editor
-            ldy #$00            ; Y=Data index
--loop:      jsr Buff2Byte
-            bcc edit_exit       ; Bail out on the first non-hex byte
-            sta (PRGCTR),y      
-            iny
-            cpy #$04
-            bne loop
-edit_exit:  cpy #$00
-            beq edit_r
-            tya
-            tax
-            jsr Prompt          ; Prompt for the next address
-            jsr ClearBP         ; Clear breakpoint if anything was changed
-edit_r:     rts
-
-; Text Editor
-; If the input starts with a quote, add characters until we reach another
-; quote, or 0
-TextEdit:   jsr CharGet         ; Look for the starting quote that MemEditor
-            cmp #QUOTE          ;   promised
-            bne TextEdit
-            ldy #$00            ; Y=Data Index
--loop:      jsr CharGet
-            cmp #$00            ; (This is necessary due to INC in CharGet)
-            beq edit_exit       ; Return to MemEditor if 0
-            cmp #QUOTE          ; Is this the closing quote?
-            beq edit_exit       ; Return to MemEditor if quote
-pop:        sta (PRGCTR),y      ; Populate data
-            iny
-            cpy #$10            ; String size limit
-            beq edit_exit
-            jmp loop
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSERTION TESTER COMPONENT
@@ -627,10 +649,10 @@ BPManager:  php
             sta BREAKPOINT      ; ,,
             lda PRGCTR+1        ; ,,
             sta BREAKPOINT+1    ; ,,
-            ldy #$00            ; Get the previous code
+            ;ldy #$00           ; (Y is already 0 from ClearBP)
             lda (PRGCTR),y      ; Stash it in the Breakpoint data structure,
             sta BREAKPOINT+2    ;   to be restored on the next break
-            lda #$00            ; Write BRK to the breakpoint location
+            tya                 ; Write BRK to the breakpoint location
             sta (PRGCTR),y      ;   ,,
             jsr Disasm          ; Disassemble the line at the breakpoint
             lda #CRSRUP         ;   for the user to review
@@ -709,7 +731,7 @@ EnableBP:   lda BREAKPOINT+2
             lda BREAKPOINT+1
             sta CHARAC+1
             ldy #$00            ; Write BRK to the breakpoint
-            lda #$00            ; ,,
+            tya                 ; ,,
             sta (CHARAC),y      ; ,,
 enable_r:   rts
              
@@ -756,42 +778,29 @@ Execute:    pla                 ; Get rid of the return address to Return, as
                                 ;   lda ACC right after jsr SYS, because the
                                 ;   second half of SYS messes with A, and you
                                 ;   want the BRK interrupt to get it right.
-ex_r:       cld                 ; Clear decimal mode as safeguard
-            brk                 ; Trigger the BRK handler
+ex_r:       brk                 ; Trigger the BRK handler
            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY SAVE COMPONENT
 ; https://github.com/Chysn/wAx/wiki/9-Memory-Save
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Save:       bcc save_err        ; Bail if the address is no good
-            lda INBUFFER+8      ; Is the character after the addresses a quote?
-            cmp #QUOTE          ; ,,
-            bne save_err        ; If not, bail
-            jsr Buff2Byte       ; Get the end address high byte
-            bcc save_err        ; ,,
-            sta WORK+1          ; ,,
-            jsr Buff2Byte       ; Get the end address low byte
-            bcc save_err        ; ,,
-            sta WORK            ; ,,
-set_lfs:    lda #$42            ; Setup logical file
+set_lfs:    lda #$42            ; Set up logical file
             ldx #DEVICE         ; ,,
             ldy #$ff            ; ,,
             jsr SETLFS          ; ,,
 -loop:      iny                 ; Count characters in the name; Y started at $ff
-            lda INBUFFER+9,y    ; ,,
+            lda INBUFFER+4,y    ; ,,
             beq set_name        ; If we've reached the end of the line
-            cmp #QUOTE          ;   or reached a quote
-            beq set_name        ;   the name is done
-            cpy #$08            ; If the name gets to 8 characters, it's done
+            cpy #$0f            ; If the name gets to 10 characters, it's done
             bne loop            ; ,,
 set_name:   tya                 ; Set the filename for SETNAM call
-            ldx #<INBUFFER+9    ; ,,
-            ldy #>INBUFFER+9    ; ,,
+            ldx #<INBUFFER+4    ; ,,
+            ldy #>INBUFFER+4    ; ,,
             jsr SETNAM          ; ,,
-do_save:    jsr ClearBP         ; Clear breakpoint so the BRK doesn't get in
-            lda #PRGCTR         ; Set up SAVE call
-            ldx WORK            ; ,,
-            ldy WORK+1          ; ,,
+do_save:    lda #PRGCTR         ; Set up SAVE call
+            ldx BREAKPOINT      ; ,,
+            ldy BREAKPOINT+1    ; ,,
             jsr SAVE            ; ,,
             bcc save_ok         ; If there was an error, show the BASIC error
             jmp ERROR_NO        ; ,,
@@ -936,7 +945,7 @@ Address:    lda PRGCTR+1        ; Show the address
 
 ; Write hex byte to buffer
 Hex:        pha                 ; Show the high nybble first
-            lsr                 ; Multiply by 4
+            lsr                 ; Multiply by 16
             lsr                 ; ,,
             lsr                 ; ,,
             lsr                 ; ,,
@@ -998,9 +1007,9 @@ ch_token:   cmp #$80            ; Is the character in A a BASIC token?
             cpy #$06            ;  and skip detokenization if it's been
             beq x_add           ;  modified.
             jsr Detokenize      ; Detokenize and continue transciption
-            jmp Transcribe      ; ,,
+            jmp Transcribe      ; ,, (Carry is always set by Detokenize)
 x_add:      jsr AddInput        ; Add the text to the buffer
-            jmp Transcribe
+            jmp Transcribe      ; (Carry is always set by AddInput)
 xscribe_r:  jmp AddInput        ; Add the final zero, and fix CHRGET...
 
 ; Add Input
@@ -1103,7 +1112,7 @@ ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
 ; Text display tables                      
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
@@ -1141,7 +1150,7 @@ InstrSet:   .byte $09,$07       ; ADC
             .byte $21,$20       ; * AND (indirect,X)
             .byte $31,$30       ; * AND (indirect),Y
             .byte $0c,$d9       ; ASL
-            .byte $0a,$a0       ; * ASL accumulator
+            .byte $0a,$b0       ; * ASL accumulator
             .byte $06,$70       ; * ASL zeropage
             .byte $16,$80       ; * ASL zeropage,X
             .byte $0e,$40       ; * ASL absolute
@@ -1246,7 +1255,7 @@ InstrSet:   .byte $09,$07       ; ADC
             .byte $ac,$40       ; * LDY absolute
             .byte $bc,$50       ; * LDY absolute,X
             .byte $64,$e5       ; LSR
-            .byte $4a,$a0       ; * LSR accumulator
+            .byte $4a,$b0       ; * LSR accumulator
             .byte $46,$70       ; * LSR zeropage
             .byte $56,$80       ; * LSR zeropage,X
             .byte $4e,$40       ; * LSR absolute
@@ -1271,13 +1280,13 @@ InstrSet:   .byte $09,$07       ; ADC
             .byte $83,$21       ; PLP
             .byte $28,$b0       ; * PLP implied
             .byte $93,$d9       ; ROL
-            .byte $2a,$a0       ; * ROL accumulator
+            .byte $2a,$b0       ; * ROL accumulator
             .byte $26,$70       ; * ROL zeropage
             .byte $36,$80       ; * ROL zeropage,X
             .byte $2e,$40       ; * ROL absolute
             .byte $3e,$50       ; * ROL absolute,X
             .byte $93,$e5       ; ROR
-            .byte $6a,$a0       ; * ROR accumulator
+            .byte $6a,$b0       ; * ROR accumulator
             .byte $66,$70       ; * ROR zeropage
             .byte $76,$80       ; * ROR zeropage,X
             .byte $6e,$40       ; * ROR absolute
