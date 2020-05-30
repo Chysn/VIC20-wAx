@@ -442,9 +442,9 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             beq test            ;   instruction, or
             cmp #"*"            ; * = Handle forward relative branching
             beq HandleFwd       ; ,,
-            cmp #"."            ; . = Enter byte-entry
+            cmp #"."            ; . = Start .byte entry (route to hex editor)
             beq AsmEntry        ; ,,
-            cmp #"$"            ; $ = Parse an operand
+            cmp #"$"            ; $ = Parse the operand
             bne loop            ; ,,
 get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
 test:       jsr Hypotest        ; Line is done; hypothesis test for a match
@@ -1149,7 +1149,7 @@ InstrSet:   .byte $09,$07       ; ADC
             .byte $21,$20       ; * AND (indirect,X)
             .byte $31,$30       ; * AND (indirect),Y
             .byte $0c,$d9       ; ASL
-            .byte $0a,$a0       ; * ASL accumulator
+            .byte $0a,$b0       ; * ASL accumulator
             .byte $06,$70       ; * ASL zeropage
             .byte $16,$80       ; * ASL zeropage,X
             .byte $0e,$40       ; * ASL absolute
@@ -1254,7 +1254,7 @@ InstrSet:   .byte $09,$07       ; ADC
             .byte $ac,$40       ; * LDY absolute
             .byte $bc,$50       ; * LDY absolute,X
             .byte $64,$e5       ; LSR
-            .byte $4a,$a0       ; * LSR accumulator
+            .byte $4a,$b0       ; * LSR accumulator
             .byte $46,$70       ; * LSR zeropage
             .byte $56,$80       ; * LSR zeropage,X
             .byte $4e,$40       ; * LSR absolute
@@ -1279,13 +1279,13 @@ InstrSet:   .byte $09,$07       ; ADC
             .byte $83,$21       ; PLP
             .byte $28,$b0       ; * PLP implied
             .byte $93,$d9       ; ROL
-            .byte $2a,$a0       ; * ROL accumulator
+            .byte $2a,$b0       ; * ROL accumulator
             .byte $26,$70       ; * ROL zeropage
             .byte $36,$80       ; * ROL zeropage,X
             .byte $2e,$40       ; * ROL absolute
             .byte $3e,$50       ; * ROL absolute,X
             .byte $93,$e5       ; ROR
-            .byte $6a,$a0       ; * ROR accumulator
+            .byte $6a,$b0       ; * ROR accumulator
             .byte $66,$70       ; * ROR zeropage
             .byte $76,$80       ; * ROR zeropage,X
             .byte $6e,$40       ; * ROR absolute
