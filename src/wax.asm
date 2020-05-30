@@ -255,11 +255,10 @@ op_start:   ldy #$00            ; Get the opcode
 disasm_r:   jsr NextValue       ; Advance to the next line of code
             rts
 
-Unknown:    jsr HexPrefix
+Unknown:    lda #"."            ; Period before an unknown byte for byte-entry
+            jsr CharOut         ; ,,
             lda INSTDATA        ; The unknown opcode is still here   
             jsr Hex             
-            lda #"?"
-            jsr CharOut            
             jmp disasm_r
             
 ; Mnemonic Display
@@ -391,6 +390,47 @@ abs_ind:    lda #","            ; This is an indexed addressing mode, so
             jmp CharOut         ;   ,,
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; MEMORY EDITOR COMPONENTS
+; https://github.com/Chysn/wAx/wiki/4-Memory-Editor
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+MemEditor:  bcc edit_r          ; Bail out of the address is no good
+            lda INBUFFER+4      ; Is there a double-quote after the address?
+            cmp #QUOTE          ; ,,
+            beq TextEdit        ; If so, route to Text Editor
+AsmEntry:   ldy #$00            ; This is Assemble's entry point for .byte
+-loop:      jsr Buff2Byte
+            bcc edit_exit       ; Bail out on the first non-hex byte
+            sta (PRGCTR),y      
+            iny
+            cpy #$04
+            bne loop
+edit_exit:  cpy #$00
+            beq edit_r
+            tya
+            tax
+            jsr Prompt          ; Prompt for the next address
+            jsr ClearBP         ; Clear breakpoint if anything was changed
+edit_r:     rts
+
+; Text Editor
+; If the input starts with a quote, add characters until we reach another
+; quote, or 0
+TextEdit:   jsr CharGet         ; Look for the starting quote that MemEditor
+            cmp #QUOTE          ;   promised
+            bne TextEdit
+            ldy #$00            ; Y=Data Index
+-loop:      jsr CharGet
+            cmp #$00            ; (This is necessary due to INC in CharGet)
+            beq edit_exit       ; Return to MemEditor if 0
+            cmp #QUOTE          ; Is this the closing quote?
+            beq edit_exit       ; Return to MemEditor if quote
+pop:        sta (PRGCTR),y      ; Populate data
+            iny
+            cpy #$10            ; String size limit
+            beq edit_exit
+            jmp loop
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSEMBLER COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/2-6502-Assembler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -400,10 +440,12 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
 -loop:      jsr CharGet         ; Look through the buffer for either
             cmp #$00            ;   0, which should indicate an implied mode
             beq test            ;   instruction, or
-            cmp #"*"            ; 
-            beq HandleFwd
-            cmp #"$"            ;   $, which indiates an operand that needs
-            bne loop            ;   to be parsed
+            cmp #"*"            ; * = Handle forward relative branching
+            beq HandleFwd       ; ,,
+            cmp #"."            ; . = Enter byte-entry
+            beq AsmEntry        ; ,,
+            cmp #"$"            ; $ = Parse an operand
+            bne loop            ; ,,
 get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
 test:       jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc AsmError        ; Clear carry means the test failed
@@ -578,47 +620,6 @@ rev_off:    jsr PrintBuff
             dex
             bne next
 mem_r:      rts
-            
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; MEMORY EDITOR COMPONENTS
-; https://github.com/Chysn/wAx/wiki/4-Memory-Editor
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-MemEditor:  bcc edit_r          ; Bail out of the address is no good
-            lda INBUFFER+4      ; Is there a double-quote after the address?
-            cmp #QUOTE          ; ,,
-            beq TextEdit        ; If so, route to Text Editor
-            ldy #$00            ; Y=Data index
--loop:      jsr Buff2Byte
-            bcc edit_exit       ; Bail out on the first non-hex byte
-            sta (PRGCTR),y      
-            iny
-            cpy #$04
-            bne loop
-edit_exit:  cpy #$00
-            beq edit_r
-            tya
-            tax
-            jsr Prompt          ; Prompt for the next address
-            jsr ClearBP         ; Clear breakpoint if anything was changed
-edit_r:     rts
-
-; Text Editor
-; If the input starts with a quote, add characters until we reach another
-; quote, or 0
-TextEdit:   jsr CharGet         ; Look for the starting quote that MemEditor
-            cmp #QUOTE          ;   promised
-            bne TextEdit
-            ldy #$00            ; Y=Data Index
--loop:      jsr CharGet
-            cmp #$00            ; (This is necessary due to INC in CharGet)
-            beq edit_exit       ; Return to MemEditor if 0
-            cmp #QUOTE          ; Is this the closing quote?
-            beq edit_exit       ; Return to MemEditor if quote
-pop:        sta (PRGCTR),y      ; Populate data
-            iny
-            cpy #$10            ; String size limit
-            beq edit_exit
-            jmp loop
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSERTION TESTER COMPONENT
@@ -943,7 +944,7 @@ Address:    lda PRGCTR+1        ; Show the address
 
 ; Write hex byte to buffer
 Hex:        pha                 ; Show the high nybble first
-            lsr                 ; Multiply by 4
+            lsr                 ; Multiply by 16
             lsr                 ; ,,
             lsr                 ; ,,
             lsr                 ; ,,
@@ -1005,9 +1006,9 @@ ch_token:   cmp #$80            ; Is the character in A a BASIC token?
             cpy #$06            ;  and skip detokenization if it's been
             beq x_add           ;  modified.
             jsr Detokenize      ; Detokenize and continue transciption
-            jmp Transcribe      ; ,,
+            jmp Transcribe      ; ,, (Carry is always set by Detokenize)
 x_add:      jsr AddInput        ; Add the text to the buffer
-            jmp Transcribe
+            jmp Transcribe      ; (Carry is always set by AddInput)
 xscribe_r:  jmp AddInput        ; Add the final zero, and fix CHRGET...
 
 ; Add Input
@@ -1110,7 +1111,7 @@ ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
 ; Text display tables                      
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
