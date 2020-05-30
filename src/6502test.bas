@@ -1,8 +1,7 @@
-5 print "wax assembly test"
-10 print "* all instructions"
-15 print "* all addressing modes"
-20 print "press return to start"
-25 input a$
+10 print "wax assembly test"
+15 print "* all instructions"
+20 print "* all addressing modes* time: 14 seconds
+25 input "press return to start";a$
 30 print "testing..."
 100 @1c00 adc #$00
 101 @1c02 adc $10
