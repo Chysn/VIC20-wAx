@@ -252,15 +252,14 @@ op_start:   ldy #$00            ; Get the opcode
             jsr DMnemonic       ; Display mnemonic
             jsr Space
             jsr DOperand        ; Display operand
-disasm_r:   jsr NextValue       ; Advance to the next line of code
-            rts
+            jmp NextValue       ; Advance to the next line of code
 
 ; Unknown Opcode
 Unknown:    lda #"."            ; Period before an unknown byte for byte-entry
             jsr CharOut         ; ,,
             lda INSTDATA        ; The unknown opcode is still here   
             jsr Hex             
-            jmp disasm_r
+            jmp NextValue
             
 ; Mnemonic Display
 DMnemonic:  lda MNEM+1          ; These locations are going to rotated, so
@@ -1112,7 +1111,7 @@ ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
 ; Text display tables                      
 HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
