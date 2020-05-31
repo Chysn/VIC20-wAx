@@ -797,13 +797,14 @@ set_lfs:    lda #$42            ; Set up logical file
 -loop:      iny                 ; Count characters in the name; Y started at $ff
             lda INBUFFER+8,y    ; ,,
             beq set_name        ; If we've reached the end of the line
-            cpy #$08            ; If the name gets to 10 characters, it's done
-            bne loop            ; ,,
+            cpy #$08            ;   or if the name gets to 8 characters
+            bne loop            ;   it's done
 set_name:   tya                 ; Set the filename for SETNAM call
             ldx #<INBUFFER+8    ; ,,
             ldy #>INBUFFER+8    ; ,,
             jsr SETNAM          ; ,,
-do_save:    lda #PRGCTR         ; Set up SAVE call
+do_save:    jsr ClearBP         ; Clear breakpoint before saving
+            lda #PRGCTR         ; Set up SAVE call
             ldx WORK            ; ,,
             ldy WORK+1          ; ,,
             jsr SAVE            ; ,,
@@ -1013,9 +1014,9 @@ ch_token:   cmp #$80            ; Is the character in A a BASIC token?
             cpy #$06            ;  and skip detokenization if it's been
             beq x_add           ;  modified.
             jsr Detokenize      ; Detokenize and continue transciption
-            jmp Transcribe      ; ,,
+            jmp Transcribe      ; ,, (Carry is always set by Detokenize)
 x_add:      jsr AddInput        ; Add the text to the buffer
-            jmp Transcribe      ; ,,
+            jmp Transcribe      ; (Carry is always set by AddInput)
 xscribe_r:  jmp AddInput        ; Add the final zero, and fix CHRGET...
 
 ; Add Input
@@ -1117,7 +1118,7 @@ ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"*",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
