@@ -36,9 +36,8 @@
 * = $6000 
 
 ; Configuration
-DISPLAYC    = $10               ; Display this many lines of code
-DISPLAYM    = $10               ; Display this many lines of memory
-TOOL_COUNT  = $09               ; How many tools are there?
+LIST_NUM    = $10               ; Display this many lines
+TOOL_COUNT  = $0a               ; How many tools are there?
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
@@ -48,6 +47,7 @@ BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
 XCHAR       = $5f               ; Wedge character left-arrow for code execute
 SCHAR       = $b1               ; Wedge character > for save
+HCHAR       = "#"               ; Wedge character # for hex-to-base10
 DEVICE      = $08               ; Save device
 
 ; System resources - Routines
@@ -84,6 +84,7 @@ KEYBUFF     = $0277             ; Keyboard buffer and size, for automatically
 CURLIN      = $39               ; Current line number
 KBSIZE      = $c6               ;   advancing the assembly address
 MISMATCH    = $c2cd             ; "MISMATCH"
+KEYCVTRS    = $028d             ; Keyboard codes
 
 ; System resources - Registers
 ACC         = $030c             ; Saved Accumulator
@@ -215,28 +216,39 @@ Return:     jsr Restore
 in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command   
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; COMMON LIST COMPONENT
+; Shared entry point for Disassembler and Memory Dump
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+List:       bcc list_r          ; Bail if the address is no good
+            jsr DirectMode      ; If the tool is in direct mode,
+            bne start_list      ;   cursor up to overwrite the original input
+            lda #CRSRUP         ;   ,,
+            jsr CHROUT          ;   ,,
+start_list: ldx #LIST_NUM       ; Default if no number has been provided
+next_line:  txa
+            pha
+            lda TOOL_CHR        ; What tool is being used?
+            cmp #DCHAR          ; Disassembler
+            bne to_mem
+            jsr Disasm
+            jsr EnableBP        ; Re-enable breakpoint, if necessary
+            jmp continue
+to_mem:     jsr Memory
+continue:   jsr PrintBuff      
+            pla
+            tax
+            dex
+            bne next_line   
+            inx
+            lda KEYCVTRS   
+            and #$01
+            bne next_line
+list_r:     rts            
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DISASSEMBLER COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Disassembly Listing
-; Disassemble multiple instructions, starting from the program counter
-DisList:    bcc list_r          ; Bail if the address is no good
-            jsr DirectMode      ; If the tool is run in Direct Mode,
-            bne d_listing       ;   cursor up to overwrite the original input
-            lda #CRSRUP         ;   ,,
-            jsr CHROUT          ;   ,,
-d_listing:  ldx #DISPLAYC       ; Show this many lines of code
--loop:      txa
-            pha
-            jsr Disasm          ; Disassmble the code at the program counter
-            jsr PrintBuff       ; Display the buffer
-            pla                 ; Restore iterator
-            tax                 ; ,,
-            dex
-            bne loop
-            jsr EnableBP        ; Re-enable breakpoint, if necessary
-list_r:     rts
-
 ; Disassemble
 ; Disassemble a single instruction at the program counter
 Disasm:     lda #$00            ; Reset the buffer index
@@ -251,6 +263,7 @@ op_start:   ldy #$00            ; Get the opcode
             bcc Unknown         ; Clear carry indicates an unknown opcode
             jsr DMnemonic       ; Display mnemonic
             jsr Space
+            lda INSTDATA+1      ; Pass addressing mode to operand routine
             jsr DOperand        ; Display operand
             jmp NextValue       ; Advance to the next line of code
 
@@ -290,8 +303,7 @@ mnemonic_r: rts
 
 ; Operand Display
 ; Dispatch display routines based on addressing mode
-DOperand:   lda INSTDATA+1
-            cmp #IMPLIED        ; Handle each addressing mode with a subroutine
+DOperand:   cmp #IMPLIED        ; Handle each addressing mode with a subroutine
             beq mnemonic_r      ; Implied has no operand, so it goes to some RTS
             cmp #RELATIVE
             beq DisRel
@@ -537,16 +549,12 @@ reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match
             cmp #TABLE_END      ; If we've reached the end of the table,
             beq bad_code        ;   the assembly candidate is no good
             sta OPCODE          ; Store opcode to hypotesting location
-            iny                 ; 
-            lda (LANG_PTR),y    ; This is the addressing mode
-            sta INSTDATA+1      ; Save addressing mode for disassembly
             jsr DMnemonic       ; Add mnemonic to buffer
-            lda INSTDATA+1      ; If this is a relative branch instruction
-            cmp #RELATIVE       ;   test it separately
-            beq test_rel        ;   ,,
+            ldy #$01            ; Addressing mode is at (LANG_PTR)+1
+            lda (LANG_PTR),y    ; Get addressing mode to pass to DOperand
+            cmp #RELATIVE       ; If the addressing mode is relative, then it's
+            beq test_rel        ;   tested separately
             jsr DOperand        ; Add formatted operand to buffer
-            lda #$00            ; Add a $00 to the end of the disassembly as a
-            jsr CharOut         ;   delimiter
             jsr IsMatch
             bcc reset
 match:      jsr NextValue
@@ -572,17 +580,9 @@ bad_code:   clc                 ; Clear carry flag to indicate failure
 ; MEMORY DUMP COMPONENT
 ; https://github.com/Chysn/wAx/wiki/3-Memory-Dump
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Memory:     bcc mem_r           ; Bail if address is no good
-            jsr DirectMode      ; If the tool is run in Direct Mode,
-            bne m_listing       ;   cursor up to hide the original input
-            lda #CRSRUP         ;   ,, 
-            jsr CHROUT          ;   ,,
-m_listing:  ldx #DISPLAYM       ; Show this many groups of four
--next:      txa
-            pha
-            lda #$00
+Memory:     lda #$00
             sta IDX_OUT
-            lda #MCHAR          ; Start each line with the wedge character, so
+            lda TOOL_CHR        ; Start each line with the wedge character, so
             jsr CharOut         ;   the user can chain invocations
             jsr Address
             ldy #$00
@@ -605,20 +605,12 @@ show_char:  lda #RVS_ON         ; Reverse on for the characters
             bcs add_char        ; ,,
 alter_char: lda #$2e            ; Everything else gets a .
 add_char:   jsr CharOut         ; ,,
-            iny
+            inc PRGCTR
+            bne next_char
+            inc PRGCTR+1
+next_char:  iny
             cpy #04
             bne loop            
-            tya                 ; Advance the program counter by four bytes
-            clc                 ;   for the next line of memory values
-            adc PRGCTR          ;   ,,
-            sta PRGCTR          ;   ,,
-            bcc rev_off         ;   ,,
-            inc PRGCTR+1        ;   ,,
-rev_off:    jsr PrintBuff
-            pla                 ; Restore iterator
-            tax                 ; ,,
-            dex
-            bne next
 mem_r:      rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -813,7 +805,18 @@ do_save:    jsr ClearBP         ; Clear breakpoint before saving
 save_ok:    lda #$42            ; Close the file
             jsr CLOSE           ; ,,
             jmp (READY)         ; BASIC warm start
-save_err:   jmp SYNTAX_ERR      ; Syntax error           
+save_err:   jmp SYNTAX_ERR      ; Syntax error 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; HEX TO BASE10 CONVERTER COMPONENT
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
+Hex2Base10:	bcc hex2d_r         ; Bail if no or illegal number is provided
+            ldx PRGCTR          ; Set up PRTFIX for base-10 integer output
+            lda PRGCTR+1        ; ,,
+            jsr PRTFIX          ; ,,
+            lda #$0d            ; End with a linefeed
+            jsr CHROUT          ; ,,
+hex2d_r:    rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -951,7 +954,7 @@ Address:    lda PRGCTR+1        ; Show the address
             jsr Hex             ; ,,
             jmp Space
 
-Hex:        pha                 ; Hex converter from WOZ Monitor,
+Hex:        pha                 ; Hex converter based on from WOZ Monitor,
             lsr                 ;   Steve Wozniak, 1976
             lsr
             lsr
@@ -1110,15 +1113,15 @@ DirectMode: ldy CURLIN+1
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
-ToolTable:	.byte DCHAR,ACHAR,MCHAR,ECHAR,RCHAR,XCHAR,BCHAR,TCHAR,SCHAR
-ToolAddr_L: .byte <DisList-1,<Assemble-1,<Memory-1,<MemEditor-1,<Register-1
-            .byte <Execute-1,<BPManager-1,<Tester-1,<Save-1
-ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
-            .byte >Execute-1,>BPManager-1,>Tester-1,>Save-1
+ToolTable:	.byte DCHAR,ACHAR,MCHAR,ECHAR,RCHAR,XCHAR,BCHAR,TCHAR,SCHAR,HCHAR
+ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<MemEditor-1,<Register-1
+            .byte <Execute-1,<BPManager-1,<Tester-1,<Save-1,<Hex2Base10-1
+ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>MemEditor-1,>Register-1
+            .byte >Execute-1,>BPManager-1,>Tester-1,>Save-1,>Hex2Base10-1
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"*Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set

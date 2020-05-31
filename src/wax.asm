@@ -37,7 +37,7 @@
 
 ; Configuration
 LIST_NUM    = $10               ; Display this many lines
-TOOL_COUNT  = $09               ; How many tools are there?
+TOOL_COUNT  = $0a               ; How many tools are there?
 DCHAR       = "$"               ; Wedge character $ for disassembly
 ACHAR       = "@"               ; Wedge character @ for assembly
 MCHAR       = "&"               ; Wedge character & for memory dump
@@ -47,6 +47,7 @@ BCHAR       = "!"               ; Wedge character ! for breakpoint
 RCHAR       = ";"               ; Wedge character ; for register set
 XCHAR       = $5f               ; Wedge character left-arrow for code execute
 SCHAR       = $b1               ; Wedge character > for save
+HCHAR       = "#"               ; Wedge character # for hex-to-base10
 DEVICE      = $08               ; Save device
 
 ; System resources - Routines
@@ -671,10 +672,8 @@ Break:      cld                 ; Escape hatch for accidentally-set Decimal flag
             jsr Hex             ; ,,
             jsr Space           ; ,,
             pla                 ; Program counter low
-;            sta SYS_DEST        
             tay
             pla                 ; Program counter high
-;            sta SYS_DEST+1
             jsr Hex             ; High to buffer
             tya                 ; ,, 
             jsr Hex             ; Low to buffer with no space
@@ -777,9 +776,6 @@ ex_r:       brk                 ; Trigger the BRK handler
 ; https://github.com/Chysn/wAx/wiki/9-Memory-Save
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Save:       bcc save_err        ; Bail if the address is no good
-            lda INBUFFER+8      ; If the name doesn't start with a quote,
-            cmp #QUOTE          ;   throw a SYNTAX ERROR
-            bne save_err        ;   ,,
             jsr Buff2Byte       ; Convert 2 characters to a byte   
             bcc save_err        ; Fail if the byte couldn't be parsed
             sta WORK+1          ; Save to the PRGCTR high byte
@@ -791,15 +787,13 @@ set_lfs:    lda #$42            ; Set up logical file
             ldy #$ff            ; ,,
             jsr SETLFS          ; ,,
 -loop:      iny                 ; Count characters in the name; Y started at $ff
-            lda INBUFFER+9,y    ; ,,
+            lda INBUFFER+8,y    ; ,,
             beq set_name        ; If we've reached the end of the line
-            cmp #QUOTE          ;   of if a quote is found
-            beq set_name        ;   ,,
             cpy #$08            ;   or if the name gets to 8 characters
             bne loop            ;   it's done
 set_name:   tya                 ; Set the filename for SETNAM call
-            ldx #<INBUFFER+9    ; ,,
-            ldy #>INBUFFER+9    ; ,,
+            ldx #<INBUFFER+8    ; ,,
+            ldy #>INBUFFER+8    ; ,,
             jsr SETNAM          ; ,,
 do_save:    jsr ClearBP         ; Clear breakpoint before saving
             lda #PRGCTR         ; Set up SAVE call
@@ -811,7 +805,18 @@ do_save:    jsr ClearBP         ; Clear breakpoint before saving
 save_ok:    lda #$42            ; Close the file
             jsr CLOSE           ; ,,
             jmp (READY)         ; BASIC warm start
-save_err:   jmp SYNTAX_ERR      ; Syntax error    
+save_err:   jmp SYNTAX_ERR      ; Syntax error 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; HEX TO BASE10 CONVERTER COMPONENT
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
+Hex2Base10:	bcc hex2d_r         ; Bail if no or illegal number is provided
+            ldx PRGCTR          ; Set up PRTFIX for base-10 integer output
+            lda PRGCTR+1        ; ,,
+            jsr PRTFIX          ; ,,
+            lda #$0d            ; End with a linefeed
+            jsr CHROUT          ; ,,
+hex2d_r:    rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -1108,15 +1113,15 @@ DirectMode: ldy CURLIN+1
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
-ToolTable:	.byte DCHAR,ACHAR,MCHAR,ECHAR,RCHAR,XCHAR,BCHAR,TCHAR,SCHAR
+ToolTable:	.byte DCHAR,ACHAR,MCHAR,ECHAR,RCHAR,XCHAR,BCHAR,TCHAR,SCHAR,HCHAR
 ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<MemEditor-1,<Register-1
-            .byte <Execute-1,<BPManager-1,<Tester-1,<Save-1
+            .byte <Execute-1,<BPManager-1,<Tester-1,<Save-1,<Hex2Base10-1
 ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>MemEditor-1,>Register-1
-            .byte >Execute-1,>BPManager-1,>Tester-1,>Save-1
+            .byte >Execute-1,>BPManager-1,>Tester-1,>Save-1,>Hex2Base10-1
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"*Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
