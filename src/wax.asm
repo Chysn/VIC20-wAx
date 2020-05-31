@@ -38,16 +38,18 @@
 ; Configuration
 LIST_NUM    = $10               ; Display this many lines
 TOOL_COUNT  = $0a               ; How many tools are there?
-DCHAR       = "$"               ; Wedge character $ for disassembly
-ACHAR       = "@"               ; Wedge character @ for assembly
-MCHAR       = "&"               ; Wedge character & for memory dump
-ECHAR       = ":"               ; Wedge character : for data editor
-TCHAR       = $b2               ; Wedge character = for tester
-BCHAR       = "!"               ; Wedge character ! for breakpoint
-RCHAR       = ";"               ; Wedge character ; for register set
-XCHAR       = $5f               ; Wedge character left-arrow for code execute
-SCHAR       = $b1               ; Wedge character > for save
-HCHAR       = "#"               ; Wedge character # for hex-to-base10
+T_DIS       = "$"               ; Wedge character $ for disassembly
+T_ASM       = "@"               ; Wedge character @ for assembly
+T_ASA       = "."               ; Alias for assembly
+T_MEM       = "&"               ; Wedge character & for memory dump
+T_TST       = $b2               ; Wedge character = for tester
+T_BRK       = "!"               ; Wedge character ! for breakpoint
+T_REG       = ";"               ; Wedge character ; for register set
+T_EXE       = $5f               ; Wedge character left-arrow for code execute
+T_SAV       = $b1               ; Wedge character > for save
+T_H2D       = "#"               ; Wedge character # for hex-to-base10
+BYTE        = "."               ; .byte Entry Character
+FWDR        = "*"               ; Forward Relative Branch Character
 DEVICE      = $08               ; Save device
 
 ; System resources - Routines
@@ -112,6 +114,7 @@ TABLE_END   = $f2               ; Indicates the end of mnemonic table
 QUOTE       = $22               ; Quote character
 LF          = $0d               ; Linefeed
 CRSRUP      = $91               ; Cursor up
+CRSRRT      = $1d               ; Cursor right
 RVS_ON      = $12               ; Reverse on
 RVS_OFF     = $92               ; Reverse off
 
@@ -122,7 +125,7 @@ PRGCTR      = $a5               ; Program Counter (2 bytes)
 CHARDISP    = $a7               ; Character display for Memory (2 bytes)
 LANG_PTR    = $a7               ; Language Pointer (2 bytes)
 INSTDATA    = $a9               ; Instruction data (2 bytes)
-TOOL_CHR    = $ab               ; Current function (ACHAR, DCHAR)
+TOOL_CHR    = $ab               ; Current function (T_ASM, T_DIS)
 OPCODE      = $ac               ; Assembly target for hypotesting
 OPERAND     = $ad               ; Operand storage (2 bytes)
 RB_OPERAND  = $af               ; Hypothetical relative branch operand
@@ -225,24 +228,36 @@ List:       bcc list_r          ; Bail if the address is no good
             lda #CRSRUP         ;   ,,
             jsr CHROUT          ;   ,,
 start_list: ldx #LIST_NUM       ; Default if no number has been provided
-next_line:  txa
+ListLine:   txa
             pha
+            lda #$00
+            sta IDX_OUT
+            jsr BreakInd        ; Indicate breakpoint, if it's here
+            lda TOOL_CHR        ; Start each line with the wedge character, so
+            jsr CharOut         ;   the user can chain commands
+            lda PRGCTR+1        ; Show the address
+            jsr Hex             ; ,,
+            lda PRGCTR          ; ,,
+            jsr Hex             ; ,,            
             lda TOOL_CHR        ; What tool is being used?
-            cmp #DCHAR          ; Disassembler
-            bne to_mem
+            cmp #T_MEM          ; Default to disassembler
+            beq to_mem          ; ,,
+            jsr Space           ; Space goes after address for Disassembly
             jsr Disasm
-            jsr EnableBP        ; Re-enable breakpoint, if necessary
             jmp continue
-to_mem:     jsr Memory
+to_mem:     lda #BYTE           ; The .byte entry character goes after the
+            jsr CharOut         ;   address for memory display
+            jsr Memory          ;   ,,
 continue:   jsr PrintBuff      
             pla
             tax
             dex
-            bne next_line   
+            bne ListLine   
             inx
             lda KEYCVTRS   
             and #$01
-            bne next_line
+            bne ListLine
+            jsr EnableBP        ; Re-enable breakpoint, if necessary
 list_r:     rts            
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -251,13 +266,7 @@ list_r:     rts
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Disassemble
 ; Disassemble a single instruction at the program counter
-Disasm:     lda #$00            ; Reset the buffer index
-            sta IDX_OUT         ; ,,
-            jsr BreakInd        ; Indicate breakpoint, if it's here
-            lda TOOL_CHR        ; Start each line with the wedge character, so
-            jsr CharOut         ;   the user can chain invocations
-            jsr Address
-op_start:   ldy #$00            ; Get the opcode
+Disasm:     ldy #$00            ; Get the opcode
             lda (PRGCTR),y      ;   ,,
             jsr Lookup          ; Look it up
             bcc Unknown         ; Clear carry indicates an unknown opcode
@@ -268,7 +277,7 @@ op_start:   ldy #$00            ; Get the opcode
             jmp NextValue       ; Advance to the next line of code
 
 ; Unknown Opcode
-Unknown:    lda #"."            ; Period before an unknown byte for byte-entry
+Unknown:    lda #BYTE           ; Byte entry before an unknown byte
             jsr CharOut         ; ,,
             lda INSTDATA        ; The unknown opcode is still here   
             jsr Hex             
@@ -405,11 +414,7 @@ abs_ind:    lda #","            ; This is an indexed addressing mode, so
 ; MEMORY EDITOR COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/4-Memory-Editor
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-MemEditor:  bcc edit_r          ; Bail out of the address is no good
-            lda INBUFFER+4      ; Is there a double-quote after the address?
-            cmp #QUOTE          ; ,,
-            beq TextEdit        ; If so, route to Text Editor
-AsmEntry:   ldy #$00            ; This is Assemble's entry point for .byte
+MemEditor:  ldy #$00            ; This is Assemble's entry point for .byte
 -loop:      jsr Buff2Byte
             bcc edit_exit       ; Bail out on the first non-hex byte
             sta (PRGCTR),y      
@@ -427,10 +432,7 @@ edit_r:     rts
 ; Text Editor
 ; If the input starts with a quote, add characters until we reach another
 ; quote, or 0
-TextEdit:   jsr CharGet         ; Look for the starting quote that MemEditor
-            cmp #QUOTE          ;   promised
-            bne TextEdit
-            ldy #$00            ; Y=Data Index
+TextEdit:   ldy #$00            ; Y=Data Index
 -loop:      jsr CharGet
             cmp #$00            ; (This is necessary due to INC in CharGet)
             beq edit_exit       ; Return to MemEditor if 0
@@ -452,10 +454,12 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
 -loop:      jsr CharGet         ; Look through the buffer for either
             cmp #$00            ;   0, which should indicate an implied mode
             beq test            ;   instruction, or
-            cmp #"*"            ; * = Handle forward relative branching
+            cmp #FWDR           ; * = Handle forward relative branching
             beq HandleFwd       ; ,,
-            cmp #"."            ; . = Start .byte entry (route to hex editor)
-            beq AsmEntry        ; ,,
+            cmp #BYTE           ; . = Start .byte entry (route to hex editor)
+            beq MemEditor       ; ,,
+            cmp #QUOTE          ; " = Start text entry (route to text editor)
+            beq TextEdit        ; ,,
             cmp #"$"            ; $ = Parse the operand
             bne loop            ; ,,
 get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
@@ -580,12 +584,7 @@ bad_code:   clc                 ; Clear carry flag to indicate failure
 ; MEMORY DUMP COMPONENT
 ; https://github.com/Chysn/wAx/wiki/3-Memory-Dump
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Memory:     lda #$00
-            sta IDX_OUT
-            lda TOOL_CHR        ; Start each line with the wedge character, so
-            jsr CharOut         ;   the user can chain invocations
-            jsr Address
-            ldy #$00
+Memory:     ldy #$00
 -loop:      lda (PRGCTR),y
             sta CHARDISP,y
             jsr Hex
@@ -632,10 +631,10 @@ test_err:   jmp MisError
 ; BREAKPOINT COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/7-Breakpoint-Manager
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-BPManager:  php
+SetBreak:   php
             jsr ClearBP         ; Clear the old breakpoint, if it exists
             plp                 ; If no breakpoint is chosen (e.g., if ! was)
-            bcc bpm_r           ;   by itself), just clear the breakpoint
+            bcc setbr_r         ;   by itself), just clear the breakpoint
             lda PRGCTR          ; Add a new breakpoint at the program counter
             sta BREAKPOINT      ; ,,
             lda PRGCTR+1        ; ,,
@@ -645,12 +644,11 @@ BPManager:  php
             sta BREAKPOINT+2    ;   to be restored on the next break
             tya                 ; Write BRK to the breakpoint location
             sta (PRGCTR),y      ;   ,,
-            jsr Disasm          ; Disassemble the line at the breakpoint
-            lda #CRSRUP         ;   for the user to review
-            jsr CHROUT          ;   ,,
-            jsr PrintBuff       ;   ,,
-            jsr EnableBP        ; Enable the breakpoint after disassembly
-bpm_r:      jmp SetupVec        ; Make sure that the BRK handler is on
+            lda #CRSRUP         ; Cursor up to overwrite the command
+            jsr CHROUT          ; ,,
+            ldx #$01            ; List a single line for the user to review
+            jsr ListLine        ; ,,
+setbr_r:    jmp SetupVec        ; Make sure that the BRK handler is on
 
 ; BRK Trapper
 ; Replaces the default BRK handler. Shows the register display, goes to warm
@@ -810,13 +808,23 @@ save_err:   jmp SYNTAX_ERR      ; Syntax error
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; HEX TO BASE10 CONVERTER COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
-Hex2Base10:	bcc hex2d_r         ; Bail if no or illegal number is provided
+Hex2Base10:	bcc restore_r       ; Bail if no or illegal number is provided
+            lda #CRSRUP         ; Cursor up
+            jsr CHROUT
+            ldx #$0e
+            lda #CRSRRT         ; Cursor right
+-loop       jsr CHROUT
+            dex
+            bne loop
+            lda #"["
+            jsr CHROUT
             ldx PRGCTR          ; Set up PRTFIX for base-10 integer output
             lda PRGCTR+1        ; ,,
             jsr PRTFIX          ; ,,
+            lda #"]"
+            jsr CHROUT
             lda #$0d            ; End with a linefeed
             jsr CHROUT          ; ,,
-hex2d_r:    rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -829,7 +837,7 @@ Restore:    ldx #$00            ; Restore workspace memory to zeropage
             inx                 ;   ,,
             cpx #$10            ;   ,,
             bne loop            ;   ,,
-            rts       
+restore_r:  rts       
 
 ; Look up opcode
 Lookup:     sta INSTDATA        ; INSTDATA is the found opcode
@@ -947,13 +955,7 @@ HexPrefix:  lda #"$"
 Space:      lda #" "
             jmp CharOut
             
-; Write Address to Buffer            
-Address:    lda PRGCTR+1        ; Show the address
-            jsr Hex             ; ,,
-            lda PRGCTR          ; ,,
-            jsr Hex             ; ,,
-            jmp Space
-
+; Write hexadecimal character
 Hex:        pha                 ; Hex converter based on from WOZ Monitor,
             lsr                 ;   Steve Wozniak, 1976
             lsr
@@ -1080,14 +1082,14 @@ Prompt:     jsr DirectMode      ; If a tool is in Direct Mode, increase
             jsr Hex             ;   ,,
             lda PRGCTR          ;   ,,
             jsr Hex             ;   ,,
+            lda #CRSRRT         ;   ,,
+            jsr CharOut         ;   ,,
+            ;ldy #$00           ; (Y is still $00 from above)
 -loop:      lda OUTBUFFER,y     ; Copy the output buffer into KEYBUFF, which
             sta KEYBUFF,y       ;   will simulate user entry
             iny                 ;   ,,
-            cpy #$05            ;   ,,
+            cpy #$06            ;   ,,
             bne loop            ;   ,,
-            lda #$20            ; Add the space to the keyboard buffer this way
-            sta KEYBUFF,y       ;   because spaces are disabled for the
-            iny                 ;   assembler
             sty KBSIZE          ; Setting the buffer size will make it go
 prompt_r:   rts            
                 
@@ -1113,15 +1115,15 @@ DirectMode: ldy CURLIN+1
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
-ToolTable:	.byte DCHAR,ACHAR,MCHAR,ECHAR,RCHAR,XCHAR,BCHAR,TCHAR,SCHAR,HCHAR
-ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<MemEditor-1,<Register-1
-            .byte <Execute-1,<BPManager-1,<Tester-1,<Save-1,<Hex2Base10-1
-ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>MemEditor-1,>Register-1
-            .byte >Execute-1,>BPManager-1,>Tester-1,>Save-1,>Hex2Base10-1
+ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_H2D
+ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<Register-1,<Execute-1
+            .byte <SetBreak-1,<Tester-1,<Save-1,<Hex2Base10-1
+ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
+            .byte >SetBreak-1,>Tester-1,>Save-1,>Hex2Base10-1
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
