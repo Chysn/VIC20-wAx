@@ -784,22 +784,28 @@ ex_r:       brk                 ; Trigger the BRK handler
 ; https://github.com/Chysn/wAx/wiki/9-Memory-Save
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Save:       bcc save_err        ; Bail if the address is no good
+            jsr Buff2Byte       ; Convert 2 characters to a byte   
+            bcc save_err        ; Fail if the byte couldn't be parsed
+            sta WORK+1          ; Save to the PRGCTR high byte
+            jsr Buff2Byte       ; Convert next 2 characters to byte
+            bcc save_err        ; Fail if the byte couldn't be parsed
+            sta WORK            ; Save to the PRGCTR low byte
 set_lfs:    lda #$42            ; Set up logical file
             ldx #DEVICE         ; ,,
             ldy #$ff            ; ,,
             jsr SETLFS          ; ,,
 -loop:      iny                 ; Count characters in the name; Y started at $ff
-            lda INBUFFER+4,y    ; ,,
+            lda INBUFFER+8,y    ; ,,
             beq set_name        ; If we've reached the end of the line
-            cpy #$0f            ; If the name gets to 10 characters, it's done
+            cpy #$08            ; If the name gets to 10 characters, it's done
             bne loop            ; ,,
 set_name:   tya                 ; Set the filename for SETNAM call
-            ldx #<INBUFFER+4    ; ,,
-            ldy #>INBUFFER+4    ; ,,
+            ldx #<INBUFFER+8    ; ,,
+            ldy #>INBUFFER+8    ; ,,
             jsr SETNAM          ; ,,
 do_save:    lda #PRGCTR         ; Set up SAVE call
-            ldx BREAKPOINT      ; ,,
-            ldy BREAKPOINT+1    ; ,,
+            ldx WORK            ; ,,
+            ldy WORK+1          ; ,,
             jsr SAVE            ; ,,
             bcc save_ok         ; If there was an error, show the BASIC error
             jmp ERROR_NO        ; ,,
@@ -879,8 +885,7 @@ CharGet:    ldx IDX_IN
 ; buffer, to be returned as a byte in the Accumulator
 Buff2Byte:  jsr CharGet
             jsr Char2Nyb
-            cmp #TABLE_END
-            beq not_found       ; See Lookup subroutine above
+            bcc not_found       ; See Lookup subroutine above
             asl                 ; Multiply high nybble by 16
             asl                 ;   ,,
             asl                 ;   ,,
@@ -888,8 +893,7 @@ Buff2Byte:  jsr CharGet
             sta WORK
             jsr CharGet
             jsr Char2Nyb
-            cmp #TABLE_END
-            beq not_found       ; See Lookup subroutine above
+            bcc not_found       ; See Lookup subroutine above
             ora WORK            ; Combine high and low nybbles
             sec                 ; Set Carry flag indicates success
             rts
@@ -897,7 +901,7 @@ Buff2Byte:  jsr CharGet
 ; Is Buffer Match            
 ; Does the input buffer match the output buffer?
 ; Carry is set if there's a match, clear if not
-IsMatch:    ldy #$06
+IsMatch:    ldy #$06            ; Offset for character after address
 -loop:      lda OUTBUFFER,y     ; Compare the assembly with the disassembly
             cmp INBUFFER-2,y    ;   in the buffers
             bne not_found       ; See Lookup subroutine above
@@ -909,15 +913,19 @@ IsMatch:    ldy #$06
 
 ; Character to Nybble
 ; A is the character in the text buffer to be converted into a nybble
-Char2Nyb:   ldx #$0f            ; Iterate through the HexDigit table
--loop:      cmp HexDigit,x      ;   until the specified character is found
-            beq found_dig       ;   ,,
-            dex                 ;   ,,
-            bpl loop            ;   ,,
-            ldx #TABLE_END      ; If it's not found, set an error value
-found_dig:  txa
-            rts            
-
+Char2Nyb:   cmp #"9"+1          ; Is the character in range 0-9?
+            bcs not_digit       ; ,,
+            cmp #"0"            ; ,,
+            bcc not_digit       ; ,,
+            sbc #"0"            ; If so, nybble value is 0-9
+            rts
+not_digit:  cmp #"F"+1          ; Is the character in the range A-F?
+            bcs not_found       ; See Lookup subroutine above
+            cmp #"A"         
+            bcc not_found       ; See Lookup subroutine above
+            sbc #"A"-$0a        ; The nybble value is 10-15
+            rts
+            
 ; Next Program Counter
 ; Advance Program Counter by one byte, and return its value
 NextValue:  inc PRGCTR
@@ -942,20 +950,19 @@ Address:    lda PRGCTR+1        ; Show the address
             jsr Hex             ; ,,
             jmp Space
 
-; Write hex byte to buffer
-Hex:        pha                 ; Show the high nybble first
-            lsr                 ; Multiply by 16
-            lsr                 ; ,,
-            lsr                 ; ,,
-            lsr                 ; ,,
-            tax
-            lda HexDigit,x
-            jsr CharOut
+Hex:        pha                 ; Hex converter from WOZ Monitor,
+            lsr                 ;   Steve Wozniak, 1976
+            lsr
+            lsr
+            lsr
+            jsr prhex
             pla
-            and #$0f
-            tax
-            lda HexDigit,x
-            jmp CharOut
+prhex:      and #$0f
+            ora #"0"
+            cmp #"9"+1
+            bcc echo
+            adc #$06
+echo:       jmp CharOut
  
 ; Show 8-bit Parameter           
 Param_8:    jsr HexPrefix
@@ -1006,9 +1013,9 @@ ch_token:   cmp #$80            ; Is the character in A a BASIC token?
             cpy #$06            ;  and skip detokenization if it's been
             beq x_add           ;  modified.
             jsr Detokenize      ; Detokenize and continue transciption
-            jmp Transcribe      ; ,, (Carry is always set by Detokenize)
+            jmp Transcribe      ; ,,
 x_add:      jsr AddInput        ; Add the text to the buffer
-            jmp Transcribe      ; (Carry is always set by AddInput)
+            jmp Transcribe      ; ,,
 xscribe_r:  jmp AddInput        ; Add the final zero, and fix CHRGET...
 
 ; Add Input
@@ -1109,7 +1116,6 @@ ToolAddr_H: .byte >DisList-1,>Assemble-1,>Memory-1,>MemEditor-1,>Register-1
             .byte >Execute-1,>BPManager-1,>Tester-1,>Save-1
 
 ; Text display tables                      
-HexDigit:   .asc "0123456789ABCDEF"
 Intro:      .asc LF,"WAX ON",$00
 Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
