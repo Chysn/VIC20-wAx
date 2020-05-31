@@ -228,7 +228,10 @@ List:       bcc list_r          ; Bail if the address is no good
             bne start_list      ;   cursor up to overwrite the original input
             lda #CRSRUP         ;   ,,
             jsr CHROUT          ;   ,,
-start_list: ldx #LIST_NUM       ; Default if no number has been provided
+start_list: jsr Buff2Byte       ; Override default, if a valid 8-bit number
+            bcs override        ;   was provided
+            lda #LIST_NUM       ; Otherwise, use the default number of lines
+override:   tax
 ListLine:   txa
             pha
             lda #$00
@@ -808,6 +811,7 @@ save_err:   jmp SYNTAX_ERR      ; Syntax error
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; HEX TO BASE10 CONVERTER COMPONENT
+; https://github.com/Chysn/wAx/wiki/10-Hex-to-Base-10-Converter
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 Hex2Base10:	bcc restore_r       ; Bail if no or illegal number is provided
             lda #CRSRUP         ; Cursor up
@@ -1124,7 +1128,7 @@ ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"*Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
