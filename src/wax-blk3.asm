@@ -41,7 +41,6 @@ LIST_NUM    = $10               ; Display this many lines
 TOOL_COUNT  = $0a               ; How many tools are there?
 T_DIS       = "$"               ; Wedge character $ for disassembly
 T_ASM       = "@"               ; Wedge character @ for assembly
-T_ASA       = "."               ; Alias for assembly
 T_MEM       = "&"               ; Wedge character & for memory dump
 T_TST       = $b2               ; Wedge character = for tester
 T_BRK       = "!"               ; Wedge character ! for breakpoint
@@ -88,6 +87,7 @@ CURLIN      = $39               ; Current line number
 KBSIZE      = $c6               ;   advancing the assembly address
 MISMATCH    = $c2cd             ; "MISMATCH"
 KEYCVTRS    = $028d             ; Keyboard codes
+LSTX        = $c5               ; Keyboard matrix
 
 ; System resources - Registers
 ACC         = $030c             ; Saved Accumulator
@@ -224,12 +224,12 @@ in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command
 ; Shared entry point for Disassembler and Memory Dump
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 List:       bcc list_r          ; Bail if the address is no good
-            jsr DirectMode      ; If the tool is in direct mode,
-            bne start_list      ;   cursor up to overwrite the original input
-            lda #CRSRUP         ;   ,,
-            jsr CHROUT          ;   ,,
 start_list: jsr Buff2Byte       ; Override default, if a valid 8-bit number
             bcs override        ;   was provided
+            jsr DirectMode      ; If the tool is in direct mode without override
+            bne start_list      ;   cursor up to overwrite the original input
+            lda #CRSRUP         ;   ,,
+            jsr CHROUT          ;   ,,            
             lda #LIST_NUM       ; Otherwise, use the default number of lines
 override:   tax
 ListLine:   txa
@@ -255,14 +255,16 @@ to_mem:     lda #BYTE           ; The .byte entry character goes after the
 continue:   jsr PrintBuff      
             pla
             tax
-            dex
-            bne ListLine   
-            inx
-            lda KEYCVTRS   
-            and #$01
-            bne ListLine
-            jsr EnableBP        ; Re-enable breakpoint, if necessary
-list_r:     rts            
+            ldy LSTX            ; Exit if STOP key is pressed
+            cpy #$18            ; ,,          
+            beq list_r          ; ,,
+            dex                 ; Exit if loop is done
+            bne ListLine        ; ,,
+            inx                 ; But if the loop is done, but a SHift key
+            lda KEYCVTRS        ;   is engaged, then go back for one more
+            and #$01            ;   ,,
+            bne ListLine        ;   ,,
+list_r:     jmp EnableBP        ; Re-enable breakpoint, if necessary
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DISASSEMBLER COMPONENTS
@@ -816,18 +818,16 @@ save_err:   jmp SYNTAX_ERR      ; Syntax error
 Hex2Base10:	bcc restore_r       ; Bail if no or illegal number is provided
             lda #CRSRUP         ; Cursor up
             jsr CHROUT
-            ldx #$0e
+            ldx #$0f
             lda #CRSRRT         ; Cursor right
 -loop       jsr CHROUT
             dex
             bne loop
-            lda #"["
+            lda #"="
             jsr CHROUT
             ldx PRGCTR          ; Set up PRTFIX for base-10 integer output
             lda PRGCTR+1        ; ,,
             jsr PRTFIX          ; ,,
-            lda #"]"
-            jsr CHROUT
             lda #$0d            ; End with a linefeed
             jsr CHROUT          ; ,,
 
