@@ -39,17 +39,16 @@
 ; Configuration
 LIST_NUM    = $10               ; Display this many lines
 TOOL_COUNT  = $0a               ; How many tools are there?
-T_DIS       = "$"               ; Wedge character $ for disassembly
+T_DIS       = "."               ; Wedge character : for disassembly
 T_ASM       = "@"               ; Wedge character @ for assembly
-T_ASA       = "."               ; Alias for assembly
-T_MEM       = "&"               ; Wedge character & for memory dump
+T_MEM       = "#"               ; Wedge character # for memory dump
 T_TST       = $b2               ; Wedge character = for tester
 T_BRK       = "!"               ; Wedge character ! for breakpoint
 T_REG       = ";"               ; Wedge character ; for register set
 T_EXE       = $5f               ; Wedge character left-arrow for code execute
 T_SAV       = $b1               ; Wedge character > for save
-T_H2D       = "#"               ; Wedge character # for hex-to-base10
-BYTE        = "."               ; .byte Entry Character
+T_H2D       = "$"               ; Wedge character $ for hex-to-base10
+BYTE        = ":"               ; .byte Entry Character
 FWDR        = "*"               ; Forward Relative Branch Character
 DEVICE      = $08               ; Save device
 
@@ -563,6 +562,8 @@ reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match
             cmp #RELATIVE       ; If the addressing mode is relative, then it's
             beq test_rel        ;   tested separately
             jsr DOperand        ; Add formatted operand to buffer
+            lda #$00            ; Add 0 delimiter to end of output buffer so
+            jsr CharOut         ;  the match knows when to stop
             jsr IsMatch
             bcc reset
 match:      jsr NextValue
@@ -1125,7 +1126,7 @@ ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,LF,"*Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
