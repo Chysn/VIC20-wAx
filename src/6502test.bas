@@ -1,7 +1,5 @@
 10 print "wax assembly test"
-15 print "* all instructions"
-20 print "* all addressing modes* time: 14 seconds
-25 input "press return to start";a$
+25 input "press return";a$
 30 print "testing..."
 100 @1c00 adc #$00
 101 @1c02 adc $10
@@ -154,4 +152,6 @@
 248 @1d3e txa 
 249 @1d3f txs 
 250 @1d40 tya 
+900 c=0:fori=7168to7488:c=c+peek(i):nexti
+910 if c <> 33427 then print"checksum error":end
 999 print "success!"

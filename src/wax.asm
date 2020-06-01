@@ -39,7 +39,7 @@
 ; Configuration
 LIST_NUM    = $10               ; Display this many lines
 TOOL_COUNT  = $0a               ; How many tools are there?
-T_DIS       = "."               ; Wedge character : for disassembly
+T_DIS       = "."               ; Wedge character . for disassembly
 T_ASM       = "@"               ; Wedge character @ for assembly
 T_MEM       = "#"               ; Wedge character # for memory dump
 T_TST       = $b2               ; Wedge character = for tester
