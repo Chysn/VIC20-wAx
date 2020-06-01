@@ -41,6 +41,7 @@ LIST_NUM    = $10               ; Display this many lines
 TOOL_COUNT  = $0a               ; How many tools are there?
 T_DIS       = "$"               ; Wedge character $ for disassembly
 T_ASM       = "@"               ; Wedge character @ for assembly
+T_ASA       = "."               ; Alias for assembly
 T_MEM       = "&"               ; Wedge character & for memory dump
 T_TST       = $b2               ; Wedge character = for tester
 T_BRK       = "!"               ; Wedge character ! for breakpoint
@@ -224,14 +225,11 @@ in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command
 ; Shared entry point for Disassembler and Memory Dump
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 List:       bcc list_r          ; Bail if the address is no good
-start_list: jsr Buff2Byte       ; Override default, if a valid 8-bit number
-            bcs override        ;   was provided
-            jsr DirectMode      ; If the tool is in direct mode without override
+            jsr DirectMode      ; If the tool is in direct mode,
             bne start_list      ;   cursor up to overwrite the original input
             lda #CRSRUP         ;   ,,
-            jsr CHROUT          ;   ,,            
-            lda #LIST_NUM       ; Otherwise, use the default number of lines
-override:   tax
+            jsr CHROUT          ;   ,,
+start_list: ldx #LIST_NUM       ; Default if no number has been provided
 ListLine:   txa
             pha
             lda #$00
@@ -813,7 +811,6 @@ save_err:   jmp SYNTAX_ERR      ; Syntax error
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; HEX TO BASE10 CONVERTER COMPONENT
-; https://github.com/Chysn/wAx/wiki/10-Hex-to-Base-10-Converter
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 Hex2Base10:	bcc restore_r       ; Bail if no or illegal number is provided
             lda #CRSRUP         ; Cursor up
@@ -1128,7 +1125,7 @@ ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
