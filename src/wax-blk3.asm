@@ -41,7 +41,7 @@ LIST_NUM    = $10               ; Display this many lines
 TOOL_COUNT  = $0a               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
 T_ASM       = "@"               ; Wedge character @ for assembly
-T_MEM       = "#"               ; Wedge character # for memory dump
+T_MEM       = ","               ; Wedge character , for memory dump
 T_TST       = $b2               ; Wedge character = for tester
 T_BRK       = "!"               ; Wedge character ! for breakpoint
 T_REG       = ";"               ; Wedge character ; for register set
@@ -812,6 +812,7 @@ save_err:   jmp SYNTAX_ERR      ; Syntax error
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; HEX TO BASE10 CONVERTER COMPONENT
+; https://github.com/Chysn/wAx/wiki/10-Hex-to-Base-10-Converter
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 Hex2Base10:	bcc restore_r       ; Bail if no or illegal number is provided
             lda #CRSRUP         ; Cursor up
