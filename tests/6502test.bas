@@ -101,7 +101,7 @@
 197 @1cd7 ora #$97
 198 @1cd9 ora $98
 199 @1cdb ora $99,x
-200 @1cdd ora $0000
+200 @1cdd ora $1000
 201 @1ce0 ora $1010,x
 202 @1ce3 ora $2020,y
 203 @1ce6 ora ($30,x)
@@ -152,6 +152,4 @@
 248 @1d3e txa 
 249 @1d3f txs 
 250 @1d40 tya 
-900 c=0:fori=7168to7488:c=c+peek(i):nexti
-910 if c <> 33427 then print"checksum error":end
 999 print "success!"

@@ -1,0 +1,28 @@
+#!/bin/bash
+
+## Build wAx
+xa -l src/toc -o src/wax.obj src/wax.asm
+printf "\x00\xa0" | cat - src/wax.obj > vic/wax
+
+rm vic/wax.d64
+c1541 -format wax,8 d64 vic/wax.d64 -write vic/wax
+
+## Build 6502 Extended Instuction Table
+xa -o src/6502x.obj src/6502x.asm
+printf "\xfe\xa7" | cat - 6502x.obj > vic/6502x
+c1541 vic/wax.d64 -write vic/6502x
+
+## Build BASIC test suite
+petcat -w2 -o vic/6502test.prg -- tests/6502test.bas
+c1541 vic/wax.d64 -write vic/6502test.prg
+
+petcat -w2 -o vic/verify.prg -- tests/verify.bas
+c1541 vic/wax.d64 -write vic/verify.prg
+
+petcat -w2 -o vic/edittest.prg -- tests/edittest.bas
+c1541 vic/wax.d64 -write vic/edittest.prg
+
+## Build Block 3 2716 binary
+sed 's/\* = \$a000/\* = \$6000/' src/wax.asm > src/wax-blk3.asm
+xa -o vic/wax-blk3.bin src/wax-blk3.asm
+
