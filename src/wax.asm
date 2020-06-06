@@ -444,7 +444,6 @@ edit_r:     rts
 ; quote, or 0
 TextEdit:   ldy #$00            ; Y=Data Index
 -loop:      jsr CharGet
-            cmp #$00            ; (This is necessary due to INC in CharGet)
             beq edit_exit       ; Return to MemEditor if 0
             cmp #QUOTE          ; Is this the closing quote?
             beq edit_exit       ; Return to MemEditor if quote
@@ -453,6 +452,15 @@ pop:        sta (PRGCTR),y      ; Populate data
             cpy #$10            ; String size limit
             beq edit_exit
             jmp loop
+     
+; Binary Editor
+; If the input starts with a %, get one binary byte and store it in memory                   
+BinaryEdit: jsr Binary          ; Get 8 binary bits
+            bcc edit_r          ; If invalid, exit assembler
+            ldy #$00            ; Store the valid byte to memory
+            sta (PRGCTR),y      ; ,,
+            iny                 ; Increment the byte count and return to
+            jmp edit_exit       ;   editor
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSEMBLER COMPONENTS
@@ -462,17 +470,18 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             lda INBUFFER+4      ; If the user just pressed Return at the prompt,
             beq asm_r           ;   go back to BASIC
 -loop:      jsr CharGet         ; Look through the buffer for either
-            cmp #$00            ;   0, which should indicate an implied mode
-            beq test            ;   instruction, or
+            beq test            ;   0, which is an implied mode instruction, or
             cmp #FWDR           ; * = Handle forward relative branching
             beq HandleFwd       ; ,,
             cmp #BYTE           ; . = Start .byte entry (route to hex editor)
             beq MemEditor       ; ,,
             cmp #QUOTE          ; " = Start text entry (route to text editor)
             beq TextEdit        ; ,,
-            cmp #"#"            ; # = Parse immediate operand
+            cmp #"%"            ; % = Start binary entry (route to binary editor)
+            beq BinaryEdit      ; ,,
+            cmp #"#"            ; # = Parse immediate operand (quotes and %)
             beq ImmedOp         ; ,,
-            cmp #"$"            ; $ = Parse absolute operand
+            cmp #"$"            ; $ = Parse absolute/zeropage operand
             bne loop            ; ,,
 get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
 test:       jsr Hypotest        ; Line is done; hypothesis test for a match
@@ -572,7 +581,7 @@ reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match
             ldy #$00            ; Set the program counter high byte
             sty PRGCTR+1        ; ,,
             jsr NextInst        ; Get next instruction in 6502 table
-            cmp #TABLE_END      ; If we've reached the end of the table,
+            cmp #XTABLE_END     ; If we've reached the end of the table,
             beq bad_code        ;   the assembly candidate is no good
             sta OPCODE          ; Store opcode to hypotesting location
             jsr DMnemonic       ; Add mnemonic to buffer
@@ -841,10 +850,12 @@ MemLoad:    lda #$00            ; Reset the input buffer index because there's
             ldx #DEVICE         ; ,,
             ldy #$01            ; ,, Specify use of header for address
             jsr SETLFS          ; ,,
-            ldy #$ff            ; Find the length of the filename
--loop:      iny                 ; ,,
-            jsr CharGet         ; ,,
-            bne loop            ; ,,
+            ldy #$00            ; Find the length of the filename
+-loop:      jsr CharGet         ; ,,
+            beq load_name       ; ,,
+            iny
+            cpy #$08
+            bne loop
 load_name:  tya                 ; Set A to filename length
             ldx #<INBUFFER      ; Set location of filename
             ldy #>INBUFFER      ; ,,
@@ -947,7 +958,9 @@ adv_lang_r: ldy #$00            ; When an instruction is found, set A to its
 ; Akin to CHRGET, but scans the INBUFFER, which has already been detokenized            
 CharGet:    ldx IDX_IN
             lda INBUFFER,x
+            php
             inc IDX_IN
+            plp
             rts             
             
 ; Buffer to Byte
