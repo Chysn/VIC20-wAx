@@ -133,7 +133,7 @@ INSTDATA    = $a9               ; Instruction data (2 bytes)
 TOOL_CHR    = $ab               ; Current function (T_ASM, T_DIS)
 OPCODE      = $ac               ; Assembly target for hypotesting
 OPERAND     = $ad               ; Operand storage (2 bytes)
-RB_OPERAND  = $af               ; Hypothetical relative branch operand
+SP_OPERAND  = $af               ; Speculative operand
 INSTSIZE    = $b0               ; Instruction size
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
@@ -470,11 +470,13 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             beq MemEditor       ; ,,
             cmp #QUOTE          ; " = Start text entry (route to text editor)
             beq TextEdit        ; ,,
-            cmp #"$"            ; $ = Parse the operand
+            cmp #"#"            ; # = Parse immediate operand
+            beq ImmedOp         ; ,,
+            cmp #"$"            ; $ = Parse absolute operand
             bne loop            ; ,,
 get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
 test:       jsr Hypotest        ; Line is done; hypothesis test for a match
-            bcc AsmError        ; Clear carry means the test failed
+            bcc asm_error       ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
             lda OPCODE          ;   to the program counter. The number of bytes
             sta (PRGCTR),y      ;   to transcribe is stored in the INSTSIZE memory
@@ -492,6 +494,7 @@ test:       jsr Hypotest        ; Line is done; hypothesis test for a match
 nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
             jsr Prompt          ; Prompt for next line if in direct mode
 asm_r:      rts
+asm_error:  jmp AsmError
 
 ; Handle Forward Branch
 ; In cases where the forward branch address is unknown, * may be used as
@@ -505,7 +508,7 @@ set_fw:     lda PRGCTR          ; Otherwise, it's to set the forward branch
             lda PRGCTR+1        ;   instruction.
             sta RB_FORWARD+1    ;   ,,
             lda #$00            ; Aim the branch instruction at the next
-            sta RB_OPERAND      ;   instruction by default
+            sta SP_OPERAND      ;   instruction by default
             jmp test            ; Go back to assemble the instruction
 resolve_fw: lda PRGCTR          ; Compute the relative branch offset from the
             sec                 ;   current program counter
@@ -516,20 +519,17 @@ resolve_fw: lda PRGCTR          ; Compute the relative branch offset from the
             sta (RB_FORWARD),y  ;   original instruction as its operand
             ldx #$00            ; Prompt for the same memory location again
             jmp Prompt          ; ,,
+ 
+ImmedOp:    jsr CharGet
+            cmp #"$"
+            beq get_oprd
+            cmp #QUOTE
+            bne try_binary
+            jsr CharGet
+            sta SP_OPERAND
+            jmp test
+try_binary: jmp test 
             
-; Error Message
-; Invalid opcode or formatting (ASSEMBLY)
-; Failed boolean assertion (MISMATCH, borrowed from ROM)
-AsmError:   lda #<AsmErrMsg     ; ?ASSMEBLY
-            ldx #>AsmErrMsg     ;   ERROR
-            bne show_err
-MisError:   lda #<MISMATCH      ; ?MISMATCH
-            ldx #>MISMATCH      ;   ERROR
-show_err:   sta ERROR_PTR       ; Set the selected pointer
-            stx ERROR_PTR+1     ;   ,,
-            jsr Restore         ; Return zeropage workspace to original
-            jmp CUST_ERR        ; And emit the error
-
 ; Get Operand
 ; Populate the operand for an instruction by looking forward in the buffer and
 ; counting upcoming hex digits.
@@ -544,9 +544,9 @@ high_byte:  sta OPERAND         ;   set the low byte with the input
             sbc PRGCTR          ; Subtract the program counter address from
             sec                 ;   the instruction target
             sbc #$02            ; Offset by 2 to account for the instruction
-            sta RB_OPERAND      ; Save the hypothetical relative branch operand
+            sta SP_OPERAND      ; Save the hypothetical relative branch operand
 getop_r:    rts
-            
+     
 ; Hypothesis Test
 ; Search through the language table for each opcode and disassemble it using
 ; the opcode provided for the candidate instruction. If there's a match, then
@@ -560,14 +560,16 @@ reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match
             ldy #$00            ; Set the program counter high byte
             sty PRGCTR+1        ; ,,
             jsr NextInst        ; Get next instruction in 6502 table
-            cmp #XTABLE_END     ; If we've reached the end of the table,
+            cmp #TABLE_END      ; If we've reached the end of the table,
             beq bad_code        ;   the assembly candidate is no good
             sta OPCODE          ; Store opcode to hypotesting location
             jsr DMnemonic       ; Add mnemonic to buffer
             ldy #$01            ; Addressing mode is at (LANG_PTR)+1
             lda (LANG_PTR),y    ; Get addressing mode to pass to DOperand
             cmp #RELATIVE       ; If the addressing mode is relative, then it's
-            beq test_rel        ;   tested separately
+            beq test_spc        ;   tested separately
+            cmp #IMMEDIATE      ; If the addressing mode is immediate, then it's
+            beq test_spc        ;   tested separately
             jsr DOperand        ; Add formatted operand to buffer
             lda #$00            ; Add 0 delimiter to end of output buffer so
             jsr CharOut         ;  the match knows when to stop
@@ -581,12 +583,12 @@ match:      jsr NextValue
             jsr RefreshPC       ; Restore the program counter to target address
             sec                 ; Set Carry flag to indicate success
             rts
-test_rel:   lda #$09            ; Handle relative branch operands here; set
+test_spc:   lda #$09            ; Handle speculative operands here; set
             sta IDX_OUT         ;   a stop after three characters in output
             jsr IsMatch         ;   buffer and check for a match
             bcc reset          
-            lda RB_OPERAND      ; If the instruction matches, move the relative
-            sta OPERAND         ;   branch operand to the working operand
+            lda SP_OPERAND      ; If the instruction matches, move the
+            sta OPERAND         ;   speculative operand to the working operand
             jsr NextValue
             jmp match           ; Treat this like a regular match from here
 bad_code:   clc                 ; Clear carry flag to indicate failure
@@ -1154,7 +1156,20 @@ SetupVec:   lda #<main          ; Intercept GONE to process wedge
 DirectMode: ldy CURLIN+1
             iny
             rts     
-                        
+            
+; Error Message
+; Invalid opcode or formatting (ASSEMBLY)
+; Failed boolean assertion (MISMATCH, borrowed from ROM)
+AsmError:   lda #<AsmErrMsg     ; ?ASSMEBLY
+            ldx #>AsmErrMsg     ;   ERROR
+            bne show_err
+MisError:   lda #<MISMATCH      ; ?MISMATCH
+            ldx #>MISMATCH      ;   ERROR
+show_err:   sta ERROR_PTR       ; Set the selected pointer
+            stx ERROR_PTR+1     ;   ,,
+            jsr Restore         ; Return zeropage workspace to original
+            jmp CUST_ERR        ; And emit the error                        
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
