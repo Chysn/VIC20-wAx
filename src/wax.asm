@@ -522,14 +522,26 @@ resolve_fw: lda PRGCTR          ; Compute the relative branch offset from the
  
 ImmedOp:    jsr CharGet
             cmp #"$"
-            beq get_oprd
-            cmp #QUOTE
+            bne try_quote
+            jsr GetOperand
+            lda OPERAND
+            sta SP_OPERAND
+            jmp test
+try_quote:  cmp #QUOTE
             bne try_binary
             jsr CharGet
             sta SP_OPERAND
+            jsr CharGet
+            cmp #QUOTE
+            bne asm_error
             jmp test
-try_binary: jmp test 
-            
+try_binary: cmp #"%"
+            bne asm_error
+            jsr Binary
+            bcc asm_error
+            ;sta SP_OPERAND     ; Storage to SP_OPERAND is done by Binary
+            jmp test
+                         
 ; Get Operand
 ; Populate the operand for an instruction by looking forward in the buffer and
 ; counting upcoming hex digits.
@@ -1150,7 +1162,34 @@ SetupVec:   lda #<main          ; Intercept GONE to process wedge
             lda #>Break         ; ,,
             sta CBINV+1         ; ,,
             rts
-            
+
+; Get Binary Byte
+; Return in A     
+Binary:     lda #$00
+            sta SP_OPERAND
+            lda #$80
+-loop:      pha
+            jsr CharGet
+            tay
+            cpy #"1"
+            bne zero
+            pla
+            pha
+            ora SP_OPERAND
+            sta SP_OPERAND
+            jmp next_bit
+zero:       cpy #"0"
+            bne bad_bin
+next_bit:   pla
+            lsr
+            bne loop
+            lda SP_OPERAND
+            sec
+            rts
+bad_bin:    pla
+            clc
+            rts             
+
 ; In Direct Mode
 ; If the wAx tool is running in Direct Mode, the Zero flag will be set
 DirectMode: ldy CURLIN+1
