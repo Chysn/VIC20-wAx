@@ -38,7 +38,7 @@
 
 ; Configuration
 LIST_NUM    = $10               ; Display this many lines
-TOOL_COUNT  = $0a               ; How many tools are there?
+TOOL_COUNT  = $09               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
 T_ASM       = "@"               ; Wedge character @ for assembly
 T_MEM       = ","               ; Wedge character , for memory dump
@@ -47,7 +47,7 @@ T_BRK       = "!"               ; Wedge character ! for breakpoint
 T_REG       = ";"               ; Wedge character ; for register set
 T_EXE       = $5f               ; Wedge character left-arrow for code execute
 T_SAV       = $b1               ; Wedge character > for save
-T_H2D       = "$"               ; Wedge character $ for hex-to-base10
+T_LOA       = $b3               ; Wedge character $ for hex-to-base10
 BYTE        = ":"               ; .byte Entry Character
 FWDR        = "*"               ; Forward Relative Branch Character
 DEVICE      = $08               ; Save device
@@ -69,6 +69,7 @@ ERROR_NO    = $c43b             ; Show error in Accumulator
 SETLFS      = $ffba             ; Setup logical file
 SETNAM      = $ffbd             ; Setup file name
 SAVE        = $ffd8             ; Save
+LOAD        = $ffd5             ; Load
 CLOSE       = $ffc3             ; Close logical file
 
 ; System resources - Vectors and Pointers
@@ -778,7 +779,7 @@ ex_r:       brk                 ; Trigger the BRK handler
 ; MEMORY SAVE COMPONENT
 ; https://github.com/Chysn/wAx/wiki/9-Memory-Save
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Save:       bcc save_err        ; Bail if the address is no good
+MemSave:    bcc save_err        ; Bail if the address is no good
             jsr Buff2Byte       ; Convert 2 characters to a byte   
             bcc save_err        ; Fail if the byte couldn't be parsed
             sta WORK+1          ; Save to the PRGCTR high byte
@@ -811,25 +812,35 @@ save_ok:    lda #$42            ; Close the file
 save_err:   jmp SYNTAX_ERR      ; Syntax error 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; HEX TO BASE10 CONVERTER COMPONENT
-; https://github.com/Chysn/wAx/wiki/10-Hex-to-Base-10-Converter
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
-Hex2Base10:	bcc restore_r       ; Bail if no or illegal number is provided
-            lda #CRSRUP         ; Cursor up
-            jsr CHROUT
-            ldx #$0f
-            lda #CRSRRT         ; Cursor right
--loop       jsr CHROUT
-            dex
+; MEMORY LOAD COMPONENT
+; https://github.com/Chysn/wAx/wiki/9-Memory-Save-Load
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+MemLoad:    lda #$00            ; Reset the input buffer index because there's
+            sta IDX_IN          ;   no address for this command
+            lda #$42            ; Set up logical file
+            ldx #DEVICE         ; ,,
+            ldy #$01            ; ,, Specify use of header for address
+            jsr SETLFS          ; ,,
+            ldy #$00            ; Find the length of the filename
+-loop:      jsr CharGet         ; ,,
+            beq load_name       ; ,,
+            iny
+            cpy #$08
             bne loop
-            lda #"="
-            jsr CHROUT
-            ldx PRGCTR          ; Set up PRTFIX for base-10 integer output
-            lda PRGCTR+1        ; ,,
-            jsr PRTFIX          ; ,,
-            lda #$0d            ; End with a linefeed
-            jsr CHROUT          ; ,,
-
+load_name:  tya                 ; Set A to filename length
+            ldx #<INBUFFER      ; Set location of filename
+            ldy #>INBUFFER      ; ,,
+            jsr SETNAM          ; ,,
+            lda #$00            ; Perform Load
+            ;ldx #$ff           ; ,, (X and Y don't matter because the secondary
+            ;ldy #$ff           ; ,, address indicates use of header)
+            jsr LOAD            ; ,,
+            bcc load_ok         ; If there was an error, show BASIC error
+            jmp ERROR_NO        ; ,,
+load_ok:    lda #$42            ; Close the file
+            jsr CLOSE           ; ,,
+            jmp (READY)         ; BASIC warm start     
+            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
@@ -893,7 +904,9 @@ adv_lang_r: ldy #$00            ; When an instruction is found, set A to its
 ; Akin to CHRGET, but scans the INBUFFER, which has already been detokenized            
 CharGet:    ldx IDX_IN
             lda INBUFFER,x
+            php
             inc IDX_IN
+            plp
             rts             
             
 ; Buffer to Byte
@@ -1119,11 +1132,11 @@ DirectMode: ldy CURLIN+1
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
-ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_H2D
+ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA
 ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<Register-1,<Execute-1
-            .byte <SetBreak-1,<Tester-1,<Save-1,<Hex2Base10-1
+            .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1
 ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
-            .byte >SetBreak-1,>Tester-1,>Save-1,>Hex2Base10-1
+            .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00

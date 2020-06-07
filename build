@@ -9,7 +9,7 @@ c1541 -format wax,8 d64 vic/wax.d64 -write vic/wax
 
 ## Build 6502 Extended Instuction Table
 xa -o src/6502x.obj src/6502x.asm
-printf "\xfe\xa7" | cat - 6502x.obj > vic/6502x
+printf "\xfe\xa7" | cat - src/6502x.obj > vic/6502x
 c1541 vic/wax.d64 -write vic/6502x
 
 ## Build BASIC test suite
