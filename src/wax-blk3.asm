@@ -785,30 +785,21 @@ MemSave:    bcc save_err        ; Bail if the address is no good
             jsr Buff2Byte       ; Convert next 2 characters to byte
             bcc save_err        ; Fail if the byte couldn't be parsed
             sta WORK            ; Save to the PRGCTR low byte
-set_lfs:    lda #$42            ; Set up logical file
-            ldx #DEVICE         ; ,,
-            ldy #$ff            ; ,,
-            jsr SETLFS          ; ,,
--loop:      iny                 ; Count characters in the name; Y started at $ff
-            lda INBUFFER+8,y    ; ,,
-            beq set_name        ; If we've reached the end of the line
-            cpy #$08            ;   or if the name gets to 8 characters
-            bne loop            ;   it's done
-set_name:   tya                 ; Set the filename for SETNAM call
+            jsr DiskSetup       ; SETLFS, get filename length, etc.  
             ldx #<INBUFFER+8    ; ,,
             ldy #>INBUFFER+8    ; ,,
             jsr SETNAM          ; ,,
-do_save:    jsr ClearBP         ; Clear breakpoint before saving
             lda #PRGCTR         ; Set up SAVE call
             ldx WORK            ; ,,
             ldy WORK+1          ; ,,
             jsr SAVE            ; ,,
-            bcc save_ok         ; If there was an error, show the BASIC error
-            jmp ERROR_NO        ; ,,
+            bcs DiskError
 save_ok:    lda #$42            ; Close the file
             jsr CLOSE           ; ,,
-            jmp (READY)         ; BASIC warm start
-save_err:   jmp SYNTAX_ERR      ; Syntax error 
+            jsr Restore
+            jmp Linefeed
+save_err:   jsr Restore
+            jmp SYNTAX_ERR      ; To ?SYNTAX ERROR      
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY LOAD COMPONENT
@@ -816,17 +807,7 @@ save_err:   jmp SYNTAX_ERR      ; Syntax error
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 MemLoad:    lda #$00            ; Reset the input buffer index because there's
             sta IDX_IN          ;   no address for this command
-            lda #$42            ; Set up logical file
-            ldx #DEVICE         ; ,,
-            ldy #$01            ; ,, Specify use of header for address
-            jsr SETLFS          ; ,,
-            ldy #$00            ; Find the length of the filename
--loop:      jsr CharGet         ; ,,
-            beq load_name       ; ,,
-            iny
-            cpy #$08
-            bne loop
-load_name:  tya                 ; Set A to filename length
+            jsr DiskSetup       ; SETLFS, get filename length, etc.
             ldx #<INBUFFER      ; Set location of filename
             ldy #>INBUFFER      ; ,,
             jsr SETNAM          ; ,,
@@ -834,11 +815,34 @@ load_name:  tya                 ; Set A to filename length
             ;ldx #$ff           ; ,, (X and Y don't matter because the secondary
             ;ldy #$ff           ; ,, address indicates use of header)
             jsr LOAD            ; ,,
-            bcc load_ok         ; If there was an error, show BASIC error
-            jmp ERROR_NO        ; ,,
+            bcs DiskError
 load_ok:    lda #$42            ; Close the file
             jsr CLOSE           ; ,,
-            jmp (READY)         ; BASIC warm start     
+            jsr Restore
+            jmp Linefeed
+        
+; Disk Setup
+; Clear breakpoint, set up logical file, get filename length, return in A
+; for call to SETNAM            
+DiskSetup:  jsr ClearBP         ; Clear breakpoint
+            lda #$42            ; Set up logical file
+            ldx #DEVICE         ; ,,
+            ldy #$01            ; ,, Specify use of header for address
+            jsr SETLFS          ; ,,
+            ldy #$00
+-loop:      jsr CharGet
+            beq setup_r
+            iny
+            cpy #$08
+            bne loop            
+setup_r:    tya
+            rts
+
+; Show System Disk Error            
+DiskError:  pha
+            jsr Restore
+            pla
+            jmp ERROR_NO            
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -969,8 +973,11 @@ Space:      lda #" "
             .byte $0c           ; TOP
 Comma:      lda #","
             .byte $0c           ; TOP
-CloseParen: lda #")"                        
+CloseParen: lda #")"
             jmp CharOut
+ 
+Linefeed:   lda #LF
+            jmp CHROUT 
             
 ; Write hexadecimal character
 Hex:        pha                 ; Hex converter based on from WOZ Monitor,
@@ -1078,8 +1085,7 @@ PrintBuff:  lda #$00            ; End the buffer with 0
             jsr PRTSTR          ; ,,
             lda #RVS_OFF        ; Reverse off after each line
             jsr CHROUT          ; ,,
-            lda #LF             ; Linefeed after each buffer print
-            jmp CHROUT
+            jmp Linefeed
             
 ; Prompt for Next Line
 ; X should be set to the number of bytes the program counter should be
@@ -1127,7 +1133,7 @@ ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1
 
 ; Text display tables                      
-Intro:      .asc LF,"WAX ON",LF,$00
+Intro:      .asc LF,"WAX ON",$00
 Registers:  .asc LF,LF,"*Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
