@@ -336,25 +336,18 @@ DisInd:     pha
             cmp #INDIRECT
             bne ind_xy
             jsr Param_16
-            lda #")"
-            jsr CharOut
-            rts
+            jmp CloseParen
 ind_xy:     pha
             jsr Param_8
             pla
             cmp #INDIRECT_X
             bne ind_y
-            lda #","
-            jsr CharOut
+            jsr Comma
             lda #"X"
             jsr CharOut
-            lda #")"
-            jsr CharOut
-            rts
-ind_y:      lda #")"
-            jsr CharOut
-            lda #","
-            jsr CharOut
+            jmp CloseParen
+ind_y:      jsr CloseParen
+            jsr Comma
             lda #"Y"
             jmp CharOut
 
@@ -409,9 +402,8 @@ draw_xy:    ldx #"X"
             cmp #$20
             beq abs_ind
             rts
-abs_ind:    lda #","            ; This is an indexed addressing mode, so
-            jsr CharOut         ;   write a comma and index register
-            txa                 ;   ,,
+abs_ind:    jsr Comma           ; This is an indexed addressing mode, so
+            txa                 ;   write a comma and index register
             jmp CharOut         ;   ,,
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -438,7 +430,6 @@ edit_r:     rts
 ; quote, or 0
 TextEdit:   ldy #$00            ; Y=Data Index
 -loop:      jsr CharGet
-            cmp #$00            ; (This is necessary due to INC in CharGet)
             beq edit_exit       ; Return to MemEditor if 0
             cmp #QUOTE          ; Is this the closing quote?
             beq edit_exit       ; Return to MemEditor if quote
@@ -456,8 +447,7 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             lda INBUFFER+4      ; If the user just pressed Return at the prompt,
             beq asm_r           ;   go back to BASIC
 -loop:      jsr CharGet         ; Look through the buffer for either
-            cmp #$00            ;   0, which should indicate an implied mode
-            beq test            ;   instruction, or
+            beq test            ;   0, which should indicate implied mode, or:
             cmp #FWDR           ; * = Handle forward relative branching
             beq HandleFwd       ; ,,
             cmp #BYTE           ; . = Start .byte entry (route to hex editor)
@@ -572,9 +562,7 @@ match:      jsr NextValue
             sec                 ;   bytes that need to be programmed
             sbc #OPCODE         ;   ,,
             sta INSTSIZE        ;   ,,
-            jsr RefreshPC       ; Restore the program counter to target address
-            sec                 ; Set Carry flag to indicate success
-            rts
+            jmp RefreshPC       ; Restore the program counter to target address
 test_rel:   lda #$09            ; Handle relative branch operands here; set
             sta IDX_OUT         ;   a stop after three characters in output
             jsr IsMatch         ;   buffer and check for a match
@@ -640,7 +628,7 @@ test_err:   jmp MisError
 SetBreak:   php
             jsr ClearBP         ; Clear the old breakpoint, if it exists
             plp                 ; If no breakpoint is chosen (e.g., if ! was)
-            bcc setbr_r         ;   by itself), just clear the breakpoint
+            bcc SetupVec        ;   by itself), just clear the breakpoint
             lda PRGCTR          ; Add a new breakpoint at the program counter
             sta BREAKPOINT      ; ,,
             lda PRGCTR+1        ; ,,
@@ -654,7 +642,18 @@ SetBreak:   php
             jsr CHROUT          ; ,,
             ldx #$01            ; List a single line for the user to review
             jsr ListLine        ; ,,
-setbr_r:    jmp SetupVec        ; Make sure that the BRK handler is on
+
+; Set Up Vectors
+; Used by installation, and also by the breakpoint manager                    
+SetupVec:   lda #<main          ; Intercept GONE to process wedge
+            sta IGONE           ;   tool invocations
+            lda #>main          ;   ,,
+            sta IGONE+1         ;   ,,
+            lda #<Break         ; Set the BRK interrupt vector
+            sta CBINV           ; ,,
+            lda #>Break         ; ,,
+            sta CBINV+1         ; ,,
+            rts
 
 ; BRK Trapper
 ; Replaces the default BRK handler. Shows the register display, goes to warm
@@ -910,8 +909,7 @@ CharGet:    ldx IDX_IN
             rts             
             
 ; Buffer to Byte
-; Y is the index of the first character of the byte in the input
-; buffer, to be returned as a byte in the Accumulator
+; Get two characters from the buffer and evaluate them as a hex byte
 Buff2Byte:  jsr CharGet
             jsr Char2Nyb
             bcc not_found       ; See Lookup subroutine above
@@ -922,10 +920,10 @@ Buff2Byte:  jsr CharGet
             sta WORK
             jsr CharGet
             jsr Char2Nyb
-            bcc not_found       ; See Lookup subroutine above
+            bcc buff2_r         ; Clear Carry flag indicates invalid hex
             ora WORK            ; Combine high and low nybbles
-            sec                 ; Set Carry flag indicates success
-            rts
+            ;sec                ; Set Carry flag indicates success
+buff2_r:    rts
        
 ; Is Buffer Match            
 ; Does the input buffer match the output buffer?
@@ -964,12 +962,14 @@ next_r:     ldy #$00
             lda (PRGCTR),y
             rts
 
-; Write hex prefix to buffer
+; Commonly-Used Characters
 HexPrefix:  lda #"$"
-            jmp CharOut
-
-; Write space to buffer          
+            .byte $0c           ; TOP
 Space:      lda #" "
+            .byte $0c           ; TOP
+Comma:      lda #","
+            .byte $0c           ; TOP
+CloseParen: lda #")"                        
             jmp CharOut
             
 ; Write hexadecimal character
@@ -1109,19 +1109,7 @@ Prompt:     jsr DirectMode      ; If a tool is in Direct Mode, increase
             bne loop            ;   ,,
             sty KBSIZE          ; Setting the buffer size will make it go
 prompt_r:   rts            
-                
-; Set Up Vectors
-; Used by installation, and also by the breakpoint manager                    
-SetupVec:   lda #<main          ; Intercept GONE to process wedge
-            sta IGONE           ;   tool invocations
-            lda #>main          ;   ,,
-            sta IGONE+1         ;   ,,
-            lda #<Break         ; Set the BRK interrupt vector
-            sta CBINV           ; ,,
-            lda #>Break         ; ,,
-            sta CBINV+1         ; ,,
-            rts
-            
+                            
 ; In Direct Mode
 ; If the wAx tool is running in Direct Mode, the Zero flag will be set
 DirectMode: ldy CURLIN+1
@@ -1139,7 +1127,7 @@ ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1
 
 ; Text display tables                      
-Intro:      .asc LF,"WAX ON",$00
+Intro:      .asc LF,"WAX ON",LF,$00
 Registers:  .asc LF,LF,"*Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
