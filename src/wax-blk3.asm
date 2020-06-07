@@ -967,13 +967,13 @@ next_r:     ldy #$00
             rts
 
 ; Commonly-Used Characters
-HexPrefix:  lda #"$"
-            .byte $0c           ; TOP
-Space:      lda #" "
+CloseParen: lda #")"
             .byte $0c           ; TOP
 Comma:      lda #","
             .byte $0c           ; TOP
-CloseParen: lda #")"
+Space:      lda #" "
+            .byte $0c           ; TOP
+HexPrefix:  lda #"$"
             jmp CharOut
  
 Linefeed:   lda #LF
