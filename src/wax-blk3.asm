@@ -758,7 +758,7 @@ Execute:    pla                 ; Get rid of the return address to Return, as
             php                 ; Store P to preserve Carry flag
             jsr Restore         ; Restore zeropage workspace
             plp                 ; The Carry flag indicates that no valid address
-            bcc ex_r            ;   was provided; go to BRK if it was not
+            bcc ex_brk          ;   was provided; go to BRK if it was not
             jsr SYS             ; Call BASIC SYS, but a little downline
                                 ;   This starts SYS at the register setup,
                                 ;   leaving out the part that adds a return
@@ -772,7 +772,7 @@ Execute:    pla                 ; Get rid of the return address to Return, as
                                 ;   lda ACC right after jsr SYS, because the
                                 ;   second half of SYS messes with A, and you
                                 ;   want the BRK interrupt to get it right.
-ex_r:       brk                 ; Trigger the BRK handler
+ex_brk:     brk                 ; Trigger the BRK handler
            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY SAVE COMPONENT
@@ -968,11 +968,11 @@ next_r:     ldy #$00
 
 ; Commonly-Used Characters
 CloseParen: lda #")"
-            .byte $0c           ; TOP
+            .byte $3c           ; TOP (skip word)
 Comma:      lda #","
-            .byte $0c           ; TOP
+            .byte $3c           ; TOP (skip word)
 Space:      lda #" "
-            .byte $0c           ; TOP
+            .byte $3c           ; TOP (skip word)
 HexPrefix:  lda #"$"
             jmp CharOut
  
