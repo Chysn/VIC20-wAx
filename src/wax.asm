@@ -968,11 +968,11 @@ next_r:     ldy #$00
 
 ; Commonly-Used Characters
 CloseParen: lda #")"
-            .byte $0c           ; TOP
+            .byte $0c           ; TOP (skip word)
 Comma:      lda #","
-            .byte $0c           ; TOP
+            .byte $0c           ; TOP (skip word)
 Space:      lda #" "
-            .byte $0c           ; TOP
+            .byte $0c           ; TOP (skip word)
 HexPrefix:  lda #"$"
             jmp CharOut
  
