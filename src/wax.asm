@@ -48,8 +48,9 @@ T_REG       = ";"               ; Wedge character ; for register set
 T_EXE       = $5f               ; Wedge character left-arrow for code execute
 T_SAV       = $b1               ; Wedge character > for save
 T_LOA       = $b3               ; Wedge character $ for hex-to-base10
-BYTE        = ":"               ; .byte Entry Character
-FWDR        = "*"               ; Forward Relative Branch Character
+BYTE        = ":"               ; .byte entry character
+FWDR        = "*"               ; Forward relative branch character
+BINARY      = "%"               ; Binary entry character
 DEVICE      = $08               ; Save device
 
 ; System resources - Routines
@@ -130,7 +131,7 @@ INSTDATA    = $a9               ; Instruction data (2 bytes)
 TOOL_CHR    = $ab               ; Current function (T_ASM, T_DIS)
 OPCODE      = $ac               ; Assembly target for hypotesting
 OPERAND     = $ad               ; Operand storage (2 bytes)
-RB_OPERAND  = $af               ; Hypothetical relative branch operand
+SP_OPERAND  = $af               ; Hypothetical relative branch operand
 INSTSIZE    = $b0               ; Instruction size
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
@@ -211,7 +212,7 @@ RefreshPC:  lda #$00            ; Re-initialize for buffer read
 main_r:     rts                 ; Pull address-1 off stack and go there
     
 ; Return from Wedge
-; Return in one of two ways:
+; Return in one of two ways--
 ; (1) In direct mode, to a BASIC warm start without READY.
 ; (2) In a program, find the next BASIC command
 Return:     jsr Restore
@@ -418,7 +419,7 @@ MemEditor:  ldy #$00            ; This is Assemble's entry point for .byte
             cpy #$04
             bne loop
 edit_exit:  cpy #$00
-            beq edit_r
+            beq asm_error
             tya
             tax
             jsr Prompt          ; Prompt for the next address
@@ -430,7 +431,7 @@ edit_r:     rts
 ; quote, or 0
 TextEdit:   ldy #$00            ; Y=Data Index
 -loop:      jsr CharGet
-            beq edit_exit       ; Return to MemEditor if 0
+            beq asm_error       ; Return to MemEditor if 0
             cmp #QUOTE          ; Is this the closing quote?
             beq edit_exit       ; Return to MemEditor if quote
             sta (PRGCTR),y      ; Populate data
@@ -438,6 +439,15 @@ TextEdit:   ldy #$00            ; Y=Data Index
             cpy #$10            ; String size limit
             beq edit_exit
             jmp loop
+            
+; Binary Editor
+; If the input starts with a %, get one binary byte and store it in memory                   
+BinaryEdit: jsr BinaryByte      ; Get 8 binary bits
+            bcc edit_r          ; If invalid, exit assembler
+            ldy #$00            ; Store the valid byte to memory
+            sta (PRGCTR),y      ; ,,
+            iny                 ; Increment the byte count and return to
+            jmp edit_exit       ;   editor            
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSEMBLER COMPONENTS
@@ -454,11 +464,15 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             beq MemEditor       ; ,,
             cmp #QUOTE          ; " = Start text entry (route to text editor)
             beq TextEdit        ; ,,
+            cmp #BINARY         ; % = Start binary entry (route to binary editor)
+            beq BinaryEdit      ; ,,
+            cmp #"#"            ; # = Parse immediate operand (quotes and %)
+            beq ImmedOp         ; ,,            
             cmp #"$"            ; $ = Parse the operand
             bne loop            ; ,,
             jsr GetOperand      ; Once $ is found, then grab the operand
 test:       jsr Hypotest        ; Line is done; hypothesis test for a match
-            bcc AsmError        ; Clear carry means the test failed
+            bcc asm_error       ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
             lda OPCODE          ;   to the program counter. The number of bytes
             sta (PRGCTR),y      ;   to transcribe is stored in the INSTSIZE memory
@@ -476,6 +490,7 @@ test:       jsr Hypotest        ; Line is done; hypothesis test for a match
 nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
             jsr Prompt          ; Prompt for next line if in direct mode
 asm_r:      rts
+asm_error:  jmp AsmError
 
 ; Handle Forward Branch
 ; In cases where the forward branch address is unknown, * may be used as
@@ -489,7 +504,10 @@ set_fw:     lda PRGCTR          ; Otherwise, it's to set the forward branch
             lda PRGCTR+1        ;   instruction.
             sta RB_FORWARD+1    ;   ,,
             lda #$00            ; Aim the branch instruction at the next
-            sta RB_OPERAND      ;   instruction by default
+            sta SP_OPERAND      ;   instruction by default
+            ldy IDX_IN          ; Change the character in the buffer from
+            lda #"$"            ;   * to $, so that the instruction can pass
+            sta INBUFFER-1,y    ;   the hypotesting
             jmp test            ; Go back to assemble the instruction
 resolve_fw: lda PRGCTR          ; Compute the relative branch offset from the
             sec                 ;   current program counter
@@ -500,6 +518,33 @@ resolve_fw: lda PRGCTR          ; Compute the relative branch offset from the
             sta (RB_FORWARD),y  ;   original instruction as its operand
             ldx #$00            ; Prompt for the same memory location again
             jmp Prompt          ; ,,
+ 
+; Parse Immediate Operand
+; Immediate operand octets are expressed in the following formats--
+; (1) $dd       - Hexadecimal 
+; (2) "c"       - Character
+; (3) %bbbbbbbb - Binary
+ImmedOp:    jsr CharGet
+            cmp #"$"
+            bne try_quote
+            jsr GetOperand
+            lda OPERAND
+            sta SP_OPERAND
+            jmp test
+try_quote:  cmp #QUOTE
+            bne try_binary
+            jsr CharGet
+            sta SP_OPERAND
+            jsr CharGet
+            cmp #QUOTE
+            bne AsmError
+            jmp test
+try_binary: cmp #"%"
+            bne AsmError
+            jsr BinaryByte
+            bcc AsmError
+            ;sta SP_OPERAND     ; Storage to SP_OPERAND is done by Binary
+            jmp test            
             
 ; Error Message
 ; Invalid opcode or formatting (ASSEMBLY)
@@ -528,7 +573,7 @@ high_byte:  sta OPERAND         ;   set the low byte with the input
             sbc PRGCTR          ; Subtract the program counter address from
             sec                 ;   the instruction target
             sbc #$02            ; Offset by 2 to account for the instruction
-            sta RB_OPERAND      ; Save the hypothetical relative branch operand
+            sta SP_OPERAND      ; Save the speculative operand
 getop_r:    rts
             
 ; Hypothesis Test
@@ -550,11 +595,15 @@ reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match
             jsr DMnemonic       ; Add mnemonic to buffer
             ldy #$01            ; Addressing mode is at (LANG_PTR)+1
             lda (LANG_PTR),y    ; Get addressing mode to pass to DOperand
-            cmp #RELATIVE       ; If the addressing mode is relative, then it's
-            beq test_rel        ;   tested separately
+            pha
             jsr DOperand        ; Add formatted operand to buffer
             lda #$00            ; Add 0 delimiter to end of output buffer so
             jsr CharOut         ;  the match knows when to stop
+            pla
+            cmp #RELATIVE       ; If the addressing mode is or immeditate,
+            beq test_sp         ;   test separately
+            cmp #IMMEDIATE      ;   ,,
+            beq test_sp         ;   ,,
             jsr IsMatch
             bcc reset
 match:      jsr NextValue
@@ -563,13 +612,12 @@ match:      jsr NextValue
             sbc #OPCODE         ;   ,,
             sta INSTSIZE        ;   ,,
             jmp RefreshPC       ; Restore the program counter to target address
-test_rel:   lda #$09            ; Handle relative branch operands here; set
-            sta IDX_OUT         ;   a stop after three characters in output
+test_sp:    lda #$0a            ; Handle speculative operands here; set
+            sta IDX_OUT         ;   a stop after four characters in output
             jsr IsMatch         ;   buffer and check for a match
             bcc reset          
-            lda RB_OPERAND      ; If the instruction matches, move the relative
-            sta OPERAND         ;   branch operand to the working operand
-            jsr NextValue
+            lda SP_OPERAND      ; If the instruction matches, move the
+            sta OPERAND         ;   speculative operand to the working operand
             jmp match           ; Treat this like a regular match from here
 bad_code:   clc                 ; Clear carry flag to indicate failure
             rts
@@ -993,6 +1041,33 @@ prhex:      and #$0f
             bcc echo
             adc #$06
 echo:       jmp CharOut
+
+; Get Binary Byte
+; Return in A     
+BinaryByte: lda #$00
+            sta SP_OPERAND
+            lda #$80
+-loop:      pha
+            jsr CharGet
+            tay
+            cpy #"1"
+            bne zero
+            pla
+            pha
+            ora SP_OPERAND
+            sta SP_OPERAND
+            jmp next_bit
+zero:       cpy #"0"
+            bne bad_bin
+next_bit:   pla
+            lsr
+            bne loop
+            lda SP_OPERAND
+            sec
+            rts
+bad_bin:    pla
+            clc
+            rts 
  
 ; Show 8-bit Parameter           
 Param_8:    jsr HexPrefix
