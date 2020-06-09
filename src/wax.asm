@@ -150,7 +150,7 @@ Install:    jsr $c533           ; Re-chain BASIC program to set BASIC
             sta $2D             ;   ,,
             lda $23             ;   ,,
             jsr $C655           ;   ,,
-installed:  jsr SetupVec        ; Set up vectors (IGONE and BRK)
+            jsr SetupVec        ; Set up vectors (IGONE and BRK)
             lda #<Intro         ; Announce that wAx is on
             ldy #>Intro         ; ,,
             jsr PRTSTR          ; ,,
@@ -166,7 +166,7 @@ main:       jsr CHRGET          ; Get the character from input or BASIC
             iny                 ; Else, check the characters in turn
             cpy #TOOL_COUNT     ; ,,
             bne loop            ; ,,
-to_gone:    jsr CHRGOT          ; Restore flags for the found character
+            jsr CHRGOT          ; Restore flags for the found character
             jmp GONE+3          ; +3 because the CHRGET is already done
 
 ; Prepare for Tool Run
@@ -433,7 +433,7 @@ TextEdit:   ldy #$00            ; Y=Data Index
             beq edit_exit       ; Return to MemEditor if 0
             cmp #QUOTE          ; Is this the closing quote?
             beq edit_exit       ; Return to MemEditor if quote
-pop:        sta (PRGCTR),y      ; Populate data
+            sta (PRGCTR),y      ; Populate data
             iny
             cpy #$10            ; String size limit
             beq edit_exit
@@ -456,7 +456,7 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             beq TextEdit        ; ,,
             cmp #"$"            ; $ = Parse the operand
             bne loop            ; ,,
-get_oprd:   jsr GetOperand      ; Once $ is found, then grab the operand
+            jsr GetOperand      ; Once $ is found, then grab the operand
 test:       jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc AsmError        ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
@@ -604,7 +604,7 @@ add_char:   jsr CharOut         ; ,,
 next_char:  iny
             cpy #04
             bne loop            
-mem_r:      rts
+            rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSERTION TESTER COMPONENT
@@ -697,7 +697,7 @@ ClearBP:    lda BREAKPOINT      ; Get the breakpoint
 bp_reset:   sty BREAKPOINT      ; And then clear out the whole
             sty BREAKPOINT+1    ;   breakpoint data structure
             sty BREAKPOINT+2    ;   ,,
-cleared:    rts
+            rts
 
 ; Breakpoint Indicator
 ; Also restores the breakpoint byte, temporarily
@@ -794,7 +794,7 @@ MemSave:    bcc save_err        ; Bail if the address is no good
             ldy WORK+1          ; ,,
             jsr SAVE            ; ,,
             bcs DiskError
-save_ok:    lda #$42            ; Close the file
+            lda #$42            ; Close the file
             jsr CLOSE           ; ,,
             jsr Restore
             jmp Linefeed
@@ -816,7 +816,7 @@ MemLoad:    lda #$00            ; Reset the input buffer index because there's
             ;ldy #$ff           ; ,, address indicates use of header)
             jsr LOAD            ; ,,
             bcs DiskError
-load_ok:    lda #$42            ; Close the file
+            lda #$42            ; Close the file
             jsr CLOSE           ; ,,
             jsr Restore
             jmp Linefeed
@@ -855,7 +855,7 @@ Restore:    ldx #$00            ; Restore workspace memory to zeropage
             inx                 ;   ,,
             cpx #$10            ;   ,,
             bne loop            ;   ,,
-restore_r:  rts       
+            rts       
 
 ; Look up opcode
 Lookup:     sta INSTDATA        ; INSTDATA is the found opcode
@@ -1011,7 +1011,7 @@ Param_16:   jsr HexPrefix
 ; Character to Output
 ; Add the character in A to the outut byffer            
 CharOut:    sta CHARAC          ; Save temporary character
-write_ok:   tya                 ; Save registers
+            tya                 ; Save registers
             pha                 ; ,,
             txa                 ; ,,
             pha                 ; ,,
