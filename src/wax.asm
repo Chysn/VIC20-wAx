@@ -38,10 +38,11 @@
 
 ; Configuration
 LIST_NUM    = $10               ; Display this many lines
-TOOL_COUNT  = $09               ; How many tools are there?
+TOOL_COUNT  = $0a               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
 T_ASM       = "@"               ; Wedge character @ for assembly
 T_MEM       = ","               ; Wedge character , for memory dump
+T_BIN       = "'"               ; Wedge character ' for binary dump
 T_TST       = $b2               ; Wedge character = for tester
 T_BRK       = "!"               ; Wedge character ! for breakpoint
 T_REG       = ";"               ; Wedge character ; for register set
@@ -243,14 +244,20 @@ ListLine:   txa
             lda PRGCTR          ; ,,
             jsr Hex             ; ,,            
             lda TOOL_CHR        ; What tool is being used?
-            cmp #T_MEM          ; Default to disassembler
+            cmp #T_MEM          ; Memory Dump
             beq to_mem          ; ,,
+            cmp #T_BIN          ; Binary Dump
+            beq to_bin          ; ,,
             jsr Space           ; Space goes after address for Disassembly
             jsr Disasm
             jmp continue
 to_mem:     lda #BYTE           ; The .byte entry character goes after the
             jsr CharOut         ;   address for memory display
             jsr Memory          ;   ,,
+            jmp continue
+to_bin:     lda #BINARY         ; The binary entry character goes after the
+            jsr CharOut         ;   address for binary display
+            jsr BinaryDisp      ;   ,,          
 continue:   jsr PrintBuff      
             pla
             tax
@@ -653,6 +660,34 @@ next_char:  iny
             cpy #04
             bne loop            
             rts
+            
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; BINARY DUMP COMPONENT
+; https://github.com/Chysn/wAx/wiki/3-Memory-Dump
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+BinaryDisp: ldx #$00            ; Get the byte at the program counter
+            lda (PRGCTR,x)      ; ,,
+            sta SP_OPERAND      ; Store byte for binary conversion
+            lda #%10000000      ; Start with high bit
+-loop:      pha
+            bit SP_OPERAND
+            beq is_zero
+            lda #RVS_ON
+            jsr CharOut
+            lda #"1"
+            jsr CharOut
+            lda #RVS_OFF
+            .byte $3c           ; TOP (skip word)
+is_zero:    lda #"0"
+            jsr CharOut
+            pla
+            lsr
+            bne loop
+            jsr Space
+            ldx #$00
+            lda (PRGCTR,x)
+            jsr Hex
+            jmp NextValue
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSERTION TESTER COMPONENT
@@ -1010,8 +1045,8 @@ not_digit:  cmp #"F"+1          ; Is the character in the range A-F?
 NextValue:  inc PRGCTR
             bne next_r
             inc PRGCTR+1
-next_r:     ldy #$00
-            lda (PRGCTR),y
+next_r:     ldx #$00
+            lda (PRGCTR,x)
             rts
 
 ; Commonly-Used Characters
@@ -1046,7 +1081,7 @@ echo:       jmp CharOut
 ; Return in A     
 BinaryByte: lda #$00
             sta SP_OPERAND
-            lda #$80
+            lda #%10000000
 -loop:      pha
             jsr CharGet
             tay
@@ -1201,11 +1236,11 @@ DirectMode: ldy CURLIN+1
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
-ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA
+ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA,T_BIN
 ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<Register-1,<Execute-1
-            .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1
+            .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1,<List-1
 ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
-            .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1
+            .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1,>List-1
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
