@@ -39,7 +39,7 @@
 ; Configuration
 LIST_NUM    = $10               ; Display this many lines
 SEARCH_L    = $10               ; Search this many pages (s * 256 bytes)
-TOOL_COUNT  = $0d               ; How many tools are there?
+TOOL_COUNT  = $10               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
 T_XDI       = $aa               ; Wedge character + for extended opcode
 T_ASM       = "@"               ; Wedge character @ for assembly
@@ -53,8 +53,11 @@ T_SAV       = $b1               ; Wedge character > for save
 T_LOA       = $b3               ; Wedge character < for load
 T_SRC       = $ad               ; Wedge character / for search
 T_CPY       = $ae               ; Wedge character up arrow for copy
+T_H2T       = "$"               ; Wedge character $ for hex to base 10
+T_T2H       = "#"               ; Wedge character # for base 10 to hex
+T_B2T       = "%"               ; Wedge character % for binary to base 10
 BYTE        = ":"               ; .byte entry character
-FWDR        = "*"               ; Forward relative branch character
+SYMB        = "*"               ; Forward relative branch character
 BINARY      = "%"               ; Binary entry character
 DEVICE      = $08               ; Save device
 
@@ -78,6 +81,8 @@ SAVE        = $ffd8             ; Save
 LOAD        = $ffd5             ; Load
 CLOSE       = $ffc3             ; Close logical file
 COPY        = $c3bf             ; Copy
+ASCFLT      = $dcf3             ; Convert base-10 to FAC1
+FACINX      = $d1aa             ; FAC1 to Integer
 
 ; System resources - Vectors and Pointers
 IGONE       = $0308             ; Vector to GONE
@@ -480,7 +485,7 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             beq asm_r           ;   go back to BASIC
 -loop:      jsr CharGet         ; Look through the buffer for either
             beq test            ;   0, which should indicate implied mode, or:
-            cmp #FWDR           ; * = Handle forward relative branching
+            cmp #SYMB           ; * = Handle forward relative branching
             beq HandleFwd       ; ,,
             cmp #BYTE           ; . = Start .byte entry (route to hex editor)
             beq MemEditor       ; ,,
@@ -946,7 +951,9 @@ DiskError:  pha
 ; SEARCH COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Search:     bcc srch_r          ; Bail if the address is no good
-            lda #SEARCH_L       ; Set the search limit
+            lda INBUFFER+4      ; Bail if there's nothing to search
+            beq srch_r          ; ,,
+            lda #SEARCH_L       ; Set the search limit (in pages)
             sta SEARCH_C        ; ,,
 next_srch:  lda LSTX            ; Keep searching code until the user presses
             cmp #$18            ;   Stop key
@@ -1030,11 +1037,6 @@ setup_done: lda #QUOTE
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SEARCH COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; move bytes routine
-;  $5F/$60 source start address
-;  $5A/$5B source end address
-;  $58/$59 destination end address
-
 ; Copy
 MemCopy:    bcc copy_err        ; Get parameters as 16-bit hex addresses for
             jsr Buff2Byte       ; Source end
@@ -1066,7 +1068,66 @@ advance:    jsr NextValue       ; If not, advance the program counter and the
 copy_r:     rts     
 copy_err:   jsr Restore         ; Something was wrong with an address; show
             jmp SYNTAX_ERR      ;   SYNTAX ERROR
+            
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; NUMERIC CONVERSION COMPONENTS
+; https://github.com/Chysn/wAx/wiki/Number-Conversion
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
+; Hex to Base-10
+Hex2Base10:	bcc hex_conv_r      ; Bail if no or illegal number is provided
+            jsr UpOver
+            lda #"#"
+            jsr CHROUT
+            ldx PRGCTR          ; Set up PRTFIX for base-10 integer output
+            lda PRGCTR+1        ; ,,
+            jsr PRTFIX          ; ,,
+            jsr Linefeed
+hex_conv_r: rts            
+            
+; Binary to Base-10           
+Bin2Base10: lda #$00            ; Reset input buffer
+            sta IDX_IN          ; ,,
+            jsr BinaryByte      ; Get binary byte
+            bcc bin_conv_r
+            pha
+            jsr UpOver
+            lda #"#"
+            jsr CHROUT
+            pla
+            tax
+            lda #$00
+            jsr PRTFIX
+            jsr Linefeed
+bin_conv_r: rts
 
+; Base-10 to Hex
+Base102Hex: jsr UpOver
+            lda #$00
+            sta IDX_OUT
+            jsr HexPrefix
+            ldy #<INBUFFER
+            lda #>INBUFFER
+            sty $7a
+            sta $7b
+            jsr CHRGOT
+            jsr ASCFLT
+            jsr FACINX
+            jsr Hex
+            tya
+            jsr Hex
+            jmp PrintBuff
+
+; Up And Over
+; To display converted value
+UpOver:     lda #CRSRUP         ; Cursor up
+            jsr CHROUT
+            ldx #$0f
+            lda #CRSRRT         ; Cursor right
+-loop       jsr CHROUT
+            dex
+            bne loop    
+            rts      
+            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
@@ -1390,13 +1451,15 @@ DirectMode: ldy CURLIN+1
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
 ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA,T_BIN
-            .byte T_XDI,T_SRC,T_CPY
+            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_B2T
 ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<Register-1,<Execute-1
             .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1,<List-1
-            .byte <List-1,<Search-1,<MemCopy-1
+            .byte <List-1,<Search-1,<MemCopy-1,<Hex2Base10-1,<Base102Hex-1
+            .byte <Bin2Base10-1
 ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1,>List-1
-            .byte >List-1,>Search-1,>MemCopy-1
+            .byte >List-1,>Search-1,>MemCopy-1,>Hex2Base10-1,>Base102Hex-1
+            .byte >Bin2Base10-1
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
