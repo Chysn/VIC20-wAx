@@ -39,7 +39,7 @@
 ; Configuration
 LIST_NUM    = $10               ; Display this many lines
 SEARCH_L    = $10               ; Search this many pages (s * 256 bytes)
-TOOL_COUNT  = $10               ; How many tools are there?
+TOOL_COUNT  = $11               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
 T_XDI       = $aa               ; Wedge character + for extended opcode
 T_ASM       = "@"               ; Wedge character @ for assembly
@@ -56,9 +56,10 @@ T_CPY       = $ae               ; Wedge character up arrow for copy
 T_H2T       = "$"               ; Wedge character $ for hex to base 10
 T_T2H       = "#"               ; Wedge character # for base 10 to hex
 T_B2T       = "%"               ; Wedge character % for binary to base 10
+T_SYM       = $ac               ; Wedge character * for symbol initialization
 BYTE        = ":"               ; .byte entry character
-SYMB        = "*"               ; Forward relative branch character
 BINARY      = "%"               ; Binary entry character
+LABEL       = "&"               ; Forward relative branch character
 DEVICE      = $08               ; Save device
 
 ; System resources - Routines
@@ -134,6 +135,9 @@ RVS_ON      = $12               ; Reverse on
 RVS_OFF     = $92               ; Reverse off
 
 ; Assembler workspace
+X_PC        = $02fe             ; External program counter
+SYMBOL      = $02d6             ; Symbol table
+SYMBOL_F    = SYMBOL+$14        ;   Forward reference resolution
 WORK        = $a3               ; Temporary workspace (2 bytes)
 MNEM        = $a3               ; Current Mnemonic (2 bytes)
 PRGCTR      = $a5               ; Program Counter (2 bytes)
@@ -148,9 +152,9 @@ OPERAND     = $ad               ; Operand storage (2 bytes)
 SP_OPERAND  = $af               ; Hypothetical relative branch operand
 INSTSIZE    = $b0               ; Instruction size
 SEARCH_C    = $b0               ; Search counter
+IDX_SYM     = $b0               ; Temporary symbol index storage
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
-RB_FORWARD  = $10               ; Relative branch instruction address (2 bytes)
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
 INBUFFER    = $0230             ; Input buffer (22 bytes)
 ZP_TMP      = $0246             ; Zeropage Preservation (16 bytes)
@@ -485,13 +489,13 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             beq asm_r           ;   go back to BASIC
 -loop:      jsr CharGet         ; Look through the buffer for either
             beq test            ;   0, which should indicate implied mode, or:
-            cmp #SYMB           ; * = Handle forward relative branching
-            beq HandleFwd       ; ,,
-            cmp #BYTE           ; . = Start .byte entry (route to hex editor)
+            cmp #LABEL          ; & = New label
+            beq DefLabel        ; ,,
+            cmp #BYTE           ; Colon = Byte entry (route to hex editor)
             beq MemEditor       ; ,,
-            cmp #QUOTE          ; " = Start text entry (route to text editor)
+            cmp #QUOTE          ; " = Text entry (route to text editor)
             beq TextEdit        ; ,,
-            cmp #BINARY         ; % = Start binary entry (route to binary editor)
+            cmp #BINARY         ; % = Binary entry (route to binary editor)
             beq BinaryEdit      ; ,,
             cmp #"#"            ; # = Parse immediate operand (quotes and %)
             beq ImmedOp         ; ,,            
@@ -502,7 +506,7 @@ test:       jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc asm_error       ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
             lda OPCODE          ;   to the program counter. The number of bytes
-            sta (PRGCTR),y      ;   to transcribe is stored in the INSTSIZE memory
+            sta (PRGCTR),y      ;   to transcribe is stored in the INSTSIZE
             ldx INSTSIZE        ;   location.
             cpx #$02            ; Store the low operand byte, if indicated
             bcc nextline        ; ,,
@@ -519,32 +523,29 @@ nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
 asm_r:      rts
 asm_error:  jmp AsmError
 
-; Handle Forward Branch
-; In cases where the forward branch address is unknown, * may be used as
-; the operand for a relative branch instruction. The branch may be resolved
-; by entering * on a line by itself, after the address.
-HandleFwd:  lda IDX_IN          ; Where in the line does the * appear?
-            cmp #$05            ; If it's right after the address, it's for
-            beq resolve_fw      ;   resolution of the forward branch point
-set_fw:     lda PRGCTR          ; Otherwise, it's to set the forward branch
-            sta RB_FORWARD      ;   point. Store the location of the branch
-            lda PRGCTR+1        ;   instruction.
-            sta RB_FORWARD+1    ;   ,,
-            lda #$00            ; Aim the branch instruction at the next
-            sta SP_OPERAND      ;   instruction by default
-            ldy IDX_IN          ; Change the character in the buffer from
-            lda #"$"            ;   * to $, so that the instruction can pass
-            sta INBUFFER-1,y    ;   the hypotesting
-            jmp test            ; Go back to assemble the instruction
-resolve_fw: lda PRGCTR          ; Compute the relative branch offset from the
-            sec                 ;   current program counter
-            sbc RB_FORWARD      ;   ,,
-            sec                 ; Offset by 2 to account for the instruction
-            sbc #$02            ;   ,,
-            ldy #$01            ; Save the computed offset right after the
-            sta (RB_FORWARD),y  ;   original instruction as its operand
-            ldx #$00            ; Prompt for the same memory location again
-            jmp Prompt          ; ,,
+; Define Label
+; Create a new label entry, and resolve any forward references to the
+; new label.
+DefLabel:   jsr CharGet         ; Get the next character after the label;
+            cmp #"0"            ; If it's not between 0 and 9, throw
+            bcc AsmError        ;   an ASSEMBLY ERROR
+            cmp #"9"+1          ;   ,,
+            bcs AsmError        ;   ,,
+            sec                 ; Get the symbol memory index into Y
+            sbc #"0"            ; ,,
+            asl                 ; ,,
+            tay                 ; ,,
+            jsr IsDefined       ; If this label is not yet defined, then
+            bne is_def          ;   resolve the forward reference, if it
+            sty IDX_SYM         ;   was used
+            jsr ResolveFwd      ;   ,,
+            ldy IDX_SYM         ;   ,,
+is_def:     lda PRGCTR          ; Set the label address
+            sta SYMBOL,y        ; ,,
+            lda PRGCTR+1        ; ,,
+            sta SYMBOL+1,y      ; ,,
+            ldx #$00            ; Return to BASIC or prompt for the same
+            jmp Prompt          ;   address again
  
 ; Parse Immediate Operand
 ; Immediate operand octets are expressed in the following formats--
@@ -743,8 +744,11 @@ SetBreak:   php
             sta (PRGCTR),y      ;   ,,
             lda #CRSRUP         ; Cursor up to overwrite the command
             jsr CHROUT          ; ,,
+            jsr DirectMode      ; When run inside a BASIC program, skip the
+            bne SetupVec        ;   BRK line display
             ldx #$01            ; List a single line for the user to review
             jsr ListLine        ; ,,
+            ; Fall through to SetupVec
 
 ; Set Up Vectors
 ; Used by installation, and also by the breakpoint manager                    
@@ -1035,7 +1039,7 @@ setup_done: lda #QUOTE
             jmp check_end    
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; SEARCH COMPONENTS
+; COPY COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Copy
 MemCopy:    bcc copy_err        ; Get parameters as 16-bit hex addresses for
@@ -1127,6 +1131,111 @@ UpOver:     lda #CRSRUP         ; Cursor up
             dex
             bne loop    
             rts      
+            
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; SYMBOLIC ASSEMBLER COMPONENTS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
+; Initialize Symbol Table
+; And also, initialize the external program counter
+InitSym:    bcc init_clear      ; If no address is provided, clear the table
+            lda PRGCTR          ; Initialize External Program Counter
+            sta X_PC            ; ,,
+            lda PRGCTR+1        ; ,,
+            sta X_PC+1          ; ,,
+            rts
+init_clear: ldy #$27            ; Initialize 40 bytes for the Symbol Table
+            lda #$00            ;   Offset $00-$13 Low/High bytes for symbols
+-loop:      sta SYMBOL,y        ;   Offset $14-$27 Low/High bytes for forward
+            dey                 ;   ,,
+            bpl loop            ;   ,,
+            rts
+            
+; Define Symbol
+; By adding it to the symbol table with the current program counter
+DefineSym:  jsr CHRGET
+            rts
+            
+; Handle Symbols 
+; Either defer them for generation, expand them, or mark them as forward
+; references.           
+HandleSym:  lda IDX_IN          ; If & is the first character in the input
+            cmp #$04            ;   buffer after the address, defer the
+            bne start_exp       ;   symbol for handling by the assembler
+            lda #LABEL          ;   ,,
+            jsr AddInput        ;   ,,
+            jmp Transcribe      ;   ,,
+start_exp:  jsr CHRGET          ; Get the next character, which should be a
+            bcc get_label       ;   numeral
+            jmp AsmError        ; If not, assembly error
+get_label:  sec
+            sbc #"0"            ; Get the numeric index for the specified label
+            asl                 ; ,,
+            tay                 ; ,,
+            jsr IsDefined
+            bne ExpandSym
+            lda X_PC            ; The symbol has not yet been defined; store
+            sta SYMBOL_F,y      ;   the current program counter in the forward
+            lda X_PC+1          ;   reference list for (hopefully) later
+            sta SYMBOL_F+1,y    ;   resolution.
+            jmp ExpandSym       ; Meanwhile, use $0000 as a placeholder
+            
+; Symbol is Defined
+; Zero flag is clear if symbol is defined
+IsDefined:  lda SYMBOL,y
+            bne is_defined
+            lda SYMBOL+1,y
+is_defined: rts            
+
+; Expand Symbol
+; and return to Transcribe
+ExpandSym:  lda #$00
+            sta IDX_OUT
+            jsr HexPrefix
+            lda SYMBOL+1,y
+            jsr Hex
+            lda SYMBOL,y
+            jsr Hex
+            ldy #$00            ; Transcribe symbol expansion into the
+-loop:      lda OUTBUFFER,y     ;   input buffer
+            jsr AddInput
+            iny
+            cpy #$05
+            bne loop
+            jmp Transcribe        
+            
+; Resolve Forward Reference            
+ResolveFwd: lda SYMBOL_F,y
+            bne fwd_used
+            lda SYMBOL_F+1,y
+            bne fwd_used
+            rts                 ; The forward reference wasn't used for label
+fwd_used:   lda SYMBOL_F,y
+            sta CHARAC
+            lda SYMBOL_F+1,y
+            sta CHARAC+1
+            ldy #$00            ; Get the byte at the reference address, which
+            lda (CHARAC),y        ;   should be an instruction opcode
+            jsr Lookup          ; Look it up
+            bcs get_admode      ; ,,
+            jmp AsmError        ; Not a valid instruction; ASSEMBLY ERROR
+get_admode: lda INSTDATA+1      ; Get the addressing mode
+            cmp #RELATIVE       ; If it's a relative branch instruction,
+            beq calc_off        ;   calculate the branch offset
+            lda PRGCTR          ; For an absolute mode instruction, just
+            ldy #$01            ;   transfer the two bytes over
+            sta (CHARAC),y      ;   ,,
+            lda PRGCTR+1        ;   ,,
+            iny                 ;   ,,
+            sta (CHARAC),y      ;   ,,
+            rts
+calc_off:   lda PRGCTR          ; The target is the current program counter
+            sec                 ; Subtract the reference address and add
+            sbc CHARAC          ;   two to get the offset
+            sec                 ;   ,,
+            sbc #$02            ;   ,,
+            ldy #$01            ; Store the computed offset in the forward
+            sta (CHARAC),y      ;   reference operand address
+            rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -1356,6 +1465,10 @@ write_r:    rts
 Transcribe: jsr CHRGET          ; Get character from input buffer
             cmp #$00            ; If it's 0, then quit transcribing and return
             beq xscribe_r       ; ,,
+            cmp #$ac            ; Replace an asterisk with the external program
+            beq ExpandXPC       ;   counter
+            cmp #LABEL          ; Handle symbolic labels
+            beq handle_sym      ; ,,
             cmp #QUOTE          ; If a quote is found, modify CHRGET so that
             bne ch_token        ;   spaces are no longer filtered out
             lda #$06            ; $0082 BEQ $0073 -> BEQ $008a
@@ -1371,7 +1484,24 @@ ch_token:   cmp #$80            ; Is the character in A a BASIC token?
 x_add:      jsr AddInput        ; Add the text to the buffer
             jmp Transcribe      ; (Carry is always set by AddInput)
 xscribe_r:  jmp AddInput        ; Add the final zero, and fix CHRGET...
+handle_sym: jmp HandleSym
 
+; Expand External Program Counter
+; Replace asterisk with the X_PC
+ExpandXPC:  lda #$00            ; Clear the output buffer, which will be used
+            sta IDX_OUT         ;   to construct the hex address
+            lda X_PC+1
+            jsr Hex
+            lda X_PC
+            jsr Hex
+            ldy #$00
+-loop:      lda OUTBUFFER,y
+            jsr AddInput
+            iny
+            cpy #$04
+            bne loop
+            jmp Transcribe
+     
 ; Add Input
 ; Add a character to the input buffer and advance the counter
 AddInput:   ldx IDX_IN
@@ -1414,24 +1544,26 @@ PrintBuff:  lda #$00            ; End the buffer with 0
 ; Prompt for Next Line
 ; X should be set to the number of bytes the program counter should be
 ; advanced
-Prompt:     jsr DirectMode      ; If a tool is in Direct Mode, increase
-            bne prompt_r        ;   the PC by the size of the instruction
-            tya                 ;   and write it to the keyboard buffer (by
-            sta IDX_OUT         ;   way of populating the output buffer)
-            lda TOOL_CHR        ;   ,,
-            jsr CharOut         ;   ,,
-            txa                 ;   ,,
-            clc                 ;   ,,
-            adc PRGCTR          ;   ,,
-            sta PRGCTR          ;   ,,
-            tya                 ;   ,, (Y is still $00, otherwise lda #$00)
+Prompt:     txa                 ; Based on the incoming X register, advance
+            clc                 ;   the program counter and store in the
+            adc PRGCTR          ;   External Program Counter. This is how wAx
+            sta X_PC            ;   remembers where it was.
+            lda #$00            ;   ,,
             adc PRGCTR+1        ;   ,,
+            sta X_PC+1          ;   ,,
+            jsr DirectMode      ; If the user is in direct mode, show a prompt,
+            bne prompt_r        ;   otherwise, return to get next command
+            lda #$00            ; Reset the output buffer to generate the
+            sta IDX_OUT         ;   prompt
+            lda TOOL_CHR        ; The prompt begins with the current tool's
+            jsr CharOut         ;   wedge character
+            lda X_PC+1          ; Show the high byte
             jsr Hex             ;   ,,
-            lda PRGCTR          ;   ,,
-            jsr Hex             ;   ,,
+            lda X_PC            ;   ,,
+            jsr Hex             ; Then the low byte
             lda #CRSRRT         ;   ,,
             jsr CharOut         ;   ,,
-            ;ldy #$00           ; (Y is still $00 from above)
+            ldy #$00
 -loop:      lda OUTBUFFER,y     ; Copy the output buffer into KEYBUFF, which
             sta KEYBUFF,y       ;   will simulate user entry
             iny                 ;   ,,
@@ -1451,19 +1583,19 @@ DirectMode: ldy CURLIN+1
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
 ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA,T_BIN
-            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_B2T
+            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_B2T,T_SYM
 ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<Register-1,<Execute-1
             .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1,<List-1
             .byte <List-1,<Search-1,<MemCopy-1,<Hex2Base10-1,<Base102Hex-1
-            .byte <Bin2Base10-1
+            .byte <Bin2Base10-1,<InitSym-1
 ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1,>List-1
             .byte >List-1,>Search-1,>MemCopy-1,>Hex2Base10-1,>Base102Hex-1
-            .byte >Bin2Base10-1
+            .byte >Bin2Base10-1,>InitSym-1
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*BRK",LF,"Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set
