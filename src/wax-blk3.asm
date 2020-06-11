@@ -38,21 +38,18 @@
 
 ; Configuration
 LIST_NUM    = $10               ; Display this many lines
-TOOL_COUNT  = $0b               ; How many tools are there?
+TOOL_COUNT  = $09               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
-T_XDI       = "X"               ; Wedge character x for extended opcode
 T_ASM       = "@"               ; Wedge character @ for assembly
 T_MEM       = ","               ; Wedge character , for memory dump
-T_BIN       = "'"               ; Wedge character ' for binary dump
 T_TST       = $b2               ; Wedge character = for tester
 T_BRK       = "!"               ; Wedge character ! for breakpoint
 T_REG       = ";"               ; Wedge character ; for register set
 T_EXE       = $5f               ; Wedge character left-arrow for code execute
 T_SAV       = $b1               ; Wedge character > for save
 T_LOA       = $b3               ; Wedge character < for load
-BYTE        = ":"               ; .byte entry character
-FWDR        = "*"               ; Forward relative branch character
-BINARY      = "%"               ; Binary entry character
+BYTE        = ":"               ; .byte Entry Character
+FWDR        = "*"               ; Forward Relative Branch Character
 DEVICE      = $08               ; Save device
 
 ; System resources - Routines
@@ -116,7 +113,6 @@ RELATIVE    = $c0               ; e.g., BCC $181E
 
 ; Other constants
 TABLE_END   = $f2               ; Indicates the end of mnemonic table
-XTABLE_END  = $d2               ; End of extended instruction table
 QUOTE       = $22               ; Quote character
 LF          = $0d               ; Linefeed
 CRSRUP      = $91               ; Cursor up
@@ -134,7 +130,7 @@ INSTDATA    = $a9               ; Instruction data (2 bytes)
 TOOL_CHR    = $ab               ; Current function (T_ASM, T_DIS)
 OPCODE      = $ac               ; Assembly target for hypotesting
 OPERAND     = $ad               ; Operand storage (2 bytes)
-SP_OPERAND  = $af               ; Hypothetical relative branch operand
+RB_OPERAND  = $af               ; Hypothetical relative branch operand
 INSTSIZE    = $b0               ; Instruction size
 IDX_IN      = $b1               ; Buffer index
 IDX_OUT     = $b2               ; Buffer index
@@ -215,7 +211,7 @@ RefreshPC:  lda #$00            ; Re-initialize for buffer read
 main_r:     rts                 ; Pull address-1 off stack and go there
     
 ; Return from Wedge
-; Return in one of two ways--
+; Return in one of two ways:
 ; (1) In direct mode, to a BASIC warm start without READY.
 ; (2) In a program, find the next BASIC command
 Return:     jsr Restore
@@ -246,20 +242,14 @@ ListLine:   txa
             lda PRGCTR          ; ,,
             jsr Hex             ; ,,            
             lda TOOL_CHR        ; What tool is being used?
-            cmp #T_MEM          ; Memory Dump
+            cmp #T_MEM          ; Default to disassembler
             beq to_mem          ; ,,
-            cmp #T_BIN          ; Binary Dump
-            beq to_bin          ; ,,
             jsr Space           ; Space goes after address for Disassembly
             jsr Disasm
             jmp continue
 to_mem:     lda #BYTE           ; The .byte entry character goes after the
             jsr CharOut         ;   address for memory display
             jsr Memory          ;   ,,
-            jmp continue
-to_bin:     lda #BINARY         ; The binary entry character goes after the
-            jsr CharOut         ;   address for binary display
-            jsr BinaryDisp      ;   ,,          
 continue:   jsr PrintBuff      
             pla
             tax
@@ -428,7 +418,7 @@ MemEditor:  ldy #$00            ; This is Assemble's entry point for .byte
             cpy #$04
             bne loop
 edit_exit:  cpy #$00
-            beq asm_error
+            beq edit_r
             tya
             tax
             jsr Prompt          ; Prompt for the next address
@@ -440,7 +430,7 @@ edit_r:     rts
 ; quote, or 0
 TextEdit:   ldy #$00            ; Y=Data Index
 -loop:      jsr CharGet
-            beq asm_error       ; Return to MemEditor if 0
+            beq edit_exit       ; Return to MemEditor if 0
             cmp #QUOTE          ; Is this the closing quote?
             beq edit_exit       ; Return to MemEditor if quote
             sta (PRGCTR),y      ; Populate data
@@ -448,15 +438,6 @@ TextEdit:   ldy #$00            ; Y=Data Index
             cpy #$10            ; String size limit
             beq edit_exit
             jmp loop
-            
-; Binary Editor
-; If the input starts with a %, get one binary byte and store it in memory                   
-BinaryEdit: jsr BinaryByte      ; Get 8 binary bits
-            bcc edit_r          ; If invalid, exit assembler
-            ldy #$00            ; Store the valid byte to memory
-            sta (PRGCTR),y      ; ,,
-            iny                 ; Increment the byte count and return to
-            jmp edit_exit       ;   editor            
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSEMBLER COMPONENTS
@@ -473,15 +454,11 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             beq MemEditor       ; ,,
             cmp #QUOTE          ; " = Start text entry (route to text editor)
             beq TextEdit        ; ,,
-            cmp #BINARY         ; % = Start binary entry (route to binary editor)
-            beq BinaryEdit      ; ,,
-            cmp #"#"            ; # = Parse immediate operand (quotes and %)
-            beq ImmedOp         ; ,,            
             cmp #"$"            ; $ = Parse the operand
             bne loop            ; ,,
             jsr GetOperand      ; Once $ is found, then grab the operand
 test:       jsr Hypotest        ; Line is done; hypothesis test for a match
-            bcc asm_error       ; Clear carry means the test failed
+            bcc AsmError        ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
             lda OPCODE          ;   to the program counter. The number of bytes
             sta (PRGCTR),y      ;   to transcribe is stored in the INSTSIZE memory
@@ -499,7 +476,6 @@ test:       jsr Hypotest        ; Line is done; hypothesis test for a match
 nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
             jsr Prompt          ; Prompt for next line if in direct mode
 asm_r:      rts
-asm_error:  jmp AsmError
 
 ; Handle Forward Branch
 ; In cases where the forward branch address is unknown, * may be used as
@@ -513,10 +489,7 @@ set_fw:     lda PRGCTR          ; Otherwise, it's to set the forward branch
             lda PRGCTR+1        ;   instruction.
             sta RB_FORWARD+1    ;   ,,
             lda #$00            ; Aim the branch instruction at the next
-            sta SP_OPERAND      ;   instruction by default
-            ldy IDX_IN          ; Change the character in the buffer from
-            lda #"$"            ;   * to $, so that the instruction can pass
-            sta INBUFFER-1,y    ;   the hypotesting
+            sta RB_OPERAND      ;   instruction by default
             jmp test            ; Go back to assemble the instruction
 resolve_fw: lda PRGCTR          ; Compute the relative branch offset from the
             sec                 ;   current program counter
@@ -527,33 +500,6 @@ resolve_fw: lda PRGCTR          ; Compute the relative branch offset from the
             sta (RB_FORWARD),y  ;   original instruction as its operand
             ldx #$00            ; Prompt for the same memory location again
             jmp Prompt          ; ,,
- 
-; Parse Immediate Operand
-; Immediate operand octets are expressed in the following formats--
-; (1) $dd       - Hexadecimal 
-; (2) "c"       - Character
-; (3) %bbbbbbbb - Binary
-ImmedOp:    jsr CharGet
-            cmp #"$"
-            bne try_quote
-            jsr GetOperand
-            lda OPERAND
-            sta SP_OPERAND
-            jmp test
-try_quote:  cmp #QUOTE
-            bne try_binary
-            jsr CharGet
-            sta SP_OPERAND
-            jsr CharGet
-            cmp #QUOTE
-            bne AsmError
-            jmp test
-try_binary: cmp #"%"
-            bne AsmError
-            jsr BinaryByte
-            bcc AsmError
-            ;sta SP_OPERAND     ; Storage to SP_OPERAND is done by Binary
-            jmp test            
             
 ; Error Message
 ; Invalid opcode or formatting (ASSEMBLY)
@@ -582,7 +528,7 @@ high_byte:  sta OPERAND         ;   set the low byte with the input
             sbc PRGCTR          ; Subtract the program counter address from
             sec                 ;   the instruction target
             sbc #$02            ; Offset by 2 to account for the instruction
-            sta SP_OPERAND      ; Save the speculative operand
+            sta RB_OPERAND      ; Save the hypothetical relative branch operand
 getop_r:    rts
             
 ; Hypothesis Test
@@ -598,21 +544,17 @@ reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match
             ldy #$00            ; Set the program counter high byte
             sty PRGCTR+1        ; ,,
             jsr NextInst        ; Get next instruction in 6502 table
-            cmp #XTABLE_END     ; If we've reached the end of the table,
+            cmp #TABLE_END      ; If we've reached the end of the table,
             beq bad_code        ;   the assembly candidate is no good
             sta OPCODE          ; Store opcode to hypotesting location
             jsr DMnemonic       ; Add mnemonic to buffer
             ldy #$01            ; Addressing mode is at (LANG_PTR)+1
             lda (LANG_PTR),y    ; Get addressing mode to pass to DOperand
-            pha
+            cmp #RELATIVE       ; If the addressing mode is relative, then it's
+            beq test_rel        ;   tested separately
             jsr DOperand        ; Add formatted operand to buffer
             lda #$00            ; Add 0 delimiter to end of output buffer so
             jsr CharOut         ;  the match knows when to stop
-            pla
-            cmp #RELATIVE       ; If the addressing mode is or immeditate,
-            beq test_sp         ;   test separately
-            cmp #IMMEDIATE      ;   ,,
-            beq test_sp         ;   ,,
             jsr IsMatch
             bcc reset
 match:      jsr NextValue
@@ -621,12 +563,13 @@ match:      jsr NextValue
             sbc #OPCODE         ;   ,,
             sta INSTSIZE        ;   ,,
             jmp RefreshPC       ; Restore the program counter to target address
-test_sp:    lda #$0a            ; Handle speculative operands here; set
-            sta IDX_OUT         ;   a stop after four characters in output
+test_rel:   lda #$09            ; Handle relative branch operands here; set
+            sta IDX_OUT         ;   a stop after three characters in output
             jsr IsMatch         ;   buffer and check for a match
             bcc reset          
-            lda SP_OPERAND      ; If the instruction matches, move the
-            sta OPERAND         ;   speculative operand to the working operand
+            lda RB_OPERAND      ; If the instruction matches, move the relative
+            sta OPERAND         ;   branch operand to the working operand
+            jsr NextValue
             jmp match           ; Treat this like a regular match from here
 bad_code:   clc                 ; Clear carry flag to indicate failure
             rts
@@ -662,34 +605,6 @@ next_char:  iny
             cpy #04
             bne loop            
             rts
-            
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; BINARY DUMP COMPONENT
-; https://github.com/Chysn/wAx/wiki/3-Memory-Dump
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-BinaryDisp: ldx #$00            ; Get the byte at the program counter
-            lda (PRGCTR,x)      ; ,,
-            sta SP_OPERAND      ; Store byte for binary conversion
-            lda #%10000000      ; Start with high bit
--loop:      pha
-            bit SP_OPERAND
-            beq is_zero
-            lda #RVS_ON
-            jsr CharOut
-            lda #"1"
-            jsr CharOut
-            lda #RVS_OFF
-            .byte $3c           ; TOP (skip word)
-is_zero:    lda #"0"
-            jsr CharOut
-            pla
-            lsr
-            bne loop
-            jsr Space
-            ldx #$00
-            lda (PRGCTR,x)
-            jsr Hex
-            jmp NextValue
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSERTION TESTER COMPONENT
@@ -943,16 +858,10 @@ Restore:    ldx #$00            ; Restore workspace memory to zeropage
             rts       
 
 ; Look up opcode
-; Reset Language Table            
 Lookup:     sta INSTDATA        ; INSTDATA is the found opcode
             jsr ResetLang       ; Reset the language table reference
 -loop:      jsr NextInst        ; Get the next 6502 instruction in the table
-            ldx TOOL_CHR        ; If the tool is the extended disassembly,
-            cpx #T_XDI          ;   use the end of the extended table,
-            bne std_table       ;   otherwise, use the standard 6502 table
-            cmp #XTABLE_END     ; If we've reached the end of the table,
-            .byte $3c           ; Skip the next word
-std_table:  cmp #TABLE_END            
+            cmp #TABLE_END      ; If we've reached the end of the table,
             beq not_found       ;   then the instruction is invalid
             cmp INSTDATA        ; If the instruction doesn't match the opcode,
             bne loop            ;   keep searching.
@@ -1053,8 +962,8 @@ not_digit:  cmp #"F"+1          ; Is the character in the range A-F?
 NextValue:  inc PRGCTR
             bne next_r
             inc PRGCTR+1
-next_r:     ldx #$00
-            lda (PRGCTR,x)
+next_r:     ldy #$00
+            lda (PRGCTR),y
             rts
 
 ; Commonly-Used Characters
@@ -1084,33 +993,6 @@ prhex:      and #$0f
             bcc echo
             adc #$06
 echo:       jmp CharOut
-
-; Get Binary Byte
-; Return in A     
-BinaryByte: lda #$00
-            sta SP_OPERAND
-            lda #%10000000
--loop:      pha
-            jsr CharGet
-            tay
-            cpy #"1"
-            bne zero
-            pla
-            pha
-            ora SP_OPERAND
-            sta SP_OPERAND
-            jmp next_bit
-zero:       cpy #"0"
-            bne bad_bin
-next_bit:   pla
-            lsr
-            bne loop
-            lda SP_OPERAND
-            sec
-            rts
-bad_bin:    pla
-            clc
-            rts 
  
 ; Show 8-bit Parameter           
 Param_8:    jsr HexPrefix
@@ -1244,14 +1126,11 @@ DirectMode: ldy CURLIN+1
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
-ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA,T_BIN
-            .byte T_XDI
+ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA
 ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<Register-1,<Execute-1
-            .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1,<List-1
-            .byte <List-1
+            .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1
 ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
-            .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1,>List-1
-            .byte >List-1
+            .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
@@ -1481,125 +1360,4 @@ InstrSet:   .byte $09,$07       ; ADC
             .byte $9a,$b0       ; * TXS implied
             .byte $a6,$43       ; TYA
             .byte $98,$b0       ; * TYA implied
-            .byte TABLE_END,$00 ; End of 6502 table
-Extended:   .byte $0b,$87       ; ANC
-            .byte $0b,$a0       ; * ANC immediate
-            .byte $2b,$a0       ; * ANC immediate
-            .byte $98,$71       ; SAX
-            .byte $87,$70       ; * SAX zero page
-            .byte $97,$90       ; * SAX zero page,y
-            .byte $83,$20       ; * SAX (indirect,x)
-            .byte $8f,$40       ; * SAX absolute
-            .byte $0c,$a5       ; ARR
-            .byte $6b,$a0       ; * ARR immediate
-            .byte $0c,$e5       ; ASR
-            .byte $4b,$a0       ; * ASR immediate
-            .byte $66,$03       ; LXA
-            .byte $ab,$a0       ; * LXA immediate
-            .byte $9a,$03       ; SHA
-            .byte $9f,$60       ; * SHA absolute,y
-            .byte $93,$30       ; * SHA (indirect),y
-            .byte $98,$b1       ; SBX
-            .byte $cb,$a0       ; * SBX immediate
-            .byte $20,$e1       ; DCP
-            .byte $c7,$70       ; * DCP zero page
-            .byte $d7,$80       ; * DCP zero page,x
-            .byte $cf,$40       ; * DCP absolute
-            .byte $df,$50       ; * DCP absolute,x
-            .byte $db,$60       ; * DCP absolute,y
-            .byte $c3,$20       ; * DCP (indirect,x)
-            .byte $d3,$30       ; * DCP (indirect),y
-            .byte $23,$e1       ; DOP
-            .byte $04,$70       ; * DOP zero page
-            .byte $14,$80       ; * DOP zero page,x
-            .byte $34,$80       ; * DOP zero page,x
-            .byte $44,$70       ; * DOP zero page
-            .byte $54,$80       ; * DOP zero page,x
-            .byte $64,$70       ; * DOP zero page
-            .byte $74,$80       ; * DOP zero page,x
-            .byte $80,$a0       ; * DOP immediate
-            .byte $82,$a0       ; * DOP immediate
-            .byte $89,$a0       ; * DOP immediate
-            .byte $c2,$a0       ; * DOP immediate
-            .byte $d4,$80       ; * DOP zero page,x
-            .byte $e2,$a0       ; * DOP immediate
-            .byte $f4,$80       ; * DOP zero page,x
-            .byte $4c,$c5       ; ISB
-            .byte $e7,$70       ; * ISB zero page
-            .byte $f7,$80       ; * ISB zero page,x
-            .byte $ef,$40       ; * ISB absolute
-            .byte $ff,$50       ; * ISB absolute,x
-            .byte $fb,$60       ; * ISB absolute,y
-            .byte $e3,$20       ; * ISB (indirect,x)
-            .byte $f3,$30       ; * ISB (indirect),y
-            .byte $60,$4b       ; LAE
-            .byte $bb,$60       ; * LAE absolute,y
-            .byte $60,$71       ; LAX
-            .byte $a7,$70       ; * LAX zero page
-            .byte $b7,$90       ; * LAX zero page,y
-            .byte $af,$40       ; * LAX absolute
-            .byte $bf,$60       ; * LAX absolute,y
-            .byte $a3,$20       ; * LAX (indirect,x)
-            .byte $b3,$30       ; * LAX (indirect),y
-            .byte $73,$e1       ; NOP
-            .byte $1a,$b0       ; * NOP implied
-            .byte $3a,$b0       ; * NOP implied
-            .byte $5a,$b0       ; * NOP implied
-            .byte $7a,$b0       ; * NOP implied
-            .byte $da,$b0       ; * NOP implied
-            .byte $fa,$b0       ; * NOP implied
-            .byte $93,$03       ; RLA
-            .byte $27,$70       ; * RLA zero page
-            .byte $37,$80       ; * RLA zero page,x
-            .byte $2f,$40       ; * RLA absolute
-            .byte $3f,$50       ; * RLA absolute,x
-            .byte $3b,$60       ; * RLA absolute,y
-            .byte $23,$20       ; * RLA (indirect,x)
-            .byte $33,$30       ; * RLA (indirect),y
-            .byte $94,$83       ; RRA
-            .byte $67,$70       ; * RRA zero page
-            .byte $77,$80       ; * RRA zero page,x
-            .byte $6f,$40       ; * RRA absolute
-            .byte $7f,$50       ; * RRA absolute,x
-            .byte $7b,$60       ; * RRA absolute,y
-            .byte $63,$20       ; * RRA (indirect,x)
-            .byte $73,$30       ; * RRA (indirect),y
-            .byte $98,$87       ; SBC
-            .byte $eb,$a0       ; * SBC immediate
-            .byte $9b,$1f       ; SLO
-            .byte $07,$70       ; * SLO zero page
-            .byte $17,$80       ; * SLO zero page,x
-            .byte $0f,$40       ; * SLO absolute
-            .byte $1f,$50       ; * SLO absolute,x
-            .byte $1b,$60       ; * SLO absolute,y
-            .byte $03,$20       ; * SLO (indirect,x)
-            .byte $13,$30       ; * SLO (indirect),y
-            .byte $9c,$8b       ; SRE
-            .byte $47,$70       ; * SRE zero page
-            .byte $57,$80       ; * SRE zero page,x
-            .byte $4f,$40       ; * SRE absolute
-            .byte $5f,$50       ; * SRE absolute,x
-            .byte $5b,$60       ; * SRE absolute,y
-            .byte $43,$20       ; * SRE (indirect,x)
-            .byte $53,$30       ; * SRE (indirect),y
-            .byte $9a,$31       ; SHX
-            .byte $9e,$60       ; * SHX absolute,y
-            .byte $9a,$33       ; SHY
-            .byte $9c,$50       ; * SHY absolute,x
-            .byte $a3,$e1       ; TOP
-            .byte $0c,$40       ; * TOP absolute
-            .byte $1c,$50       ; * TOP absolute,x
-            .byte $3c,$50       ; * TOP absolute,x
-            .byte $5c,$50       ; * TOP absolute,x
-            .byte $7c,$50       ; * TOP absolute,x
-            .byte $dc,$50       ; * TOP absolute,x
-            .byte $fc,$50       ; * TOP absolute,x
-            .byte $0b,$8b       ; ANE
-            .byte $8b,$a0       ; * ANE immediate
-            .byte $9a,$27       ; SHS
-            .byte $9b,$60       ; * SHS absolute,y
-            .byte $50,$5b       ; JAM
-            .byte $02,$b0       ; * JAM implied           
-            .byte $43,$29       ; HLT
-            .byte $02,$b0       ; * HLT implied
-            .byte XTABLE_END,$00; End of 6502 extended table
+Expand:     .byte TABLE_END,$00 ; End of 6502 table
