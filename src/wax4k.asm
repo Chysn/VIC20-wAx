@@ -877,7 +877,7 @@ Execute:    pla                 ; Get rid of the return address to Return, as
 ex_brk:     brk                 ; Trigger the BRK handler
            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; MEMORY SAVE COMPONENT
+; MEMORY SAVE AND LOAD COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/9-Memory-Save
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 MemSave:    bcc save_err        ; Bail if the address is no good
@@ -898,30 +898,78 @@ MemSave:    bcc save_err        ; Bail if the address is no good
             bcs DiskError
             lda #$42            ; Close the file
             jsr CLOSE           ; ,,
-            jsr Restore
             jmp Linefeed
 save_err:   jsr Restore
             jmp SYNTAX_ERR      ; To ?SYNTAX ERROR      
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; MEMORY LOAD COMPONENT
-; https://github.com/Chysn/wAx/wiki/9-Memory-Save-Load
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Show System Disk Error            
+DiskError:  pha
+            jsr Restore
+            pla
+            jmp ERROR_NO 
+            
+; Memory Load
 MemLoad:    lda #$00            ; Reset the input buffer index because there's
             sta IDX_IN          ;   no address for this command
             jsr DiskSetup       ; SETLFS, get filename length, etc.
             ldx #<INBUFFER      ; Set location of filename
             ldy #>INBUFFER      ; ,,
             jsr SETNAM          ; ,,
-            lda #$00            ; Perform Load
-            ;ldx #$ff           ; ,, (X and Y don't matter because the secondary
-            ;ldy #$ff           ; ,, address indicates use of header)
-            jsr LOAD            ; ,,
+            lda #$00            ; Command for LOAD
+
+            ; In order to preserve the start address, the beginning of the
+            ; KERNAL's LOAD routine is reproduced here, in adapted form,
+            ; up until the starting address is determined. Most of the comments
+            ; here are from
+            ; www.mdawson.net/vic20chrome/vic20/docs/kernel_disassembly.txt
+	        sta	$93		        ; Save load/verify flag
+	        ; lda #$00          ; Command is known to be 0, so A is already 0
+	        sta	$90		        ; Clear serial status byte
+            ldy	$b7		        ; Get file name length
+	        bne	name_ok		    ; Branch if name length is not 0
+	        lda #$08            ;   Else do missing file name error
+	        jmp DiskError       ;   ,,
+name_ok:	jsr $e4bc		    ; Get seconday address and print "searching..."
+	        lda	#$60
+	        sta	$b9		        ; Save the secondary address
+	        jsr	$f495		    ; Send secondary address and filename
+	        lda	$ba		        ; Get device number
+	        jsr	$ee14		    ; Command a serial bus device to talk
+	        lda	$b9		        ; Get secondary address
+	        jsr	$eece		    ; Send secondary address after talk
+	        jsr	$ef19		    ; Input a byte from the serial bus
+	        sta	X_PC		    ; This is why we're doing this. Get start low.
+	        sta $ae             ; Save start address low byte for KERNAL
+	        lda	$90		        ; Get serial status byte
+	        lsr				    ; Shift time out read
+	        lsr				    ;   into carry bit
+	        bcc file_found
+	        lda #$04            ; If timed out do file not found error
+	        jmp DiskError
+file_found: jsr	$ef19		    ; Input a byte from the serial bus
+	        sta	X_PC+1		    ; Save program start address high byte
+	        sta	$af		        ; Save start address high byte for KERNAL
+            jsr $e4c1           ; set LOAD address
+            ; ---- End of code adapted from KERNAL LOAD ----
+            jsr $f58a           ; Return control back to LOAD
             bcs DiskError
             lda #$42            ; Close the file
             jsr CLOSE           ; ,,
-            jsr Restore
-            jmp Linefeed
+            lda #$00            ; Show the loaded range
+            sta IDX_OUT         ; ,,
+            jsr Linefeed        ; ,,
+            lda #T_DIS          ; ,,
+            jsr CharOut         ; ,,
+            lda X_PC+1          ; ,,
+            jsr Hex             ; ,,
+            lda X_PC            ; ,,
+            jsr Hex             ; ,,
+            jsr Space           ; ,,
+            lda $af             ; ,,
+            jsr Hex             ; ,,
+            lda $ae             ; ,,
+            jsr Hex             ; ,,
+            jmp PrintBuff       ; ,,
         
 ; Disk Setup
 ; Clear breakpoint, set up logical file, get filename length, return in A
@@ -939,12 +987,6 @@ DiskSetup:  jsr ClearBP         ; Clear breakpoint
             bne loop            
 setup_r:    tya
             rts
-
-; Show System Disk Error            
-DiskError:  pha
-            jsr Restore
-            pla
-            jmp ERROR_NO            
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SEARCH COMPONENTS
@@ -1247,14 +1289,22 @@ calc_off:   lda PRGCTR          ; The target is the current program counter
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BASIC STAGE SELECT COMPONENT
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
-BASICStage: bcc bank_r          ; If no valid address was provided, show start
-            lda PRGCTR+1        ; If the end page is smaller than the start
-            cmp PRGCTR          ;   page, default the stage size to 3.5K
-            bcc set_ptrs        ;   ,,
+BASICStage: lda #$00            ; Reset the input buffer index
+            sta IDX_IN          ;
+            sta PRGCTR          ; Set default end page
+            jsr Buff2Byte       ; Get the first hex byte
+            bcc bank_r          ; If no valid address was provided, show start
+            sta PRGCTR+1        ; This is the stage's starting page number
+            jsr Buff2Byte       ; But the default can be overridden if a valid
+            bcc ch_length       ;   starting page is provided
+            sta PRGCTR          ;   ,,
+ch_length:  lda PRGCTR+1        ; Make sure that the ending page isn't lower
+            cmp PRGCTR          ;   in memory than the starting page. If it is,
+            bcc set_ptrs        ;   default the stage size to 3.5K
             clc                 ;   ,,
             adc #$0e            ;   ,,
             sta PRGCTR          ;   ,,
-set_ptrs:   lda PRGCTR+1        ; Set up the BASIC stard and end pointers
+set_ptrs:   lda PRGCTR+1        ; Set up the BASIC start and end pointers
             sta $2c             ;   and stuff
             sta $2e             ; ,,
             sta $30             ; ,,
@@ -1290,7 +1340,6 @@ maybe:      jsr Rechain
 bank_r:     lda #$00            ; Provide info about the start of BASIC
             sta IDX_OUT         ; ,,
             jsr UpOver          ; ,,
-            jsr HexPrefix       ; ,,
             lda $2c             ; ,,
             jsr Hex             ; ,,
             lda #$00            ; ,,
