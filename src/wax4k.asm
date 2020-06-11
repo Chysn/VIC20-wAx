@@ -4,9 +4,10 @@
 ;                            Integrated Monitor Tools
 ;                             (c)2020, Jason Justian
 ;                  
-; Release 1 - May 16, 2020
-; Release 2 - May 23, 2020
-; Release 3 - May 30, 2020
+; Release 1  - May 16, 2020
+; Release 2  - May 23, 2020
+; Release 3  - May 30, 2020
+; Release 4K - June 11, 2020
 ; Assembled with XA
 ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -34,7 +35,8 @@
 ; LABEL DEFINITIONS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 
-* = $6000 
+;SYS28888
+* = $70d8 
 
 ; Configuration
 LIST_NUM    = $10               ; Display this many lines
@@ -955,7 +957,10 @@ file_found: jsr	$ef19		    ; Input a byte from the serial bus
             bcs DiskError
             lda #$42            ; Close the file
             jsr CLOSE           ; ,,
-            lda #$00            ; Show the loaded range
+            jsr DirectMode      ; Show the loaded range if the load is done in
+            beq show_range      ;   direct mode
+            rts
+show_range: lda #$00            ; Show the loaded range
             sta IDX_OUT         ; ,,
             jsr Linefeed        ; ,,
             lda #T_DIS          ; ,,
@@ -1323,19 +1328,21 @@ set_ptrs:   lda PRGCTR+1        ; Set up the BASIC start and end pointers
             sta $38             ; ,,
             ldy #$00            ; Clear the low byte. From here on out, we're     
             sty PRGCTR          ;   dealing with the start of the BASIC stage
-            lda #$00            ; Ensure that the first byte of the stage is
-            sta (PRGCTR),y      ;   $00
--loop:      iny                 ; Scan the first physical line of memory for
-            lda (PRGCTR),y      ;   a $00. If one isn't found, it may be that
-            beq maybe           ;   this isn't a valid BASIC stage yet.
-            cpy #$5b            ;   ,,
-            bne loop            ;   ,,
-            lda #$00            ; If this doesn't look like a BASIC program
-            ldy #$04            ;   stage, zero out the first few bytes so
--loop:      sta (PRGCTR),y      ;   that it looks like a NEW program
+            ldy #$00            ; Look through the input buffer for an "N"
+-loop:      lda INBUFFER,y      ;   character. This indicates that it is a
+            beq finish          ;   new stage.
+            cmp #"N"            ;   ,,
+            beq new             ;   ,,
+            iny
+            cpy #$16            ; If we reach the end without seeing an "N",
+            bne loop            ;   just rechain the area as if it were a BASIC
+            beq finish          ;   program
+new:        lda #$00            ; Zero out the first few bytes of the stage so
+            ldy #$03            ;   that it looks like a NEW program
+-loop:      sta (PRGCTR),y      ;   ,,
             dey                 ;   ,,
             bpl loop            ;   ,,
-maybe:      jsr Rechain
+finish:     jsr Rechain
             jmp (READY)
 bank_r:     lda #$00            ; Provide info about the start of BASIC
             sta IDX_OUT         ; ,,
@@ -1602,7 +1609,10 @@ ch_token:   cmp #$80            ; Is the character in A a BASIC token?
 x_add:      jsr AddInput        ; Add the text to the buffer
             jmp Transcribe      ; (Carry is always set by AddInput)
 xscribe_r:  jmp AddInput        ; Add the final zero, and fix CHRGET...
-handle_sym: jmp HandleSym
+handle_sym: ldy $83             ; Don't handle symbols if the & is in quotes
+            cpy #$06            ;   (as in an immediate operand, or text entry)
+            beq x_add           ;   ,,
+            jmp HandleSym       ;   ,,
 
 ; Expand External Program Counter
 ; Replace asterisk with the X_PC
