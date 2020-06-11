@@ -39,7 +39,7 @@
 ; Configuration
 LIST_NUM    = $10               ; Display this many lines
 SEARCH_L    = $10               ; Search this many pages (s * 256 bytes)
-TOOL_COUNT  = $11               ; How many tools are there?
+TOOL_COUNT  = $12               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
 T_XDI       = $aa               ; Wedge character + for extended opcode
 T_ASM       = "@"               ; Wedge character @ for assembly
@@ -57,6 +57,7 @@ T_H2T       = "$"               ; Wedge character $ for hex to base 10
 T_T2H       = "#"               ; Wedge character # for base 10 to hex
 T_B2T       = "%"               ; Wedge character % for binary to base 10
 T_SYM       = $ac               ; Wedge character * for symbol initialization
+T_BAS       = $ab               ; Wedge character - for BASIC stage select
 BYTE        = ":"               ; .byte entry character
 BINARY      = "%"               ; Binary entry character
 LABEL       = "&"               ; Forward relative branch character
@@ -163,13 +164,7 @@ BREAKPOINT  = $0256             ; Breakpoint data (3 bytes)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; INSTALLER
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-Install:    jsr $c533           ; Re-chain BASIC program to set BASIC
-            lda $22             ;   pointers as a courtesy to the user
-            ;clc                ;   ,, ($c533 always exits with Carry clear)
-            adc #$02            ;   ,,
-            sta $2D             ;   ,,
-            lda $23             ;   ,,
-            jsr $C655           ;   ,,
+Install:    jsr Rechain         ; Rechain BASIC program
             jsr SetupVec        ; Set up vectors (IGONE and BRK)
             lda #<Intro         ; Announce that wAx is on
             ldy #>Intro         ; ,,
@@ -186,7 +181,7 @@ main:       jsr CHRGET          ; Get the character from input or BASIC
             iny                 ; Else, check the characters in turn
             cpy #TOOL_COUNT     ; ,,
             bne loop            ; ,,
-            jsr CHRGOT          ; Restore flags for the found character
+exit:       jsr CHRGOT          ; Restore flags for the found character
             jmp GONE+3          ; +3 because the CHRGET is already done
 
 ; Prepare for Tool Run
@@ -1173,10 +1168,15 @@ get_label:  sec
             tay                 ; ,,
             jsr IsDefined
             bne ExpandSym
-            lda X_PC            ; The symbol has not yet been defined; store
-            sta SYMBOL_F,y      ;   the current program counter in the forward
-            lda X_PC+1          ;   reference list for (hopefully) later
-            sta SYMBOL_F+1,y    ;   resolution.
+            lda IDX_IN          ; The symbol has not yet been defined; parse
+            pha                 ;   the first hex numbers to set the program
+            jsr RefreshPC       ;   counter, then return the input index to
+            pla                 ;   its original position
+            sta IDX_IN          ;   ,,
+            lda PRGCTR          ; Store the current program counter in the
+            sta SYMBOL_F,y      ;   forward reference list for (hopefully)
+            lda PRGCTR+1        ;   later resolution
+            sta SYMBOL_F+1,y    ;   ,,
             jmp ExpandSym       ; Meanwhile, use $0000 as a placeholder
             
 ; Symbol is Defined
@@ -1221,7 +1221,14 @@ fwd_used:   lda SYMBOL_F,y
 get_admode: lda INSTDATA+1      ; Get the addressing mode
             cmp #RELATIVE       ; If it's a relative branch instruction,
             beq calc_off        ;   calculate the branch offset
-            lda PRGCTR          ; For an absolute mode instruction, just
+            cmp #ABSOLUTE       ; Two bytes will be replaced, so make sure
+            beq load_abs        ;   this instruction is one of the
+            cmp #ABSOLUTE_X     ;   absolute addressing modes
+            beq load_abs        ;   ,,
+            cmp #ABSOLUTE_Y     ;   ,,
+            beq load_abs        ;   ,,
+            jmp AsmError        ;   ,,
+load_abs:   lda PRGCTR          ; For an absolute mode instruction, just
             ldy #$01            ;   transfer the two bytes over
             sta (CHARAC),y      ;   ,,
             lda PRGCTR+1        ;   ,,
@@ -1236,6 +1243,68 @@ calc_off:   lda PRGCTR          ; The target is the current program counter
             ldy #$01            ; Store the computed offset in the forward
             sta (CHARAC),y      ;   reference operand address
             rts
+            
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; BASIC STAGE SELECT COMPONENT
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
+BASICStage: bcc bank_r          ; If no valid address was provided, show start
+            lda PRGCTR+1        ; If the end page is smaller than the start
+            cmp PRGCTR          ;   page, default the stage size to 3.5K
+            bcc set_ptrs        ;   ,,
+            clc                 ;   ,,
+            adc #$0e            ;   ,,
+            sta PRGCTR          ;   ,,
+set_ptrs:   lda PRGCTR+1        ; Set up the BASIC stard and end pointers
+            sta $2c             ;   and stuff
+            sta $2e             ; ,,
+            sta $30             ; ,,
+            sta $32             ; ,,
+            lda #$01            ; ,,
+            sta $2b             ; ,,
+            lda #$03            ; ,,
+            sta $2d             ; ,,
+            sta $2f             ; ,,
+            sta $31             ; ,,
+            lda #$00            ; ,,
+            sta $33             ; ,,
+            sta $37             ; ,,
+            lda PRGCTR          ; ,,
+            sta $34             ; ,,
+            sta $38             ; ,,
+            ldy #$00            ; Clear the low byte. From here on out, we're     
+            sty PRGCTR          ;   dealing with the start of the BASIC stage
+            lda #$00            ; Ensure that the first byte of the stage is
+            sta (PRGCTR),y      ;   $00
+-loop:      iny                 ; Scan the first physical line of memory for
+            lda (PRGCTR),y      ;   a $00. If one isn't found, it may be that
+            beq maybe           ;   this isn't a valid BASIC stage yet.
+            cpy #$5b            ;   ,,
+            bne loop            ;   ,,
+            lda #$00            ; If this doesn't look like a BASIC program
+            ldy #$04            ;   stage, zero out the first few bytes so
+-loop:      sta (PRGCTR),y      ;   that it looks like a NEW program
+            dey                 ;   ,,
+            bpl loop            ;   ,,
+maybe:      jsr Rechain
+            jmp (READY)
+bank_r:     lda #$00            ; Provide info about the start of BASIC
+            sta IDX_OUT         ; ,,
+            jsr UpOver          ; ,,
+            jsr HexPrefix       ; ,,
+            lda $2c             ; ,,
+            jsr Hex             ; ,,
+            lda #$00            ; ,,
+            jsr Hex             ; ,,
+            jmp PrintBuff       ; ,,
+
+; Rechain BASIC program
+Rechain:    jsr $c533           ; Re-chain BASIC program to set BASIC
+            lda $22             ;   pointers as a courtesy to the user
+            ;clc                ;   ,, ($c533 always exits with Carry clear)
+            adc #$02            ;   ,,
+            sta $2D             ;   ,,
+            lda $23             ;   ,,
+            jmp $C655           ;   ,,
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -1576,25 +1645,26 @@ prompt_r:   rts
 ; If the wAx tool is running in Direct Mode, the Zero flag will be set
 DirectMode: ldy CURLIN+1
             iny
-            rts     
+            rts
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DATA
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
 ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA,T_BIN
-            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_B2T,T_SYM
+            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_B2T,T_SYM,T_BAS
 ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<Register-1,<Execute-1
             .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1,<List-1
             .byte <List-1,<Search-1,<MemCopy-1,<Hex2Base10-1,<Base102Hex-1
-            .byte <Bin2Base10-1,<InitSym-1
+            .byte <Bin2Base10-1,<InitSym-1,<BASICStage-1
 ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1,>List-1
             .byte >List-1,>Search-1,>MemCopy-1,>Hex2Base10-1,>Base102Hex-1
-            .byte >Bin2Base10-1,>InitSym-1
+            .byte >Bin2Base10-1,>InitSym-1,>BASICStage-1
 
 ; Text display tables                      
-Intro:      .asc LF,"WAX ON",$00
+Intro:      .asc LF,"GITHUB.COM/CHYSN/WAX",LF,LF
+            .asc "WAX ON",$00
 Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
