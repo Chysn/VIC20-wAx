@@ -35,8 +35,7 @@
 ; LABEL DEFINITIONS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 
-;SYS28888
-* = $70d8 
+* = $6000 
 
 ; Configuration
 LIST_NUM    = $10               ; Display this many lines
@@ -54,15 +53,15 @@ T_EXE       = $5f               ; Wedge character left-arrow for code execute
 T_SAV       = $b1               ; Wedge character > for save
 T_LOA       = $b3               ; Wedge character < for load
 T_SRC       = $ad               ; Wedge character / for search
-T_CPY       = $ae               ; Wedge character up arrow for copy
+T_CPY       = "&"               ; Wedge character up arrow for copy
 T_H2T       = "$"               ; Wedge character $ for hex to base 10
 T_T2H       = "#"               ; Wedge character # for base 10 to hex
 T_B2T       = "%"               ; Wedge character % for binary to base 10
 T_SYM       = $ac               ; Wedge character * for symbol initialization
-T_BAS       = $ab               ; Wedge character - for BASIC stage select
+T_BAS       = $ae               ; Wedge character up for BASIC stage select
 BYTE        = ":"               ; .byte entry character
 BINARY      = "%"               ; Binary entry character
-LABEL       = "&"               ; Forward relative branch character
+LABEL       = $ab               ; Forward relative branch character
 DEVICE      = $08               ; Save device
 
 ; System resources - Routines
@@ -439,12 +438,18 @@ abs_ind:    jsr Comma           ; This is an indexed addressing mode, so
 ; MEMORY EDITOR COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/4-Memory-Editor
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-MemEditor:  ldy #$00            ; This is Assemble's entry point for .byte
+MemEditor:  lda #$04            ; The number of allowed bytes is temporarily
+            sta CHARAC          ;   stored in CHARAC.
+            jsr DirectMode      ; If MemEditor is run in a BASIC program, allow
+            beq start_mem       ;   more bytes per line, because we don't need
+            lda #$08            ;   to worry about intrference with the PETSCII
+            sta CHARAC          ;   display.
+start_mem:  ldy #$00            ; This is Assemble's entry point for .byte
 -loop:      jsr Buff2Byte
             bcc edit_exit       ; Bail out on the first non-hex byte
             sta (PRGCTR),y      
             iny
-            cpy #$04
+            cpy CHARAC
             bne loop
 edit_exit:  cpy #$00
             beq asm_error
@@ -1347,6 +1352,7 @@ finish:     jsr Rechain
 bank_r:     lda #$00            ; Provide info about the start of BASIC
             sta IDX_OUT         ; ,,
             jsr UpOver          ; ,,
+            jsr HexPrefix       ; ,,
             lda $2c             ; ,,
             jsr Hex             ; ,,
             lda #$00            ; ,,

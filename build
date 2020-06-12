@@ -9,7 +9,7 @@ c1541 -format wax,8 d64 vic/wax.d64 -write vic/wax
 
 ## Build wAx 4k
 xa -l src/toc4k -o src/wax4k.obj src/wax4k.asm
-printf "\xd8\x70" | cat - src/wax4k.obj > vic/wax4k
+printf "\x00\x60" | cat - src/wax4k.obj > vic/wax4k
 c1541 vic/wax.d64 -write vic/wax4k
 
 ## Build 6502 Extended Instuction Table

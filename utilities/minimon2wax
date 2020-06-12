@@ -1,0 +1,10 @@
+#!/bin/bash
+
+cp $1.asm $1.asm.tmp
+sed -i.tmp '/^$/d' $1.asm.tmp
+cat -n $1.asm.tmp | tr "A-Z" "a-z" > $1.bas
+sed -i.tmp 's/;.//g' $1.bas
+sed -i.tmp 's/>[a-f0-9]\{4\} /@\*:/g' $1.bas
+sed -i.tmp 's/\./@/g' $1.bas
+petcat -w2 -o $1.prg -- $1.bas
+rm $1.*.tmp 
