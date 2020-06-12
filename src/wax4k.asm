@@ -83,7 +83,10 @@ SETNAM      = $ffbd             ; Setup file name
 SAVE        = $ffd8             ; Save
 LOAD        = $ffd5             ; Load
 CLOSE       = $ffc3             ; Close logical file
-COPY        = $c3bf             ; Copy
+OPEN        = $ffc0             ; Open logical file
+CHKIN       = $ffc6             ; Define file as input
+CHRIN       = $ffcf             ; Get input
+CLRCHN      = $ffcc             ; Close channel
 ASCFLT      = $dcf3             ; Convert base-10 to FAC1
 FACINX      = $d1aa             ; FAC1 to Integer
 
@@ -922,43 +925,24 @@ MemLoad:    lda #$00            ; Reset the input buffer index because there's
             ldx #<INBUFFER      ; Set location of filename
             ldy #>INBUFFER      ; ,,
             jsr SETNAM          ; ,,
+            jsr OPEN
+            bcs DiskError
+            ldx #$42
+            jsr CHKIN
+            bcs DiskError
+            jsr CHRIN
+            sta X_PC
+            jsr CHRIN
+            sta X_PC+1
+            jsr CLRCHN
+            lda #$42
+            jsr CLOSE       
+            lda #$42            ; Set up logical file
+            ldx #DEVICE         ; ,,
+            ldy #$01            ; ,, (load to header location)
+            jsr SETLFS          ; ,,
             lda #$00            ; Command for LOAD
-
-            ; In order to preserve the start address, the beginning of the
-            ; KERNAL's LOAD routine is reproduced here, in adapted form,
-            ; up until the starting address is determined. Most of the comments
-            ; here are from
-            ; www.mdawson.net/vic20chrome/vic20/docs/kernel_disassembly.txt
-	        sta	$93		        ; Save load/verify flag
-	        ; lda #$00          ; Command is known to be 0, so A is already 0
-	        sta	$90		        ; Clear serial status byte
-            ldy	$b7		        ; Get file name length
-	        bne	name_ok		    ; Branch if name length is not 0
-	        lda #$08            ;   Else do missing file name error
-	        jmp DiskError       ;   ,,
-name_ok:	jsr $e4bc		    ; Get seconday address and print "searching..."
-	        lda	#$60
-	        sta	$b9		        ; Save the secondary address
-	        jsr	$f495		    ; Send secondary address and filename
-	        lda	$ba		        ; Get device number
-	        jsr	$ee14		    ; Command a serial bus device to talk
-	        lda	$b9		        ; Get secondary address
-	        jsr	$eece		    ; Send secondary address after talk
-	        jsr	$ef19		    ; Input a byte from the serial bus
-	        sta	X_PC		    ; This is why we're doing this. Get start low.
-	        sta $ae             ; Save start address low byte for KERNAL
-	        lda	$90		        ; Get serial status byte
-	        lsr				    ; Shift time out read
-	        lsr				    ;   into carry bit
-	        bcc file_found
-	        lda #$04            ; If timed out do file not found error
-	        jmp DiskError
-file_found: jsr	$ef19		    ; Input a byte from the serial bus
-	        sta	X_PC+1		    ; Save program start address high byte
-	        sta	$af		        ; Save start address high byte for KERNAL
-            jsr $e4c1           ; set LOAD address
-            ; ---- End of code adapted from KERNAL LOAD ----
-            jsr $f58a           ; Return control back to LOAD
+            jsr LOAD            
             bcs DiskError
             lda #$42            ; Close the file
             jsr CLOSE           ; ,,
@@ -987,7 +971,7 @@ show_range: lda #$00            ; Show the loaded range
 DiskSetup:  jsr ClearBP         ; Clear breakpoint
             lda #$42            ; Set up logical file
             ldx #DEVICE         ; ,,
-            ldy #$01            ; ,, Specify use of header for address
+            ldy #$00            ; ,,
             jsr SETLFS          ; ,,
             ldy #$00
 -loop:      jsr CharGet
