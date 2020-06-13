@@ -1205,7 +1205,7 @@ LabelList:  ldx #$00
             bne show_label      ;   $0000, then skip it)
             lda PRGCTR+1        ;   ,,
             beq undefd          ; Undefined, but it might be a forward reference
-show_label: jsr LabListCo
+show_label: jsr LabListCo       ; Add elements common to both listed item
             jsr HexPrefix
             lda PRGCTR+1
             jsr Hex
@@ -1345,10 +1345,10 @@ ResolveFwd: lda IDX_SYM
             ldx #$00            ; First order of business is finding unresolved
 -loop:      cmp SYMBOL_F,x      ;   records that match the label
             beq fwd_used
-            ora #$40            ; Also check for high-bit specifier
+            ora #$40            ; Also check for high-byte specifier
             cmp SYMBOL_F,x
             beq fwd_used
-            and #%10111111      ; Mask away high-bit specifier for next check
+            and #%10111111      ; Mask away high-byte specifier for next check
             inx
             inx
             inx
