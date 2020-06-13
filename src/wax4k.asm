@@ -1181,7 +1181,7 @@ InitSym:    bcc init_clear      ; If no address is provided, clear the table
             lda PRGCTR+1        ; ,,
             sta X_PC+1          ; ,,
             rts
-init_clear: ldy #$27            ; Initialize 40 bytes for the Symbol Table
+init_clear: ldy #$2e            ; Initialize 46 bytes for the Symbol Table
             lda #$00            ;   Offset $00-$13 Low/High bytes for symbols
 -loop:      sta SYMBOL,y        ;   Offset $14-$27 Low/High bytes for forward
             dey                 ;   ,,
@@ -1196,7 +1196,7 @@ DefineSym:  jsr CHRGET
 ; Handle Symbols 
 ; Either defer them for generation, expand them, or mark them as forward
 ; references.           
-HandleSym:  lda IDX_IN          ; If & is the first character in the input
+HandleSym:  lda IDX_IN          ; If - is the first character in the input
             cmp #$04            ;   buffer after the address, defer the
             bne start_exp       ;   symbol for handling by the assembler
             lda #LABEL          ;   ,,
@@ -1231,51 +1231,77 @@ is_defined: rts
 ExpandSym:  lda #$00
             sta IDX_OUT
             jsr HexPrefix
-            lda SYMBOL+1,y
+            jsr CHRGET          ; See if the user has entered H or L after
+            pha                 ;   the label
+            cmp #"L"            ; If L is specified, jump right to the low
+            beq insert_lo       ;   byte
+            lda SYMBOL+1,y      ; Otherwise, add the high byte
+            jsr Hex             ; ,,
+            pla                 ; Pull and push back the CHRGET input
+            pha                 ; ,,
+            cmp #"H"            ; If the high byte was specified, skip
+            beq do_expand       ;   the low byte
+insert_lo:  lda SYMBOL,y
             jsr Hex
-            lda SYMBOL,y
-            jsr Hex
+do_expand:  lda #$00            ; Add delimiter, since the hex operand can
+            jsr CharOut         ;   vary in length
             ldy #$00            ; Transcribe symbol expansion into the
 -loop:      lda OUTBUFFER,y     ;   input buffer
-            jsr AddInput
-            iny
-            cpy #$05
-            bne loop
-            jmp Transcribe        
+            beq end_expand      ;   ,,
+            jsr AddInput        ;   ,,
+            iny                 ;   ,,
+            jmp loop            ;   ,,
+end_expand: pla                 ; Get the CHRGET character back
+            cmp #"L"            ; Discard L or H,
+            beq skip_hilo       ; ,,
+            cmp #"H"            ; ,,
+            beq skip_hilo       ; ,,
+            jsr AddInput        ; and add anything else
+skip_hilo:  jmp Transcribe        
             
 ; Resolve Forward Reference            
 ResolveFwd: lda IDX_SYM
             lsr
             ora #$80            ; Set high bit, which is what we look for here
             ldx #$00            ; First order of business is finding unresolved
--loop:      cmp SYMBOL_F,x
+-loop:      cmp SYMBOL_F,x      ;   records that match the label
             beq fwd_used
+            ora #$40            ; Also check for high-bit specifier
+            cmp SYMBOL_F,x
+            beq fwd_used
+            and #%10111111      ; Mask away high-bit specifier for next check
             inx
             inx
             inx
             cpx #$18
             bne loop
             rts                 ; Label not found in forward reference table
-fwd_used:   lda #$00            ; Clear the forward reference table record for
-            sta SYMBOL_F,x      ;   re-use
-            lda SYMBOL_F+1,x    ; A forward reference for this label has been
+fwd_used:   lda SYMBOL_F+1,x    ; A forward reference for this label has been
             sta CHARAC          ;   found; store the address in zero page for
             lda SYMBOL_F+2,x    ;   updating the code at this address.
             sta CHARAC+1        ;   ,,
+            txa
+            pha
             ldx #$00            ; Get the byte at the reference address, which
             lda (CHARAC,x)      ;   should be an instruction opcode
             jsr Lookup          ; Look it up
+            pla
+            tax
             bcs get_admode      ; ,,
             jmp AsmError        ; Not a valid instruction; ASSEMBLY ERROR
 get_admode: lda INSTDATA+1      ; Get the addressing mode
             cmp #RELATIVE       ; If it's a relative branch instruction,
-            beq calc_off        ;   calculate the branch offset
+            beq load_rel        ;   calculate the branch offset
             cmp #ABSOLUTE       ; Two bytes will be replaced, so make sure
             beq load_abs        ;   this instruction is one of the
-            cmp #ABSOLUTE_X     ;   absolute addressing modes
+            cmp #ABSOLUTE_X     ;   absolute addressing modes, or indirect mode
             beq load_abs        ;   ,,
             cmp #ABSOLUTE_Y     ;   ,,
             beq load_abs        ;   ,,
+            cmp #INDIRECT       ;   ,,
+            beq load_abs        ;   ,,
+            cmp #IMPLIED        ; If an implied mode instruction is somehow
+            bne load_immed      ;   being resolved, throw ASSEMBLY ERROR
             jmp AsmError        ;   ,,
 load_abs:   lda PRGCTR          ; For an absolute mode instruction, just
             ldy #$01            ;   transfer the two bytes over
@@ -1283,15 +1309,26 @@ load_abs:   lda PRGCTR          ; For an absolute mode instruction, just
             lda PRGCTR+1        ;   ,,
             iny                 ;   ,,
             sta (CHARAC),y      ;   ,,
-            jmp ResolveFwd      ; Go back and see if there are more to resolve
-calc_off:   lda PRGCTR          ; The target is the current program counter
+            jmp clear_back      ; Go back and see if there are more to resolve
+load_rel:   lda PRGCTR          ; The target is the current program counter
             sec                 ; Subtract the reference address and add
             sbc CHARAC          ;   two to get the offset
             sec                 ;   ,,
             sbc #$02            ;   ,,
             ldy #$01            ; Store the computed offset in the forward
             sta (CHARAC),y      ;   reference operand address
-            jmp ResolveFwd      ; Go back and see if there are more to resolve
+            jmp clear_back      ; Go back and see if there are more to resolve
+load_immed: lda #$40            ; Check bit 6 of the label byte of the forward
+            and SYMBOL_F,x      ;   reference symbol record. If it's set, it
+            beq load_low        ;   means that the user wants the high byte
+            lda PRGCTR+1        ;   of the symbol target
+            .byte $3c           ; Skip word
+load_low:   lda PRGCTR          ; For other instructions
+            ldy #$01
+            sta (CHARAC),y
+clear_back: lda #$00            ; Clear the forward reference table record for
+            sta SYMBOL_F,x      ;   re-use, and go back for additional
+            jmp ResolveFwd      ;   forward references
             
 ; Add Forward Record
 ; For label in Y            
@@ -1309,7 +1346,15 @@ AddFwdRec:  ldx #$00            ; Start of forward symbol table
 empty_rec:  tya
             lsr
             ora #$80            ; Set the high bit to indicate record in use
-            sta SYMBOL_F,x      ; Store the label index in the record
+            pha
+            ldy #$01            ; Look at the next character in the CHRGET
+            lda ($7a),y         ;   buffer
+            tay
+            pla
+            cpy #"H"            ; If the next character is H, then set bit 6
+            bne store_rec       ;   to indicate that the high byte should
+            ora #$40            ;   be used on resolution
+store_rec:  sta SYMBOL_F,x      ; Store the label index in the record
             lda PRGCTR          ; Store the current program counter in the
             sta SYMBOL_F+1,x    ;   forward reference record for (hopefully)
             lda PRGCTR+1        ;   later resolution
