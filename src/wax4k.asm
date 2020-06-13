@@ -915,8 +915,6 @@ MemSave:    bcc save_err        ; Bail if the address is no good
             ldy RANGE_END+1     ; ,,
             jsr SAVE            ; ,,
             bcs DiskError
-            lda #$42            ; Close the file
-            jsr CLOSE           ; ,,
             jmp Linefeed
 save_err:   jsr Restore
             jmp SYNTAX_ERR      ; To ?SYNTAX ERROR      
@@ -953,8 +951,6 @@ MemLoad:    lda #$00            ; Reset the input buffer index because there's
             lda #$00            ; Command for LOAD
             jsr LOAD            
             bcs DiskError
-            lda #$42            ; Close the file
-            jsr CLOSE           ; ,,
             jsr DirectMode      ; Show the loaded range if the load is done in
             beq show_range      ;   direct mode
             rts
@@ -1190,7 +1186,7 @@ InitSym:    lda INBUFFER
 init_r      rts
 init_clear: ldy #$2b            ; Initialize 44 bytes for the Symbol Table
             lda #$00            ;   Offset $00-$13 Low/High bytes for symbols
--loop:      sta SYMBOL,y        ;   Offset $14-$27 Low/High bytes for forward
+-loop:      sta SYMBOL,y        ;   Offset $14-$2b 3-byte forward ref records
             dey                 ;   ,,
             bpl loop            ;   ,,
             rts
@@ -1417,8 +1413,20 @@ clear_back: lda #$00            ; Clear the forward reference table record for
 ; For label in Y            
 ; Each forward reference record consists of three bytes-
 ; Offset 0 - Label Index OR %10000000
-AddFwdRec:  ldx #$00            ; Start of forward symbol table
--loop:      lda SYMBOL_F,x      ; Get the label for this record
+AddFwdRec:  ldx #$00            ; Search the forward symbol table for a
+-loop:      lda SYMBOL_F+1,x    ;   record in use with the same address.
+            cmp PRGCTR          ;   If such a record is found, re-use it
+            bne next_used       ;   rather than searching the empty records
+            lda SYMBOL_F+2,x    ;   ,,
+            cmp PRGCTR+1        ;   ,,
+            beq empty_rec       ;   ,,
+next_used:  inx                 ;   ,,
+            inx                 ;   ,,
+            inx                 ;   ,,
+            cpx #$18            ;   ,,
+            bne loop            ;   ,,
+find_empty: ldx #$00            ; Now, search ALL the records, this time looking
+-loop:      lda SYMBOL_F,x      ;   for an unused record.
             beq empty_rec       ; This is an empty record, so use it
             inx
             inx
