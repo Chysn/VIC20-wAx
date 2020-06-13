@@ -141,7 +141,7 @@ RVS_OFF     = $92               ; Reverse off
 
 ; Assembler workspace
 X_PC        = $02fe             ; External program counter
-SYMBOL      = $02d6             ; Symbol table
+SYMBOL      = $02d2             ; Symbol table
 SYMBOL_F    = SYMBOL+$14        ;   Forward reference resolution
 WORK        = $a3               ; Temporary workspace (2 bytes)
 MNEM        = $a3               ; Current Mnemonic (2 bytes)
@@ -544,8 +544,8 @@ DefLabel:   jsr CharGet         ; Get the next character after the label;
             bne is_def          ;   resolve the forward reference, if it
             sty IDX_SYM         ;   was used
             jsr ResolveFwd      ;   ,,
-            ldy IDX_SYM         ;   ,,
-is_def:     lda PRGCTR          ; Set the label address
+is_def:     ldy IDX_SYM
+            lda PRGCTR          ; Set the label address
             sta SYMBOL,y        ; ,,
             lda PRGCTR+1        ; ,,
             sta SYMBOL+1,y      ; ,,
@@ -725,9 +725,16 @@ Tester:     ldy #$00
             cmp (PRGCTR),y
             bne test_err      
             iny
-            cpy #$04
+            cpy #$08
             bne loop
-test_r:     rts
+test_r:     tya                 ; Update the external program counter so that
+            clc                 ;   the assertion tester can be used with
+            adc PRGCTR          ;   the asterisk
+            sta X_PC            ;   ,,
+            lda #$00            ;   ,,
+            adc PRGCTR+1        ;   ,,
+            sta X_PC+1          ;   ,,
+            rts
 test_err:   jmp MisError
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -1209,11 +1216,8 @@ get_label:  sec
             jsr RefreshPC       ;   counter, then return the input index to
             pla                 ;   its original position
             sta IDX_IN          ;   ,,
-            lda PRGCTR          ; Store the current program counter in the
-            sta SYMBOL_F,y      ;   forward reference list for (hopefully)
-            lda PRGCTR+1        ;   later resolution
-            sta SYMBOL_F+1,y    ;   ,,
-            jmp ExpandSym       ; Meanwhile, use $0000 as a placeholder
+            jsr AddFwdRec       ; Add forward reference record for label Y
+            jmp ExpandSym       ; Use $0000 as a placeholder
             
 ; Symbol is Defined
 ; Zero flag is clear if symbol is defined
@@ -1240,17 +1244,26 @@ ExpandSym:  lda #$00
             jmp Transcribe        
             
 ; Resolve Forward Reference            
-ResolveFwd: lda SYMBOL_F,y
-            bne fwd_used
-            lda SYMBOL_F+1,y
-            bne fwd_used
-            rts                 ; The forward reference wasn't used for label
-fwd_used:   lda SYMBOL_F,y
-            sta CHARAC
-            lda SYMBOL_F+1,y
-            sta CHARAC+1
-            ldy #$00            ; Get the byte at the reference address, which
-            lda (CHARAC),y        ;   should be an instruction opcode
+ResolveFwd: lda IDX_SYM
+            lsr
+            ora #$80            ; Set high bit, which is what we look for here
+            ldx #$00            ; First order of business is finding unresolved
+-loop:      cmp SYMBOL_F,x
+            beq fwd_used
+            inx
+            inx
+            inx
+            cpx #$18
+            bne loop
+            rts                 ; Label not found in forward reference table
+fwd_used:   lda #$00            ; Clear the forward reference table record for
+            sta SYMBOL_F,x      ;   re-use
+            lda SYMBOL_F+1,x    ; A forward reference for this label has been
+            sta CHARAC          ;   found; store the address in zero page for
+            lda SYMBOL_F+2,x    ;   updating the code at this address.
+            sta CHARAC+1        ;   ,,
+            ldx #$00            ; Get the byte at the reference address, which
+            lda (CHARAC,x)      ;   should be an instruction opcode
             jsr Lookup          ; Look it up
             bcs get_admode      ; ,,
             jmp AsmError        ; Not a valid instruction; ASSEMBLY ERROR
@@ -1270,7 +1283,7 @@ load_abs:   lda PRGCTR          ; For an absolute mode instruction, just
             lda PRGCTR+1        ;   ,,
             iny                 ;   ,,
             sta (CHARAC),y      ;   ,,
-            rts
+            jmp ResolveFwd      ; Go back and see if there are more to resolve
 calc_off:   lda PRGCTR          ; The target is the current program counter
             sec                 ; Subtract the reference address and add
             sbc CHARAC          ;   two to get the offset
@@ -1278,6 +1291,29 @@ calc_off:   lda PRGCTR          ; The target is the current program counter
             sbc #$02            ;   ,,
             ldy #$01            ; Store the computed offset in the forward
             sta (CHARAC),y      ;   reference operand address
+            jmp ResolveFwd      ; Go back and see if there are more to resolve
+            
+; Add Forward Record
+; For label in Y            
+; Each forward reference record consists of three bytes-
+; Offset 0 - Label Index OR %10000000
+AddFwdRec:  ldx #$00            ; Start of forward symbol table
+-loop:      lda SYMBOL_F,x      ; Get the label for this record
+            beq empty_rec       ; This is an empty record, so use it
+            inx
+            inx
+            inx
+            cpx #$18            ; Check the limit of forward reference records
+            bne loop
+            rts                 ; No records are left, so leave with no entry 
+empty_rec:  tya
+            lsr
+            ora #$80            ; Set the high bit to indicate record in use
+            sta SYMBOL_F,x      ; Store the label index in the record
+            lda PRGCTR          ; Store the current program counter in the
+            sta SYMBOL_F+1,x    ;   forward reference record for (hopefully)
+            lda PRGCTR+1        ;   later resolution
+            sta SYMBOL_F+2,x    ;   ,,
             rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
