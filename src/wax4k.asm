@@ -1228,11 +1228,14 @@ is_defined: rts
 
 ; Expand Symbol
 ; and return to Transcribe
-ExpandSym:  lda #$00
+ExpandSym:  sty IDX_SYM
+            lda #$00
             sta IDX_OUT
             jsr HexPrefix
-            jsr CHRGET          ; See if the user has entered H or L after
-            pha                 ;   the label
+            ldy #$01            ; See if the user has entered H or L after
+            lda ($7a),y         ;   the label
+            pha
+            ldy IDX_SYM
             cmp #"L"            ; If L is specified, jump right to the low
             beq insert_lo       ;   byte
             lda SYMBOL+1,y      ; Otherwise, add the high byte
@@ -1253,11 +1256,11 @@ do_expand:  lda #$00            ; Add delimiter, since the hex operand can
             jmp loop            ;   ,,
 end_expand: pla                 ; Get the CHRGET character back
             cmp #"L"            ; Discard L or H,
-            beq skip_hilo       ; ,,
+            beq discard         ; ,,
             cmp #"H"            ; ,,
-            beq skip_hilo       ; ,,
-            jsr AddInput        ; and add anything else
-skip_hilo:  jmp Transcribe        
+            bne expand_r
+discard:    jsr CHRGET
+expand_r:   jmp Transcribe        
             
 ; Resolve Forward Reference            
 ResolveFwd: lda IDX_SYM
