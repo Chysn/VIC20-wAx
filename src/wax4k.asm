@@ -1188,7 +1188,7 @@ InitSym:    lda INBUFFER
             lda PRGCTR+1        ; ,,
             sta X_PC+1          ; ,,
 init_r      rts
-init_clear: ldy #$2e            ; Initialize 46 bytes for the Symbol Table
+init_clear: ldy #$2b            ; Initialize 44 bytes for the Symbol Table
             lda #$00            ;   Offset $00-$13 Low/High bytes for symbols
 -loop:      sta SYMBOL,y        ;   Offset $14-$27 Low/High bytes for forward
             dey                 ;   ,,
