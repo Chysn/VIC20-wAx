@@ -533,9 +533,9 @@ asm_error:  jmp AsmError
 ; new label.
 DefLabel:   jsr CharGet         ; Get the next character after the label;
             cmp #"0"            ; If it's not between 0 and 9, throw
-            bcc AsmError        ;   an ASSEMBLY ERROR
+            bcc LabError        ;   a BAD LABEL ERROR
             cmp #"9"+1          ;   ,,
-            bcs AsmError        ;   ,,
+            bcs LabError        ;   ,,
             sec                 ; Get the symbol memory index into Y
             sbc #"0"            ; ,,
             asl                 ; ,,
@@ -582,15 +582,17 @@ try_binary: cmp #"%"
 ; Error Message
 ; Invalid opcode or formatting (ASSEMBLY)
 ; Failed boolean assertion (MISMATCH, borrowed from ROM)
-AsmError:   lda #<AsmErrMsg     ; ?ASSMEBLY
-            ldx #>AsmErrMsg     ;   ERROR
-            bne show_err
-MisError:   lda #<MISMATCH      ; ?MISMATCH
-            ldx #>MISMATCH      ;   ERROR
-show_err:   sta ERROR_PTR       ; Set the selected pointer
-            stx ERROR_PTR+1     ;   ,,
-            jsr Restore         ; Return zeropage workspace to original
-            jmp CUST_ERR        ; And emit the error
+AsmError:   ldx #$00            ; ?ASSMEBLY ERROR
+            .byte $3c           ; TOP (skip word)
+MisError:   ldx #$01            ; ?MISMATCH ERROR
+            .byte $3c           ; TOP (skip word)
+LabError:   ldx #$02            ; ?BAD LABEL ERROR
+            lda ErrAddr_L,x
+            sta ERROR_PTR
+            lda ErrAddr_H,x
+            sta ERROR_PTR+1
+            jsr Restore
+            jmp CUST_ERR           
 
 ; Get Operand
 ; Populate the operand for an instruction by looking forward in the buffer and
@@ -1175,22 +1177,100 @@ UpOver:     lda #CRSRUP         ; Cursor up
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 ; Initialize Symbol Table
 ; And also, initialize the external program counter
-InitSym:    bcc init_clear      ; If no address is provided, clear the table
+InitSym:    lda INBUFFER        
+            beq init_clear      ; If the tool is alone, clear the symbol table
+            cmp #"-"            ; If - follows the tool, show the symbol list
+            beq LabelList       ; ,,
+            jsr RefreshPC       ; If no valid address is provided, just leave
+            bcc init_r          ;   X_PC as it was
             lda PRGCTR          ; Initialize External Program Counter
             sta X_PC            ; ,,
             lda PRGCTR+1        ; ,,
             sta X_PC+1          ; ,,
-            rts
+init_r      rts
 init_clear: ldy #$2e            ; Initialize 46 bytes for the Symbol Table
             lda #$00            ;   Offset $00-$13 Low/High bytes for symbols
 -loop:      sta SYMBOL,y        ;   Offset $14-$27 Low/High bytes for forward
             dey                 ;   ,,
             bpl loop            ;   ,,
             rts
-            
-; Define Symbol
-; By adding it to the symbol table with the current program counter
-DefineSym:  jsr CHRGET
+          
+; Show Label List           
+LabelList:  ldx #$00
+-loop:      txa                 ; Save the iterator from PrintBuff, etc.
+            pha                 ; ,,
+            asl                 ; Y is the symbol table reference
+            tay                 ; ,,
+            lda SYMBOL,y        ; Stash the current value in PRGCTR
+            sta PRGCTR          ; ,,
+            lda SYMBOL+1,y      ; ,,
+            sta PRGCTR+1        ; ,,
+            lda PRGCTR          ; If this symbol is undefined (meaning, it is
+            bne show_label      ;   $0000, then skip it)
+            lda PRGCTR+1        ;   ,,
+            beq undefd          ; Undefined, but it might be a forward reference
+show_label: jsr LabListCo
+            jsr HexPrefix
+            lda PRGCTR+1
+            jsr Hex
+            lda PRGCTR
+            jsr Hex
+            jsr PrintBuff
+next_label: pla
+            tax
+            inx
+            cpx #$0a
+            bne loop
+            lda #$00            ; Show the current value of the external PC
+            sta IDX_OUT
+            jsr Space
+            jsr Space
+            lda #"*"
+            jsr CharOut
+            jsr Space
+            jsr HexPrefix
+            lda X_PC+1
+            jsr Hex
+            lda X_PC
+            jsr Hex
+            jsr PrintBuff
+            rts
+undefd:     stx IDX_SYM
+            ldx #$00
+-loop:      lda SYMBOL_F,x
+            bpl next_undef
+            and #$0f
+            cmp IDX_SYM
+            beq show_fwd
+next_undef: inx
+            inx
+            inx
+            cpx #$18
+            bne loop
+            beq next_label
+show_fwd:   ldx IDX_SYM
+            jsr LabListCo
+            lda #RVS_ON
+            jsr CharOut
+            jsr HexPrefix
+            ldy #$04
+-loop:      lda #"?"
+            jsr CharOut
+            dey
+            bne loop            
+fwd_d:      jsr PrintBuff
+            jmp next_label
+
+; Label List Common            
+LabListCo:  lda #$00
+            sta IDX_OUT
+            jsr Space
+            lda #"-"
+            jsr CharOut
+            txa
+            ora #"0"
+            jsr CharOut
+            jsr Space
             rts
             
 ; Handle Symbols 
@@ -1204,7 +1284,7 @@ HandleSym:  lda IDX_IN          ; If - is the first character in the input
             jmp Transcribe      ;   ,,
 start_exp:  jsr CHRGET          ; Get the next character, which should be a
             bcc get_label       ;   numeral
-            jmp AsmError        ; If not, assembly error
+            jmp LabError        ; If not, BAD LABEL ERROR
 get_label:  sec
             sbc #"0"            ; Get the numeric index for the specified label
             asl                 ; ,,
@@ -1664,10 +1744,13 @@ write_r:    rts
 Transcribe: jsr CHRGET          ; Get character from input buffer
             cmp #$00            ; If it's 0, then quit transcribing and return
             beq xscribe_r       ; ,,
-            cmp #";"            ; If it's a comment, then quit transcribing
-            beq comment         ;   unless we're in quote mode
             cmp #$ac            ; Replace an asterisk with the external program
             beq ExpandXPC       ;   counter
+            ldy TOOL_CHR        ; The remaining characters--for comments,
+            cpy #T_ASM          ;   labels, and quotes--apply to only the
+            bne ch_token        ;   assembler
+            cmp #";"            ; If it's a comment, then quit transcribing
+            beq comment         ;   unless we're in quote mode
             cmp #LABEL          ; Handle symbolic labels
             beq handle_sym      ; ,,
             cmp #QUOTE          ; If a quote is found, modify CHRGET so that
@@ -1693,7 +1776,7 @@ comment:    ldy $83
             cpy #$06
             beq x_add
             lda #$00
-            jsr xscribe_r            
+            jmp xscribe_r            
 
 ; Expand External Program Counter
 ; Replace asterisk with the X_PC
@@ -1802,11 +1885,16 @@ ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >List-1,>Search-1,>MemCopy-1,>Hex2Base10-1,>Base102Hex-1
             .byte >Bin2Base10-1,>InitSym-1,>BASICStage-1
 
+; Addresses for error message text
+ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg
+ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg
+
 ; Text display tables                      
 Intro:      .asc LF,"GITHUB.COM/CHYSN/WAX",LF,LF
             .asc "WAX ON",$00
-Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
+LabErrMsg:  .asc "BAD LABE",$cc
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
