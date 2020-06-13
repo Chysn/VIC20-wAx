@@ -1664,6 +1664,8 @@ write_r:    rts
 Transcribe: jsr CHRGET          ; Get character from input buffer
             cmp #$00            ; If it's 0, then quit transcribing and return
             beq xscribe_r       ; ,,
+            cmp #";"            ; If it's a comment, then quit transcribing
+            beq comment         ;   unless we're in quote mode
             cmp #$ac            ; Replace an asterisk with the external program
             beq ExpandXPC       ;   counter
             cmp #LABEL          ; Handle symbolic labels
@@ -1687,6 +1689,11 @@ handle_sym: ldy $83             ; Don't handle symbols if the & is in quotes
             cpy #$06            ;   (as in an immediate operand, or text entry)
             beq x_add           ;   ,,
             jmp HandleSym       ;   ,,
+comment:    ldy $83
+            cpy #$06
+            beq x_add
+            lda #$00
+            jsr xscribe_r            
 
 ; Expand External Program Counter
 ; Replace asterisk with the X_PC
