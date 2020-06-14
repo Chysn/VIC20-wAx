@@ -1839,9 +1839,9 @@ handle_sym: ldy $83             ; Don't handle symbols if the & is in quotes
             jmp HandleSym       ;   ,,
 comment:    ldy $83
             cpy #$06
-            beq x_add
+            beq add_only
             lda #$00
-            jmp xscribe_r            
+add_only:   beq x_add
 
 ; Expand External Program Counter
 ; Replace asterisk with the X_PC
