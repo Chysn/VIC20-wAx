@@ -1114,8 +1114,19 @@ copy_err:   jsr Restore         ; Something was wrong with an address; show
 ; https://github.com/Chysn/wAx/wiki/Number-Conversion
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 ; Hex to Base-10
-Hex2Base10:	bcc hex_conv_r      ; Bail if no or illegal number is provided
-            jsr UpOver
+Hex2Base10:	lda #$00            ; Reset input buffer
+            sta IDX_IN          ; ,,
+            jsr Buff2Byte
+            bcc hex_conv_r      ; There's no byte available, so bail
+            sta PRGCTR+1
+            jsr Buff2Byte
+            sta PRGCTR
+            bcs two_bytes       ; There are two good bytes
+            lda PRGCTR+1        ; If there's only one good byte, then
+            sta PRGCTR          ;   treat that as a low byte, and make the
+            lda #$00            ;   high byte zero
+            sta PRGCTR+1        ;   ,,
+two_bytes:  jsr UpOver
             lda #"#"
             jsr CHROUT
             ldx PRGCTR          ; Set up PRTFIX for base-10 integer output
