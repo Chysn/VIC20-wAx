@@ -964,6 +964,8 @@ MemSave:    bcc save_err        ; Bail if the address is no good
             ldy RANGE_END+1     ; ,,
             jsr SAVE            ; ,,
             bcs DiskError
+            lda #$42            ; Close the file
+            jsr CLOSE           ; ,,
             jmp Linefeed
 save_err:   jsr Restore
             jmp SYNTAX_ERR      ; To ?SYNTAX ERROR      
@@ -1000,6 +1002,8 @@ MemLoad:    lda #$00            ; Reset the input buffer index because there's
             lda #$00            ; Command for LOAD
             jsr LOAD            
             bcs DiskError
+            lda #$42            ; Close the file
+            jsr CLOSE           ; ,,
             jsr DirectMode      ; Show the loaded range if the load is done in
             beq show_range      ;   direct mode
             rts
@@ -2022,8 +2026,7 @@ Pad4096:    .asc "JASON JUSTIAN 2020",$00
             .asc "JJUSTIAN@GMAIL.COM",$00
             .asc "GITHUB.COM/CHYSN/WAX",$00
             .asc "1234567890123456789012345678901234567890"
-            .asc "1234567890123456789012345678901234567890"
-            .asc "12345678901234567"
+            .asc "12345678901234567890123456789012345"
             
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
