@@ -7,7 +7,7 @@
 ; Release 1  - May 16, 2020
 ; Release 2  - May 23, 2020
 ; Release 3  - May 30, 2020
-; Release 4K - June 11, 2020
+; Release 4K - June 14, 2020
 ; Assembled with XA
 ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -136,6 +136,7 @@ QUOTE       = $22               ; Quote character
 LF          = $0d               ; Linefeed
 CRSRUP      = $91               ; Cursor up
 CRSRRT      = $1d               ; Cursor right
+CRSRLF      = $9d               ; Cursor left
 RVS_ON      = $12               ; Reverse on
 RVS_OFF     = $92               ; Reverse off
 
@@ -156,10 +157,10 @@ SYMBOL_A    = SYMBOL_L+MAX_LAB  ; Symbol addresses
 SYMBOL_F    = SYMBOL_A+MAX_LAB*2; Symbol unresolved forward references
 
 ; Assembler workspace
-X_PC        = $2fe              ; External program counter
+X_PC        = $2fe              ; Persistent Counter (2 bytes)
 WORK        = $a3               ; Temporary workspace (2 bytes)
 MNEM        = $a3               ; Current Mnemonic (2 bytes)
-PRGCTR      = $a5               ; Program Counter (2 bytes)
+EFADDR      = $a5               ; Program Counter (2 bytes)
 CHARDISP    = $a7               ; Character display for Memory (2 bytes)
 LANG_PTR    = $a7               ; Language Pointer (2 bytes)
 COPY_TARGET = $a7               ; Copy target address
@@ -237,10 +238,10 @@ RefreshPC:  lda #$00            ; Re-initialize for buffer read
             sta IDX_IN          ; ,,
             jsr Buff2Byte       ; Convert 2 characters to a byte   
             bcc main_r          ; Fail if the byte couldn't be parsed
-            sta PRGCTR+1        ; Save to the PRGCTR high byte
+            sta EFADDR+1        ; Save to the EFADDR high byte
             jsr Buff2Byte       ; Convert next 2 characters to byte
             bcc main_r          ; Fail if the byte couldn't be parsed
-            sta PRGCTR          ; Save to the PRGCTR low byte
+            sta EFADDR          ; Save to the EFADDR low byte
 main_r:     rts                 ; Pull address-1 off stack and go there
     
 ; Return from Wedge
@@ -257,8 +258,18 @@ in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command
 ; COMMON LIST COMPONENT
 ; Shared entry point for Disassembler and Memory Dump
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-List:       bcc list_r          ; Bail if the address is no good
-            jsr DirectMode      ; If the tool is in direct mode,
+List:       bcs addr_ok         ; If the provided address is OK, disassemble
+            lda X_PC            ; Otherwise, set the effective addresss to the
+            sta EFADDR          ;  persistent counter to continue listing
+            lda X_PC+1          ;  after the last address
+            sta EFADDR+1        ;  ,,
+            jmp is_list
+addr_ok:    lda INBUFFER+4      ; If there's code or anything after the command,
+            beq is_list         ;   treat it as an assembler tool
+            lda #T_ASM          ;   ,,
+            sta TOOL_CHR        ;   ,,
+            jmp Assemble        ;   ,,
+is_list:    jsr DirectMode      ; If the tool is in direct mode,
             bne start_list      ;   cursor up to overwrite the original input
             lda #CRSRUP         ;   ,,
             jsr CHROUT          ;   ,,
@@ -273,9 +284,9 @@ ListLine:   txa
             bne show_tool       ;   then change it to a regular +
             lda #"+"            ;   ,,
 show_tool:  jsr CharOut
-            lda PRGCTR+1        ; Show the address
+            lda EFADDR+1        ; Show the address
             jsr Hex             ; ,,
-            lda PRGCTR          ; ,,
+            lda EFADDR          ; ,,
             jsr Hex             ; ,,            
             lda TOOL_CHR        ; What tool is being used?
             cmp #T_MEM          ; Memory Dump
@@ -297,13 +308,29 @@ continue:   jsr PrintBuff
             tax
             ldy LSTX            ; Exit if STOP key is pressed
             cpy #$18            ; ,,          
-            beq list_r          ; ,,
+            beq list_stop       ; ,,
             dex                 ; Exit if loop is done
             bne ListLine        ; ,,
             inx                 ; But if the loop is done, but a SHift key
             lda KEYCVTRS        ;   is engaged, then go back for one more
             and #$01            ;   ,,
             bne ListLine        ;   ,,
+            lda TOOL_CHR        ; If the breakpoint was set, don't update
+            cmp #T_BRK          ;   the persistent counter or show a tool
+            beq list_r          ;   prompt
+list_stop:  lda EFADDR          ; Update the persistent counter with
+            sta X_PC            ;   the effective address
+            lda EFADDR+1        ;   ,,
+            sta X_PC+1          ;   ,,
+            lda TOOL_CHR        ; If the extended disassembler is the tool,
+            cmp #T_XDI          ;   change the character to +
+            bne next_page       ;   ,,
+            lda #"+"            ;   ,,
+next_page:  sta KEYBUFF         ; Provide a tool for the next page
+            lda #CRSRLF         ; ,,
+            sta KEYBUFF+1       ; ,,
+            lda #$02            ; ,,
+            sta KBSIZE          ; ,,
 list_r:     jmp EnableBP        ; Re-enable breakpoint, if necessary
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -311,9 +338,9 @@ list_r:     jmp EnableBP        ; Re-enable breakpoint, if necessary
 ; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Disassemble
-; Disassemble a single instruction at the program counter
+; Disassemble a single instruction at the effective address
 Disasm:     ldy #$00            ; Get the opcode
-            lda (PRGCTR),y      ;   ,,
+            lda (EFADDR),y      ;   ,,
             jsr Lookup          ; Look it up
             bcc Unknown         ; Clear carry indicates an unknown opcode
             jsr DMnemonic       ; Display mnemonic
@@ -412,8 +439,8 @@ DisZP:      pha
 ; Disassemble Relative Operand
 DisRel:     jsr HexPrefix
             jsr NextValue       ; Get the operand of the instruction, advance
-                                ;   the program counter. It might seem weird to
-                                ;   advance the PC when I'm operating on it a
+                                ;   the effective address. It might seem weird
+                                ;   to advance the PC when I'm operating on it a
                                 ;   few lines down, but I need to add two
                                 ;   bytes to get the offset to the right spot.
                                 ;   One of those bytes is here, and the other
@@ -426,10 +453,10 @@ DisRel:     jsr HexPrefix
 sign:       sta WORK+1          ; Set the high byte to either $00 or $ff
             lda WORK
             sec                 ; sec here before adc is not a mistake; I need
-            adc PRGCTR          ;   to account for the instruction address
+            adc EFADDR          ;   to account for the instruction address
             sta WORK            ;   (see above)
             lda WORK+1          ;
-            adc PRGCTR+1        ;
+            adc EFADDR+1        ;
             jsr Hex             ; No need to save the high byte, just show it
             lda WORK            ; Show the low byte of the computed address
             jmp Hex             ; ,,
@@ -464,7 +491,7 @@ MemEditor:  lda #$04            ; The number of allowed bytes is temporarily
 start_mem:  ldy #$00            ; This is Assemble's entry point for .byte
 -loop:      jsr Buff2Byte
             bcc edit_exit       ; Bail out on the first non-hex byte
-            sta (PRGCTR),y      
+            sta (EFADDR),y      
             iny
             cpy CHARAC
             bne loop
@@ -484,7 +511,7 @@ TextEdit:   ldy #$00            ; Y=Data Index
             beq asm_error       ; Return to MemEditor if 0
             cmp #QUOTE          ; Is this the closing quote?
             beq edit_exit       ; Return to MemEditor if quote
-            sta (PRGCTR),y      ; Populate data
+            sta (EFADDR),y      ; Populate data
             iny
             cpy #$10            ; String size limit
             beq edit_exit
@@ -495,7 +522,7 @@ TextEdit:   ldy #$00            ; Y=Data Index
 BinaryEdit: jsr BinaryByte      ; Get 8 binary bits
             bcc edit_r          ; If invalid, exit assembler
             ldy #$00            ; Store the valid byte to memory
-            sta (PRGCTR),y      ; ,,
+            sta (EFADDR),y      ; ,,
             iny                 ; Increment the byte count and return to
             jmp edit_exit       ;   editor            
 
@@ -524,19 +551,19 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
 test:       jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc asm_error       ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
-            lda OPCODE          ;   to the program counter. The number of bytes
-            sta (PRGCTR),y      ;   to transcribe is stored in the INSTSIZE
-            ldx INSTSIZE        ;   location.
+            lda OPCODE          ;   to the effective address. The number of
+            sta (EFADDR),y      ;   bytes to transcribe is stored in the
+            ldx INSTSIZE        ;   INTSIZE location.
             cpx #$02            ; Store the low operand byte, if indicated
             bcc nextline        ; ,,
             lda OPERAND         ; ,,
             iny                 ; ,,
-            sta (PRGCTR),y      ; ,,
+            sta (EFADDR),y      ; ,,
             cpx #$03            ; Store the high operand byte, if indicated
             bcc nextline        ; ,,
             lda OPERAND+1       ; ,,
             iny                 ; ,,
-            sta (PRGCTR),y      ; ,,
+            sta (EFADDR),y      ; ,,
 nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
             jsr Prompt          ; Prompt for next line if in direct mode
 asm_r:      rts
@@ -555,9 +582,9 @@ DefLabel:   jsr CharGet         ; Get the next character after the label;
             sty IDX_SYM         ;   was used
             jsr ResolveFwd      ;   ,,
             ldy IDX_SYM
-is_def:     lda PRGCTR          ; Set the label address
+is_def:     lda EFADDR          ; Set the label address
             sta SYMBOL_A,y      ; ,,
-            lda PRGCTR+1        ; ,,
+            lda EFADDR+1        ; ,,
             sta SYMBOL_A+1,y    ; ,,
             jsr CharGet
             cmp #$00
@@ -627,7 +654,7 @@ GetOperand: jsr Buff2Byte       ; Get the first byte
             lda OPERAND+1       ;   byte to the low byte. Otherwise, just
 high_byte:  sta OPERAND         ;   set the low byte with the input
             sec                 ; Compute hypothetical relative branch
-            sbc PRGCTR          ; Subtract the program counter address from
+            sbc EFADDR          ; Subtract the effective address address from
             sec                 ;   the instruction target
             sbc #$02            ; Offset by 2 to account for the instruction
             sta SP_OPERAND      ; Save the speculative operand
@@ -636,15 +663,15 @@ getop_r:    rts
 ; Hypothesis Test
 ; Search through the language table for each opcode and disassemble it using
 ; the opcode provided for the candidate instruction. If there's a match, then
-; that's the instruction to assemble at the program counter. If Hypotest tries
+; that's the instruction to assemble at the effective address. If Hypotest tries
 ; all the opcodes without a match, then the candidate instruction is invalid.
 Hypotest:   jsr ResetLang       ; Reset language table
 reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match   
             sty IDX_OUT         ;   b/c output buffer will be "$00AC INST"
             lda #OPCODE         ; Write location to PC for hypotesting
-            sta PRGCTR          ; ,,
-            ldy #$00            ; Set the program counter high byte
-            sty PRGCTR+1        ; ,,
+            sta EFADDR          ; ,,
+            ldy #$00            ; Set the effective address high byte
+            sty EFADDR+1        ; ,,
             jsr NextInst        ; Get next instruction in 6502 table
             cmp #XTABLE_END     ; If we've reached the end of the table,
             beq bad_code        ;   the assembly candidate is no good
@@ -664,11 +691,11 @@ reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match
             jsr IsMatch
             bcc reset
 match:      jsr NextValue
-            lda PRGCTR          ; Set the INSTSIZE location to the number of
+            lda EFADDR          ; Set the INSTSIZE location to the number of
             sec                 ;   bytes that need to be programmed
             sbc #OPCODE         ;   ,,
             sta INSTSIZE        ;   ,,
-            jmp RefreshPC       ; Restore the program counter to target address
+            jmp RefreshPC       ; Restore the effective address to target addr
 test_sp:    lda #$0a            ; Handle speculative operands here; set
             sta IDX_OUT         ;   a stop after four characters in output
             jsr IsMatch         ;   buffer and check for a match
@@ -684,7 +711,7 @@ bad_code:   clc                 ; Clear carry flag to indicate failure
 ; https://github.com/Chysn/wAx/wiki/3-Memory-Dump
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Memory:     ldy #$00
--loop:      lda (PRGCTR),y
+-loop:      lda (EFADDR),y
             sta CHARDISP,y
             jsr Hex
             iny
@@ -703,9 +730,9 @@ show_char:  lda #RVS_ON         ; Reverse on for the characters
             bcs add_char        ; ,,
 alter_char: lda #$2e            ; Everything else gets a .
 add_char:   jsr CharOut         ; ,,
-            inc PRGCTR
+            inc EFADDR
             bne next_char
-            inc PRGCTR+1
+            inc EFADDR+1
 next_char:  iny
             cpy #04
             bne loop            
@@ -715,8 +742,8 @@ next_char:  iny
 ; BINARY DUMP COMPONENT
 ; https://github.com/Chysn/wAx/wiki/3-Memory-Dump
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-BinaryDisp: ldx #$00            ; Get the byte at the program counter
-            lda (PRGCTR,x)      ; ,,
+BinaryDisp: ldx #$00            ; Get the byte at the effective address
+            lda (EFADDR,x)      ; ,,
             sta SP_OPERAND      ; Store byte for binary conversion
             lda #%10000000      ; Start with high bit
 -loop:      pha
@@ -735,7 +762,7 @@ is_zero:    lda #"0"
             bne loop
             jsr Space
             ldx #$00
-            lda (PRGCTR,x)
+            lda (EFADDR,x)
             jsr Hex
             jmp NextValue
 
@@ -746,17 +773,17 @@ is_zero:    lda #"0"
 Tester:     ldy #$00
 -loop:      jsr Buff2Byte
             bcc test_r          ; Bail out on the first non-hex byte
-            cmp (PRGCTR),y
+            cmp (EFADDR),y
             bne test_err      
             iny
             cpy #$08
             bne loop
-test_r:     tya                 ; Update the external program counter so that
+test_r:     tya                 ; Update the persistent counter so that
             clc                 ;   the assertion tester can be used with
-            adc PRGCTR          ;   the asterisk
+            adc EFADDR          ;   the asterisk
             sta X_PC            ;   ,,
             lda #$00            ;   ,,
-            adc PRGCTR+1        ;   ,,
+            adc EFADDR+1        ;   ,,
             sta X_PC+1          ;   ,,
             rts
 test_err:   jmp MisError
@@ -769,15 +796,15 @@ SetBreak:   php
             jsr ClearBP         ; Clear the old breakpoint, if it exists
             plp                 ; If no breakpoint is chosen (e.g., if ! was)
             bcc SetupVec        ;   by itself), just clear the breakpoint
-            lda PRGCTR          ; Add a new breakpoint at the program counter
+            lda EFADDR          ; Add a new breakpoint at the effective address
             sta BREAKPOINT      ; ,,
-            lda PRGCTR+1        ; ,,
+            lda EFADDR+1        ; ,,
             sta BREAKPOINT+1    ; ,,
             ;ldy #$00           ; (Y is already 0 from ClearBP)
-            lda (PRGCTR),y      ; Stash it in the Breakpoint data structure,
+            lda (EFADDR),y      ; Stash it in the Breakpoint data structure,
             sta BREAKPOINT+2    ;   to be restored on the next break
             tya                 ; Write BRK to the breakpoint location
-            sta (PRGCTR),y      ;   ,,
+            sta (EFADDR),y      ;   ,,
             lda #CRSRUP         ; Cursor up to overwrite the command
             jsr CHROUT          ; ,,
             jsr DirectMode      ; When run inside a BASIC program, skip the
@@ -845,18 +872,18 @@ bp_reset:   sty BREAKPOINT      ; And then clear out the whole
 ; Breakpoint Indicator
 ; Also restores the breakpoint byte, temporarily
 BreakInd:   ldy #$00            ; Is this a BRK instruction?
-            lda (PRGCTR),y      ; ,,
+            lda (EFADDR),y      ; ,,
             bne ind_r           ; If not, do nothing
             lda BREAKPOINT      ; If it is a BRK, is it our breakpoint?
-            cmp PRGCTR          ; ,,
+            cmp EFADDR          ; ,,
             bne ind_r           ; ,,
             lda BREAKPOINT+1    ; ,,
-            cmp PRGCTR+1        ; ,,
+            cmp EFADDR+1        ; ,,
             bne ind_r           ; ,,
             lda #RVS_ON         ; Reverse on for the breakpoint
             jsr CharOut
             lda BREAKPOINT+2    ; Temporarily restore the breakpoint byte
-            sta (PRGCTR),y      ;   for disassembly purposes
+            sta (EFADDR),y      ;   for disassembly purposes
 ind_r:      rts        
                  
 ; Enable Breakpoint
@@ -877,9 +904,9 @@ enable_r:   rts
 ; https://github.com/Chysn/wAx/wiki/5-Register-Editor
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Register:   bcc register_r      ; Don't set Y and X if they're not provided
-            lda PRGCTR+1        ; Two bytes are already set in the program
+            lda EFADDR+1        ; Two bytes are already set in the program
             sta YREG            ;   counter. These are Y and X
-            lda PRGCTR          ;   ,,
+            lda EFADDR          ;   ,,
             sta XREG            ;   ,,
             jsr Buff2Byte       ; Get a third byte to set Accumulator
             sta ACC             ;   ,,
@@ -893,9 +920,9 @@ register_r: rts
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Execute:    pla                 ; Get rid of the return address to Return, as
             pla                 ;   it will not be needed (see BRK below)
-            lda PRGCTR          ; Set the temporary INT storage to the program
+            lda EFADDR          ; Set the temporary INT storage to the program
             sta SYS_DEST        ;   counter. This is what SYS uses for its
-            lda PRGCTR+1        ;   execution address, and I'm using that
+            lda EFADDR+1        ;   execution address, and I'm using that
             sta SYS_DEST+1      ;   system to borrow saved Y,X,A,P values
             jsr SetupVec        ; Make sure the BRK handler is enabled
             php                 ; Store P to preserve Carry flag
@@ -932,7 +959,7 @@ MemSave:    bcc save_err        ; Bail if the address is no good
             ldx #<INBUFFER+8    ; ,,
             ldy #>INBUFFER+8    ; ,,
             jsr SETNAM          ; ,,
-            lda #PRGCTR         ; Set up SAVE call
+            lda #EFADDR         ; Set up SAVE call
             ldx RANGE_END       ; ,,
             ldy RANGE_END+1     ; ,,
             jsr SAVE            ; ,,
@@ -1020,7 +1047,7 @@ Search:     bcc srch_r          ; Bail if the address is no good
 next_srch:  lda LSTX            ; Keep searching code until the user presses
             cmp #$18            ;   Stop key
             beq srch_stop       ;   ,,
-            lda PRGCTR+1        ; Store the program counter high byte for
+            lda EFADDR+1        ; Store the effective address high byte for
             pha                 ;   later comparison
             ldx #$00            ; 
             stx IDX_OUT         ; Clear output buffer for possible result
@@ -1030,8 +1057,8 @@ next_srch:  lda LSTX            ; Keep searching code until the user presses
             cmp #":"            ; Convert a hex search into a character search
             beq SetupHex        ; ,,
             bne CodeSearch      ; Default to code search
-check_end:  pla                 ; Has the program counter high byte advanced?
-            cmp PRGCTR+1        ;   ,,
+check_end:  pla                 ; Has the effective address high byte advanced?
+            cmp EFADDR+1        ;   ,,
             beq next_srch       ; If not, continue the search
             dec SEARCH_C        ; If so, decrement the search counter, and
             bne next_srch       ;   end the search if it's done
@@ -1048,13 +1075,13 @@ srch_stop:  lda #$00            ; Start a new output buffer to indicate the
 srch_r:     rts   
 
 ; Code Search
-; Disassemble code from the program counter. If the disassembly at that
+; Disassemble code from the effective address. If the disassembly at that
 ; address matches the input, indicate the starting address of the match.
 CodeSearch: lda TOOL_CHR
             jsr CharOut
             jsr Address
             jsr Space           ; Positions the code into place for IsMatch
-            jsr Disasm          ; Disassmble the code at the program counter
+            jsr Disasm          ; Disassmble the code at the effective address
             jsr IsMatch         ; If it matches the input, show the address
             bcc check_end       ; ,,
             jsr PrintBuff       ; Print address and disassembly   
@@ -1065,7 +1092,7 @@ CodeSearch: lda TOOL_CHR
 ; indicate the starting address of the match.            
 MemSearch:  ldy #$00
 -loop:      lda INBUFFER+5,y
-            cmp (PRGCTR),y
+            cmp (EFADDR),y
             bne no_match
             iny
             bne loop
@@ -1114,15 +1141,15 @@ MemCopy:    bcc copy_err        ; Get parameters as 16-bit hex addresses for
             bcc copy_err        ; ,,
             sta COPY_TARGET     ; ,,
             ldx #$00            ; Copy memory from the start address...
--loop:      lda (PRGCTR,x)      ; ,,
+-loop:      lda (EFADDR,x)      ; ,,
             sta (COPY_TARGET,x) ; ...To the target address
-            lda PRGCTR+1        ; ,,
+            lda EFADDR+1        ; ,,
             cmp RANGE_END+1     ; Have we reached the end of the copy range?
             bne advance         ; ,,
-            lda PRGCTR          ; ,,
+            lda EFADDR          ; ,,
             cmp RANGE_END       ; ,,
             beq copy_r          ; If so, leave the copy tool
-advance:    jsr NextValue       ; If not, advance the program counter and the
+advance:    jsr NextValue       ; If not, advance the effective address and the
             inc COPY_TARGET     ;   target to the next address for more
             bne loop            ;   copying
             inc COPY_TARGET+1   ;   ,,
@@ -1140,19 +1167,19 @@ Hex2Base10:	lda #$00            ; Reset input buffer
             sta IDX_IN          ; ,,
             jsr Buff2Byte
             bcc hex_conv_r      ; There's no byte available, so bail
-            sta PRGCTR+1
+            sta EFADDR+1
             jsr Buff2Byte
-            sta PRGCTR
+            sta EFADDR
             bcs two_bytes       ; There are two good bytes
-            lda PRGCTR+1        ; If there's only one good byte, then
-            sta PRGCTR          ;   treat that as a low byte, and make the
+            lda EFADDR+1        ; If there's only one good byte, then
+            sta EFADDR          ;   treat that as a low byte, and make the
             lda #$00            ;   high byte zero
-            sta PRGCTR+1        ;   ,,
+            sta EFADDR+1        ;   ,,
 two_bytes:  jsr UpOver
             lda #"#"
             jsr CHROUT
-            ldx PRGCTR          ; Set up PRTFIX for base-10 integer output
-            lda PRGCTR+1        ; ,,
+            ldx EFADDR          ; Set up PRTFIX for base-10 integer output
+            lda EFADDR+1        ; ,,
             jsr PRTFIX          ; ,,
             jsr Linefeed
 hex_conv_r: rts            
@@ -1207,16 +1234,16 @@ UpOver:     lda #CRSRUP         ; Cursor up
 ; SYMBOLIC ASSEMBLER COMPONENTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 ; Initialize Symbol Table
-; And also, initialize the external program counter
+; And also, initialize the location counter
 InitSym:    lda INBUFFER        
             beq init_clear      ; If the tool is alone, clear the symbol table
-            cmp #"-"            ; If - follows the tool, show the symbol list
+            cmp #LABEL          ; If - follows the tool, show the symbol list
             beq LabelList       ; ,,
             jsr RefreshPC       ; If no valid address is provided, just leave
             bcc init_r          ;   X_PC as it was
-            lda PRGCTR          ; Initialize External Program Counter
+            lda EFADDR          ; Initialize location counter
             sta X_PC            ; ,,
-            lda PRGCTR+1        ; ,,
+            lda EFADDR+1        ; ,,
             sta X_PC+1          ; ,,
 init_r      rts
 init_clear: ldy #ST_SIZE-1      ; Initialize bytes for the symbol table
@@ -1279,19 +1306,19 @@ LabelList:  ldx #$00
             pha                 ; ,,
             asl                 ; Y is the symbol table reference
             tay                 ; ,,
-            lda SYMBOL_A,y      ; Stash the current value in PRGCTR
-            sta PRGCTR          ; ,,
+            lda SYMBOL_A,y      ; Stash the current value in EFADDR
+            sta EFADDR          ; ,,
             lda SYMBOL_A+1,y    ; ,,
-            sta PRGCTR+1        ; ,,
-            lda PRGCTR          ; If this symbol is undefined (meaning, it is
+            sta EFADDR+1        ; ,,
+            lda EFADDR          ; If this symbol is undefined (meaning, it is
             bne show_label      ;   $0000, then skip it)
-            lda PRGCTR+1        ;   ,,
+            lda EFADDR+1        ;   ,,
             beq undefd          ; Undefined, but it might be a forward reference
 show_label: jsr LabListCo       ; Add elements common to both listed item
             jsr HexPrefix
-            lda PRGCTR+1
+            lda EFADDR+1
             jsr Hex
-            lda PRGCTR
+            lda EFADDR
             jsr Hex
             jsr PrintBuff
 next_label: pla
@@ -1463,14 +1490,14 @@ get_admode: lda INSTDATA+1      ; Get the addressing mode
             cmp #IMPLIED        ; If an implied mode instruction is somehow
             bne load_immed      ;   being resolved, throw ASSEMBLY ERROR
             jmp AsmError        ;   ,,
-load_abs:   lda PRGCTR          ; For an absolute mode instruction, just
+load_abs:   lda EFADDR          ; For an absolute mode instruction, just
             ldy #$01            ;   transfer the two bytes over
             sta (CHARAC),y      ;   ,,
-            lda PRGCTR+1        ;   ,,
+            lda EFADDR+1        ;   ,,
             iny                 ;   ,,
             sta (CHARAC),y      ;   ,,
             jmp clear_back      ; Go back and see if there are more to resolve
-load_rel:   lda PRGCTR          ; The target is the current program counter
+load_rel:   lda EFADDR          ; The target is the current effective address
             sec                 ; Subtract the reference address and add
             sbc CHARAC          ;   two to get the offset
             sec                 ;   ,,
@@ -1481,9 +1508,9 @@ load_rel:   lda PRGCTR          ; The target is the current program counter
 load_immed: lda #$40            ; Check bit 6 of the label byte of the forward
             and SYMBOL_F,x      ;   reference symbol record. If it's set, it
             beq load_low        ;   means that the user wants the high byte
-            lda PRGCTR+1        ;   of the symbol target
+            lda EFADDR+1        ;   of the symbol target
             .byte $3c           ; Skip word
-load_low:   lda PRGCTR          ; For other instructions
+load_low:   lda EFADDR          ; For other instructions
             ldy #$01
             sta (CHARAC),y
 clear_back: lda #$00            ; Clear the forward reference table record for
@@ -1496,10 +1523,10 @@ clear_back: lda #$00            ; Clear the forward reference table record for
 ; Offset 0 - Label Index OR %10000000
 AddFwdRec:  ldx #$00            ; Search the forward symbol table for a
 -loop:      lda SYMBOL_F+1,x    ;   record in use with the same address.
-            cmp PRGCTR          ;   If such a record is found, re-use it
+            cmp EFADDR          ;   If such a record is found, re-use it
             bne next_used       ;   rather than searching the empty records
             lda SYMBOL_F+2,x    ;   ,,
-            cmp PRGCTR+1        ;   ,,
+            cmp EFADDR+1        ;   ,,
             beq empty_rec       ;   ,,
 next_used:  inx                 ;   ,,
             inx                 ;   ,,
@@ -1527,9 +1554,9 @@ empty_rec:  tya
             bne store_rec       ;   to indicate that the high byte should
             ora #$40            ;   be used on resolution
 store_rec:  sta SYMBOL_F,x      ; Store the label index in the record
-            lda PRGCTR          ; Store the current program counter in the
+            lda EFADDR          ; Store the current effective address in the
             sta SYMBOL_F+1,x    ;   forward reference record for (hopefully)
-            lda PRGCTR+1        ;   later resolution
+            lda EFADDR+1        ;   later resolution
             sta SYMBOL_F+2,x    ;   ,,
             rts
             
@@ -1538,20 +1565,20 @@ store_rec:  sta SYMBOL_F,x      ; Store the label index in the record
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 BASICStage: lda #$00            ; Reset the input buffer index
             sta IDX_IN          ;
-            sta PRGCTR          ; Set default end page
+            sta EFADDR          ; Set default end page
             jsr Buff2Byte       ; Get the first hex byte
             bcc bank_r          ; If no valid address was provided, show start
-            sta PRGCTR+1        ; This is the stage's starting page number
+            sta EFADDR+1        ; This is the stage's starting page number
             jsr Buff2Byte       ; But the default can be overridden if a valid
             bcc ch_length       ;   starting page is provided
-            sta PRGCTR          ;   ,,
-ch_length:  lda PRGCTR+1        ; Make sure that the ending page isn't lower
-            cmp PRGCTR          ;   in memory than the starting page. If it is,
+            sta EFADDR          ;   ,,
+ch_length:  lda EFADDR+1        ; Make sure that the ending page isn't lower
+            cmp EFADDR          ;   in memory than the starting page. If it is,
             bcc set_ptrs        ;   default the stage size to 3.5K
             clc                 ;   ,,
             adc #$0e            ;   ,,
-            sta PRGCTR          ;   ,,
-set_ptrs:   lda PRGCTR+1        ; Set up the BASIC start and end pointers
+            sta EFADDR          ;   ,,
+set_ptrs:   lda EFADDR+1        ; Set up the BASIC start and end pointers
             sta $2c             ;   and stuff
             sta $2e             ; ,,
             sta $30             ; ,,
@@ -1565,11 +1592,11 @@ set_ptrs:   lda PRGCTR+1        ; Set up the BASIC start and end pointers
             lda #$00            ; ,,
             sta $33             ; ,,
             sta $37             ; ,,
-            lda PRGCTR          ; ,,
+            lda EFADDR          ; ,,
             sta $34             ; ,,
             sta $38             ; ,,
             ldy #$00            ; Clear the low byte. From here on out, we're     
-            sty PRGCTR          ;   dealing with the start of the BASIC stage
+            sty EFADDR          ;   dealing with the start of the BASIC stage
             ldy #$00            ; Look through the input buffer for an "N"
 -loop:      lda INBUFFER,y      ;   character. This indicates that it is a
             beq finish          ;   new stage.
@@ -1581,7 +1608,7 @@ set_ptrs:   lda PRGCTR+1        ; Set up the BASIC start and end pointers
             beq finish          ;   program
 new:        lda #$00            ; Zero out the first few bytes of the stage so
             ldy #$03            ;   that it looks like a NEW program
--loop:      sta (PRGCTR),y      ;   ,,
+-loop:      sta (EFADDR),y      ;   ,,
             dey                 ;   ,,
             bpl loop            ;   ,,
 finish:     jsr Rechain
@@ -1726,11 +1753,11 @@ not_digit:  cmp #"F"+1          ; Is the character in the range A-F?
             
 ; Next Program Counter
 ; Advance Program Counter by one byte, and return its value
-NextValue:  inc PRGCTR
+NextValue:  inc EFADDR
             bne next_r
-            inc PRGCTR+1
+            inc EFADDR+1
 next_r:     ldx #$00
-            lda (PRGCTR,x)
+            lda (EFADDR,x)
             rts
 
 ; Commonly-Used Characters
@@ -1789,10 +1816,10 @@ bad_bin:    pla
             rts 
  
 ; Show Address
-; 16-bit hex address at program counter            
-Address:    lda PRGCTR+1        ; Show the address
+; 16-bit hex address at effective address          
+Address:    lda EFADDR+1        ; Show the address
             jsr Hex             ; ,,
-            lda PRGCTR          ; ,,
+            lda EFADDR          ; ,,
             jmp Hex             ; ,,   
             
 ; Show 8-bit Parameter           
@@ -1835,9 +1862,6 @@ Transcribe: jsr CHRGET          ; Get character from input buffer
             beq xscribe_r       ; ,,
             cmp #$ac            ; Replace an asterisk with the external program
             beq ExpandXPC       ;   counter
-            ldy TOOL_CHR        ; The remaining characters--for comments,
-            cpy #T_ASM          ;   labels, and quotes--apply to only the
-            bne ch_token        ;   assembler
             cmp #";"            ; If it's a comment, then quit transcribing
             beq comment         ;   unless we're in quote mode
             cmp #LABEL          ; Handle symbolic labels
@@ -1857,7 +1881,10 @@ ch_token:   cmp #$80            ; Is the character in A a BASIC token?
 x_add:      jsr AddInput        ; Add the text to the buffer
             jmp Transcribe      ; (Carry is always set by AddInput)
 xscribe_r:  jmp AddInput        ; Add the final zero, and fix CHRGET...
-handle_sym: ldy $83             ; Don't handle symbols if the & is in quotes
+handle_sym: ldy TOOL_CHR        ; The label character is not handled by the
+            cpy #T_SYM          ;   symbol init tool, because use's used to
+            beq x_add           ;   call the symbol table display
+            ldy $83             ; Don't handle symbols if the & is in quotes
             cpy #$06            ;   (as in an immediate operand, or text entry)
             beq x_add           ;   ,,
             jmp HandleSym       ;   ,,
@@ -1923,14 +1950,14 @@ PrintBuff:  lda #$00            ; End the buffer with 0
             jmp Linefeed
             
 ; Prompt for Next Line
-; X should be set to the number of bytes the program counter should be
+; X should be set to the number of bytes the effective address should be
 ; advanced
 Prompt:     txa                 ; Based on the incoming X register, advance
-            clc                 ;   the program counter and store in the
-            adc PRGCTR          ;   External Program Counter. This is how wAx
+            clc                 ;   the effecive address and store in the
+            adc EFADDR          ;   External Program Counter. This is how wAx
             sta X_PC            ;   remembers where it was.
             lda #$00            ;   ,,
-            adc PRGCTR+1        ;   ,,
+            adc EFADDR+1        ;   ,,
             sta X_PC+1          ;   ,,
             jsr DirectMode      ; If the user is in direct mode, show a prompt,
             bne prompt_r        ;   otherwise, return to get next command
