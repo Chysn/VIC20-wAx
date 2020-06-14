@@ -1,6 +1,4 @@
-10 print "wax assembly verify"
-25 input "press return";a$
-30 print "testing..."
+10 print "{up}  testing...     ";
 101 =1c00 69006510
 102 =1c04 75206d30
 103 =1c08 307d4040
@@ -82,4 +80,7 @@
 179 =1d38 8c4444aa
 180 =1d3c a8ba8a9a
 181 =1d40 98
-999 print "success!"  
+999 print "{blue}[ok]{black}"
+1000 print "* hex and text edit"
+1005 print "  {cyan}loading...{black}"
+1010 load"edittest.prg",8

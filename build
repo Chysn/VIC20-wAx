@@ -18,14 +18,29 @@ printf "\xfe\xa7" | cat - src/6502x.obj > vic/6502x
 c1541 vic/wax.d64 -write vic/6502x
 
 ## Build BASIC test suite
+##   Starting point
+petcat -w2 -o vic/test -- tests/test.bas
+c1541 vic/wax.d64 -write vic/test
+
+##   Assemble all instructions, all addressing modes
 petcat -w2 -o vic/6502test.prg -- tests/6502test.bas
 c1541 vic/wax.d64 -write vic/6502test.prg
 
+##   Verify assembly of all instructions, all addressing modes
 petcat -w2 -o vic/verify.prg -- tests/verify.bas
 c1541 vic/wax.d64 -write vic/verify.prg
 
+##   Test hex and text editor
 petcat -w2 -o vic/edittest.prg -- tests/edittest.bas
 c1541 vic/wax.d64 -write vic/edittest.prg
+
+##   Test the Somewhat Symbolic Assembler
+petcat -w2 -o vic/symboltest.prg -- tests/symboltest.bas
+c1541 vic/wax.d64 -write vic/symboltest.prg
+
+##   Test immediate mode operand formats
+petcat -w2 -o vic/immedtest.prg -- tests/immedtest.bas
+c1541 vic/wax.d64 -write vic/immedtest.prg
 
 ## Build Block 3 2716 binary
 sed 's/\* = \$a000/\* = \$6000/' src/wax.asm > src/wax-blk3.asm

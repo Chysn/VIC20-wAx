@@ -146,7 +146,7 @@ RVS_OFF     = $92               ; Reverse off
 ;
 ; Note that one of the labels is reserved for the special @/> label, so
 ; add one more to MAX_LAB than you need.
-SYM_END     = $02ff             ; End of Symbol Table
+SYM_END     = $02fd             ; End of Symbol Table
 MAX_LAB     = 11                ; Maximum number of labels
 MAX_FWD     = 8                 ; Maximum number of forward references
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -156,7 +156,7 @@ SYMBOL_A    = SYMBOL_L+MAX_LAB  ; Symbol addresses
 SYMBOL_F    = SYMBOL_A+MAX_LAB*2; Symbol unresolved forward references
 
 ; Assembler workspace
-X_PC        = $01               ; External program counter
+X_PC        = $2fe              ; External program counter
 WORK        = $a3               ; Temporary workspace (2 bytes)
 MNEM        = $a3               ; Current Mnemonic (2 bytes)
 PRGCTR      = $a5               ; Program Counter (2 bytes)

@@ -1,6 +1,4 @@
-10 print "wax assembly test"
-25 input "press return";a$
-30 print "testing..."
+10 print"{up}  testing...     ";
 100 @1c00 adc #$00
 101 @1c02 adc $10
 102 @1c04 adc $20,x
@@ -152,4 +150,7 @@
 248 @1d3e txa 
 249 @1d3f txs 
 250 @1d40 tya 
-999 print "success!"
+999 print "{blue}[ok]{black}"
+1000 print "* verify assembly"
+1005 print "  {cyan}loading...{black}"
+1010 load "verify.prg",8
