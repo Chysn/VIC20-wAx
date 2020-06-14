@@ -139,11 +139,21 @@ CRSRRT      = $1d               ; Cursor right
 RVS_ON      = $12               ; Reverse on
 RVS_OFF     = $92               ; Reverse off
 
+; Assembler symbol table
+; You can relocate and/or resize the symbol table by settnig SYM_END,
+; MAX_LAB, and MAX_FWD to meet your needs. The remaining labels will be
+; set automatically, and you shouldn't need to touch them.
+SYM_END     = $02ff             ; End of Symbol Table
+MAX_LAB     = 11                ; Maximum number of labels
+MAX_FWD     = 8                 ; Maximum number of forward references
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ST_SIZE     = (MAX_LAB + MAX_FWD) * 3
+SYMBOL_L    = SYM_END-ST_SIZE+1 ; Symbol label definitions
+SYMBOL_A    = SYMBOL_L+MAX_LAB  ; Symbol addresses
+SYMBOL_F    = SYMBOL_A+MAX_LAB*2; Symbol unresolved forward references
+
 ; Assembler workspace
-X_PC        = $02fe             ; External program counter
-SYMBOL      = $02c8             ; Symbol table
-SYMBOL_F    = SYMBOL+$14        ;   Forward reference resolution
-SYMBOL_L    = SYMBOL_F+$18      ;   Symbol label table
+X_PC        = $01               ; External program counter
 WORK        = $a3               ; Temporary workspace (2 bytes)
 MNEM        = $a3               ; Current Mnemonic (2 bytes)
 PRGCTR      = $a5               ; Program Counter (2 bytes)
@@ -543,9 +553,9 @@ DefLabel:   jsr CharGet         ; Get the next character after the label;
             jsr ResolveFwd      ;   ,,
             ldy IDX_SYM
 is_def:     lda PRGCTR          ; Set the label address
-            sta SYMBOL,y        ; ,,
+            sta SYMBOL_A,y      ; ,,
             lda PRGCTR+1        ; ,,
-            sta SYMBOL+1,y      ; ,,
+            sta SYMBOL_A+1,y    ; ,,
             jsr CharGet
             cmp #$00
             bne pull_code
@@ -1206,20 +1216,30 @@ InitSym:    lda INBUFFER
             lda PRGCTR+1        ; ,,
             sta X_PC+1          ; ,,
 init_r      rts
-init_clear: ldy #$35            ; Initialize 54 bytes for the Symbol Table
-            lda #$00            ;   Offset $00-$13 Low/High bytes for symbols
--loop:      sta SYMBOL,y        ;   Offset $14-$2b 3-byte forward ref records
-            dey                 ;   ,,
+init_clear: ldy #ST_SIZE-1      ; Initialize bytes for the symbol table
+            lda #$00            ;   See the Symbol Table section at the top for
+-loop:      sta SYMBOL_L,y      ;   information about resizing or relocating the
+            dey                 ;   symbol table
             bpl loop            ;   ,,
             rts
             
 ; Get Symbol Index            
-SymbolIdx:  cmp #"@"            ; @ is a special label that is always defined
-            bne sym_range       ;   as index 0, regardless of other definitions
-            ora #$80            ; So set it up and return the found symbol
-            pha                 ; ,,
-            ldy #$00            ; ,,
-            beq sym_found       ; ,,
+SymbolIdx:  cmp #"@"            ; @ and > are special symbols that are always
+            bne spec_fwd        ;   defined as the highest symbol index.
+            ldy #MAX_LAB-1      ;   ,,
+            bne spec_lab        ;   ,,
+spec_fwd:   cmp #$b1            ; Handle the > label by giving it the special
+            bne sym_range       ;   symbol index, and then clearing out the
+            ldy #MAX_LAB-1      ;   address for the symbol so that it's treated
+            tya                 ;   as a forward reference
+            asl                 ;
+            tax
+            lda #$00
+            sta SYMBOL_A,x
+            sta SYMBOL_A+1,x
+spec_lab:   lda #"@"+$80            ;   > is a forward reference, when used,
+            pha                 ;   but the special symbol is always "@"
+            bne sym_found
 sym_range:  cmp #"0"
             bcc bad_label       ; Symbol no good if less than "0"
             cmp #"Z"+1
@@ -1232,12 +1252,12 @@ bad_label:  clc
             rts      
 good_label: ora #$80            ; High bit set indicates symbol is defined
             pha
-            ldy #$09            ; See if the label is already in the table
+            ldy #MAX_LAB-2      ; See if the label is already in the table
 -loop:      cmp SYMBOL_L,y      ; ,,
             beq sym_found       ; ,,
             dey                 ; ,,
             bpl loop            ; ,,
-            ldy #$09            ; Look for an empty symbol
+            ldy #MAX_LAB-2      ; Look for an empty symbol
 -loop:      lda SYMBOL_L,y      ; ,,
             beq sym_found       ; ,,
             dey                 ; ,,
@@ -1256,9 +1276,9 @@ LabelList:  ldx #$00
             pha                 ; ,,
             asl                 ; Y is the symbol table reference
             tay                 ; ,,
-            lda SYMBOL,y        ; Stash the current value in PRGCTR
+            lda SYMBOL_A,y      ; Stash the current value in PRGCTR
             sta PRGCTR          ; ,,
-            lda SYMBOL+1,y      ; ,,
+            lda SYMBOL_A+1,y    ; ,,
             sta PRGCTR+1        ; ,,
             lda PRGCTR          ; If this symbol is undefined (meaning, it is
             bne show_label      ;   $0000, then skip it)
@@ -1274,7 +1294,7 @@ show_label: jsr LabListCo       ; Add elements common to both listed item
 next_label: pla
             tax
             inx
-            cpx #$0a
+            cpx #MAX_LAB
             bne loop
             lda #$00            ; Show the current value of the external PC
             sta IDX_OUT
@@ -1355,9 +1375,9 @@ get_label:  asl                 ; ,,
             
 ; Symbol is Defined
 ; Zero flag is clear if symbol is defined
-IsDefined:  lda SYMBOL,y
+IsDefined:  lda SYMBOL_A,y
             bne is_defined
-            lda SYMBOL+1,y
+            lda SYMBOL_A+1,y
 is_defined: rts             
 
 ; Expand Symbol
@@ -1372,13 +1392,13 @@ ExpandSym:  sty IDX_SYM
             ldy IDX_SYM
             cmp #"L"            ; If L is specified, jump right to the low
             beq insert_lo       ;   byte
-            lda SYMBOL+1,y      ; Otherwise, add the high byte
+            lda SYMBOL_A+1,y    ; Otherwise, add the high byte
             jsr Hex             ; ,,
             pla                 ; Pull and push back the CHRGET input
             pha                 ; ,,
             cmp #"H"            ; If the high byte was specified, skip
             beq do_expand       ;   the low byte
-insert_lo:  lda SYMBOL,y
+insert_lo:  lda SYMBOL_A,y
             jsr Hex
 do_expand:  lda #$00            ; Add delimiter, since the hex operand can
             jsr CharOut         ;   vary in length
