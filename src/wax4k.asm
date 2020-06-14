@@ -956,8 +956,8 @@ MemSave:    bcc save_err        ; Bail if the address is no good
             bcc save_err        ; Fail if the byte couldn't be parsed
             sta RANGE_END       ; Save to the range low byte
             jsr DiskSetup       ; SETLFS, get filename length, etc.  
-            ldx #<INBUFFER+8    ; ,,
-            ldy #>INBUFFER+8    ; ,,
+            ldx #<INBUFFER+9    ; ,,
+            ldy #>INBUFFER+9    ; ,,
             jsr SETNAM          ; ,,
             lda #EFADDR         ; Set up SAVE call
             ldx RANGE_END       ; ,,
@@ -978,8 +978,8 @@ DiskError:  pha
 MemLoad:    lda #$00            ; Reset the input buffer index because there's
             sta IDX_IN          ;   no address for this command
             jsr DiskSetup       ; SETLFS, get filename length, etc.
-            ldx #<INBUFFER      ; Set location of filename
-            ldy #>INBUFFER      ; ,,
+            ldx #<INBUFFER+1    ; Set location of filename
+            ldy #>INBUFFER+1    ; ,,
             jsr SETNAM          ; ,,
             jsr OPEN
             bcs DiskError
@@ -1027,14 +1027,19 @@ DiskSetup:  jsr ClearBP         ; Clear breakpoint
             ldx #DEVICE         ; ,,
             ldy #$00            ; ,,
             jsr SETLFS          ; ,,
+            jsr CharGet         ; Check that the filename begins with a
+            cmp #QUOTE          ;   quote. If not, error
+            bne setup_err       ;   ,,
             ldy #$00
 -loop:      jsr CharGet
+            beq setup_err
+            cmp #QUOTE
             beq setup_r
             iny
-            cpy #$08
             bne loop            
 setup_r:    tya
             rts
+setup_err:  jmp save_err
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SEARCH COMPONENTS
@@ -2012,6 +2017,14 @@ Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "BAD LABE",$cc
 
+; Notices
+Pad4096:    .asc "JASON JUSTIAN 2020",$00
+            .asc "JJUSTIAN@GMAIL.COM",$00
+            .asc "GITHUB.COM/CHYSN/WAX",$00
+            .asc "1234567890123456789012345678901234567890"
+            .asc "1234567890123456789012345678901234567890"
+            .asc "12345678901234567"
+            
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
 ; instruction records. Every word in the table is in big-endian format, so
