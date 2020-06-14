@@ -141,8 +141,9 @@ RVS_OFF     = $92               ; Reverse off
 
 ; Assembler workspace
 X_PC        = $02fe             ; External program counter
-SYMBOL      = $02d2             ; Symbol table
+SYMBOL      = $02c8             ; Symbol table
 SYMBOL_F    = SYMBOL+$14        ;   Forward reference resolution
+SYMBOL_L    = SYMBOL_F+$18      ;   Symbol label table
 WORK        = $a3               ; Temporary workspace (2 bytes)
 MNEM        = $a3               ; Current Mnemonic (2 bytes)
 PRGCTR      = $a5               ; Program Counter (2 bytes)
@@ -532,20 +533,16 @@ asm_error:  jmp AsmError
 ; Create a new label entry, and resolve any forward references to the
 ; new label.
 DefLabel:   jsr CharGet         ; Get the next character after the label;
-            cmp #"0"            ; If it's not between 0 and 9, throw
-            bcc LabError        ;   a BAD LABEL ERROR
-            cmp #"9"+1          ;   ,,
-            bcs LabError        ;   ,,
-            sec                 ; Get the symbol memory index into Y
-            sbc #"0"            ; ,,
+            jsr SymbolIdx       ; Get a symbol index for the label in A
+            bcc LabError        ; Error if no symbol index could be secured
             asl                 ; ,,
             tay                 ; ,,
             jsr IsDefined       ; If this label is not yet defined, then
             bne is_def          ;   resolve the forward reference, if it
             sty IDX_SYM         ;   was used
             jsr ResolveFwd      ;   ,,
-is_def:     ldy IDX_SYM
-            lda PRGCTR          ; Set the label address
+            ldy IDX_SYM
+is_def:     lda PRGCTR          ; Set the label address
             sta SYMBOL,y        ; ,,
             lda PRGCTR+1        ; ,,
             sta SYMBOL+1,y      ; ,,
@@ -1197,13 +1194,44 @@ InitSym:    lda INBUFFER
             lda PRGCTR+1        ; ,,
             sta X_PC+1          ; ,,
 init_r      rts
-init_clear: ldy #$2b            ; Initialize 44 bytes for the Symbol Table
+init_clear: ldy #$35            ; Initialize 54 bytes for the Symbol Table
             lda #$00            ;   Offset $00-$13 Low/High bytes for symbols
 -loop:      sta SYMBOL,y        ;   Offset $14-$2b 3-byte forward ref records
             dey                 ;   ,,
             bpl loop            ;   ,,
             rts
-          
+            
+; Get Symbol Index            
+SymbolIdx:  cmp #"0"
+            bcc bad_label       ; Symbol no good if less than "0"
+            cmp #"Z"+1
+            bcs bad_label
+            cmp #"9"+1
+            bcc good_label
+            cmp #"A"
+            bcs good_label
+bad_label:  clc
+            rts      
+good_label: ora #$80            ; High bit set indicates symbol is defined
+            pha
+            ldy #$09            ; See if the label is already in the table
+-loop:      cmp SYMBOL_L,y      ; ,,
+            beq sym_found       ; ,,
+            dey                 ; ,,
+            bpl loop            ; ,,
+            ldy #$09            ; Look for an empty symbol
+-loop:      lda SYMBOL_L,y      ; ,,
+            beq sym_found       ; ,,
+            dey                 ; ,,
+            bpl loop            ; ,,
+            pla                 ; No empty symbol is found; all symbols are in        
+            jmp bad_label       ;   use. Return for error
+sym_found:  pla
+            sta SYMBOL_L,y      ; Populate the symbol label table with the name
+            tya                 ;
+            sec                 ; Set Carry flag indicates success
+            rts            
+            
 ; Show Label List           
 LabelList:  ldx #$00
 -loop:      txa                 ; Save the iterator from PrintBuff, etc.
@@ -1276,8 +1304,8 @@ LabListCo:  lda #$00
             jsr Space
             lda #"-"
             jsr CharOut
-            txa
-            ora #"0"
+            lda SYMBOL_L,x
+            and #$7f
             jsr CharOut
             jsr Space
             rts
@@ -1291,12 +1319,11 @@ HandleSym:  lda IDX_IN          ; If - is the first character in the input
             lda #LABEL          ;   ,,
             jsr AddInput        ;   ,,
             jmp Transcribe      ;   ,,
-start_exp:  jsr CHRGET          ; Get the next character, which should be a
-            bcc get_label       ;   numeral
+start_exp:  jsr CHRGET          ; Get the next character, the label
+            jsr SymbolIdx       ; Get the symbol index
+            bcs get_label
             jmp LabError        ; If not, BAD LABEL ERROR
-get_label:  sec
-            sbc #"0"            ; Get the numeric index for the specified label
-            asl                 ; ,,
+get_label:  asl                 ; ,,
             tay                 ; ,,
             jsr IsDefined
             bne ExpandSym
