@@ -546,8 +546,20 @@ is_def:     lda PRGCTR          ; Set the label address
             sta SYMBOL,y        ; ,,
             lda PRGCTR+1        ; ,,
             sta SYMBOL+1,y      ; ,,
+            jsr CharGet
+            cmp #$00
+            bne pull_code
             ldx #$00            ; Return to BASIC or prompt for the same
             jmp Prompt          ;   address again
+pull_code:  ldy #$00
+-loop:      iny
+            lda INBUFFER+5,y
+            sta INBUFFER+3,y
+            bne loop
+            lda #$04
+            sta IDX_IN
+            sec
+            jmp Assemble
  
 ; Parse Immediate Operand
 ; Immediate operand octets are expressed in the following formats--
@@ -1202,7 +1214,13 @@ init_clear: ldy #$35            ; Initialize 54 bytes for the Symbol Table
             rts
             
 ; Get Symbol Index            
-SymbolIdx:  cmp #"0"
+SymbolIdx:  cmp #"@"            ; @ is a special label that is always defined
+            bne sym_range       ;   as index 0, regardless of other definitions
+            ora #$80            ; So set it up and return the found symbol
+            pha                 ; ,,
+            ldy #$00            ; ,,
+            beq sym_found       ; ,,
+sym_range:  cmp #"0"
             bcc bad_label       ; Symbol no good if less than "0"
             cmp #"Z"+1
             bcs bad_label
