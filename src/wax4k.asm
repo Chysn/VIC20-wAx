@@ -143,6 +143,9 @@ RVS_OFF     = $92               ; Reverse off
 ; You can relocate and/or resize the symbol table by settnig SYM_END,
 ; MAX_LAB, and MAX_FWD to meet your needs. The remaining labels will be
 ; set automatically, and you shouldn't need to touch them.
+;
+; Note that one of the labels is reserved for the special @/> label, so
+; add one more to MAX_LAB than you need.
 SYM_END     = $02ff             ; End of Symbol Table
 MAX_LAB     = 11                ; Maximum number of labels
 MAX_FWD     = 8                 ; Maximum number of forward references
