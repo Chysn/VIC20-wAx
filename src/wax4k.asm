@@ -88,7 +88,7 @@ CHKIN       = $ffc6             ; Define file as input
 CHRIN       = $ffcf             ; Get input
 CLRCHN      = $ffcc             ; Close channel
 ASCFLT      = $dcf3             ; Convert base-10 to FAC1
-FACINX      = $d1aa             ; FAC1 to Integer
+MAKADR      = $d7f7             ; FAC1 to Integer
 
 ; System resources - Vectors and Pointers
 IGONE       = $0308             ; Vector to GONE
@@ -1151,9 +1151,10 @@ Base102Hex: jsr UpOver
             sta $7b
             jsr CHRGOT
             jsr ASCFLT
-            jsr FACINX
+            jsr MAKADR
+            lda SYS_DEST+1
             jsr Hex
-            tya
+            lda SYS_DEST
             jsr Hex
             jmp PrintBuff
 
@@ -1546,7 +1547,7 @@ Lookup:     sta INSTDATA        ; INSTDATA is the found opcode
             cpx #T_XDI          ;   use the end of the extended table,
             bne std_table       ;   otherwise, use the standard 6502 table
             cmp #XTABLE_END     ; If we've reached the end of the table,
-            .byte $3c           ; Skip the next word
+            .byte $3c           ; TOP (skip word)
 std_table:  cmp #TABLE_END            
             beq not_found       ;   then the instruction is invalid
             cmp INSTDATA        ; If the instruction doesn't match the opcode,
