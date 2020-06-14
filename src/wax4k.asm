@@ -1355,9 +1355,10 @@ get_label:  asl                 ; ,,
             
 ; Symbol is Defined
 ; Zero flag is clear if symbol is defined
-IsDefined:  lda SYMBOL_L,y
-            and #$80
-is_defined: rts            
+IsDefined:  lda SYMBOL,y
+            bne is_defined
+            lda SYMBOL+1,y
+is_defined: rts             
 
 ; Expand Symbol
 ; and return to Transcribe
