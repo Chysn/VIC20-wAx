@@ -1164,10 +1164,11 @@ Base102Hex: jsr UpOver
             jsr ASCFLT
             jsr MAKADR
             lda SYS_DEST+1
+            beq only_low
             jsr Hex
-            lda SYS_DEST
+only_low:   lda SYS_DEST
             jsr Hex
-            jmp PrintBuff
+b102h_r:    jmp PrintBuff
 
 ; Up And Over
 ; To display converted value
