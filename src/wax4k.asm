@@ -40,6 +40,9 @@
 ; Configuration
 LIST_NUM    = $10               ; Display this many lines
 SEARCH_L    = $10               ; Search this many pages (s * 256 bytes)
+DEF_DEVICE  = $08               ; Default device number
+
+; Tool Setup
 TOOL_COUNT  = $12               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
 T_XDI       = $aa               ; Wedge character + for extended opcode
@@ -62,7 +65,6 @@ T_BAS       = $ae               ; Wedge character up for BASIC stage select
 BYTE        = ":"               ; .byte entry character
 BINARY      = "%"               ; Binary entry character
 LABEL       = $ab               ; Forward relative branch character
-DEVICE      = $08               ; Save device
 
 ; System resources - Routines
 GONE        = $c7e4
@@ -89,6 +91,7 @@ CHRIN       = $ffcf             ; Get input
 CLRCHN      = $ffcc             ; Close channel
 ASCFLT      = $dcf3             ; Convert base-10 to FAC1
 MAKADR      = $d7f7             ; FAC1 to Integer
+DEVICE      = $ba               ; Save device
 
 ; System resources - Vectors and Pointers
 IGONE       = $0308             ; Vector to GONE
@@ -188,6 +191,8 @@ Install:    jsr Rechain         ; Rechain BASIC program
             lda #<Intro         ; Announce that wAx is on
             ldy #>Intro         ; ,,
             jsr PRTSTR          ; ,,
+            lda #DEF_DEVICE     ; Set default device number
+            sta DEVICE
             jmp (READY)         ; READY.
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -636,6 +641,8 @@ AsmError:   ldx #$00            ; ?ASSMEBLY ERROR
 MisError:   ldx #$01            ; ?MISMATCH ERROR
             .byte $3c           ; TOP (skip word)
 LabError:   ldx #$02            ; ?BAD LABEL ERROR
+            .byte $3c           ; TOP (skip word)
+CannotRes:  ldx #$03            ; ?CANNOT RESOLVE ERROR            
             lda ErrAddr_L,x
             sta ERROR_PTR
             lda ErrAddr_H,x
@@ -996,7 +1003,7 @@ MemLoad:    lda #$00            ; Reset the input buffer index because there's
             lda #$42
             jsr CLOSE       
             lda #$42            ; Set up logical file
-            ldx #DEVICE         ; ,,
+            ldx DEVICE          ; ,,
             ldy #$01            ; ,, (load to header location)
             jsr SETLFS          ; ,,
             lda #$00            ; Command for LOAD
@@ -1028,7 +1035,7 @@ show_range: lda #$00            ; Show the loaded range
 ; for call to SETNAM            
 DiskSetup:  jsr ClearBP         ; Clear breakpoint
             lda #$42            ; Set up logical file
-            ldx #DEVICE         ; ,,
+            ldx DEVICE          ; ,,
             ldy #$00            ; ,,
             jsr SETLFS          ; ,,
             jsr CharGet         ; Check that the filename begins with a
@@ -1484,7 +1491,7 @@ fwd_used:   lda SYMBOL_F+1,x    ; A forward reference for this label has been
             pla
             tax
             bcs get_admode      ; ,,
-            jmp AsmError        ; Not a valid instruction; ASSEMBLY ERROR
+            jmp CannotRes       ; Not a valid instruction; CANNOT RESOLVE ERROR
 get_admode: lda INSTDATA+1      ; Get the addressing mode
             cmp #RELATIVE       ; If it's a relative branch instruction,
             beq load_rel        ;   calculate the branch offset
@@ -1498,7 +1505,7 @@ get_admode: lda INSTDATA+1      ; Get the addressing mode
             beq load_abs        ;   ,,
             cmp #IMPLIED        ; If an implied mode instruction is somehow
             bne load_immed      ;   being resolved, throw ASSEMBLY ERROR
-            jmp AsmError        ;   ,,
+            jmp CannotRes       ;   ,,
 load_abs:   lda EFADDR          ; For an absolute mode instruction, just
             ldy #$01            ;   transfer the two bytes over
             sta (CHARAC),y      ;   ,,
@@ -2011,8 +2018,8 @@ ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >Bin2Base10-1,>InitSym-1,>BASICStage-1
 
 ; Addresses for error message text
-ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg
-ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg
+ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg
+ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg
 
 ; Text display tables                      
 Intro:      .asc LF,"GITHUB.COM/CHYSN/WAX",LF,LF
@@ -2020,13 +2027,14 @@ Intro:      .asc LF,"GITHUB.COM/CHYSN/WAX",LF,LF
 Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "BAD LABE",$cc
+ResErrMsg:  .asc "CANNOT RESOLV",$c5
 
 ; Notices
 Pad4096:    .asc "JASON JUSTIAN 2020",$00
             .asc "JJUSTIAN@GMAIL.COM",$00
             .asc "GITHUB.COM/CHYSN/WAX",$00
             .asc "1234567890123456789012345678901234567890"
-            .asc "12345678901234567890123456789012345"
+            .asc "123456789012"
             
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
