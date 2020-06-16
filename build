@@ -1,16 +1,18 @@
 #!/bin/bash
 
 ## Build wAx
-xa -l src/toc -o src/wax.obj src/wax.asm
-printf "\x00\xa0" | cat - src/wax.obj > vic/wax
+xa -l toc/toc2k -o 2716/wax2k.bin src/wax.asm
+printf "\x00\xa0" | cat - 2716/wax2k.bin > vic/wax
 
 rm vic/wax.d64
 c1541 -format wax,8 d64 vic/wax.d64 -write vic/wax
 
 ## Build wAx 4k
-xa -l src/toc4k -o src/wax4k.obj src/wax4k.asm
-printf "\x00\x60" | cat - src/wax4k.obj > vic/wax4k
+xa -l toc/toc4k -o 2732/wax4k.bin src/wax4k.asm
+printf "\x00\x60" | cat - 2732/wax4k.bin > vic/wax4k
 c1541 vic/wax.d64 -write vic/wax4k
+head -c 2048 2732/wax4k.bin > 2716/wax4k-L.bin
+tail -c 2038 2732/wax4k.bin > 2716/wax4k-H.bin
 
 ## Build 6502 Extended Instuction Table
 xa -o src/6502x.obj src/6502x.asm
