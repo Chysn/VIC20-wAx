@@ -1,0 +1,4 @@
+#!/bin/bash
+
+minipro -p AM2716B@DIP24 -w ../vic/wax-blk3.bin
+

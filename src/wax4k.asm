@@ -547,6 +547,9 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             beq asm_r           ;   go back to BASIC
 -loop:      jsr CharGet         ; Look through the buffer for either
             beq test            ;   0, which should indicate implied mode, or:
+            ldy IDX_IN          ; If we've gone past the first character after
+            cpy #$05            ;   the address, no longer pay attention to
+            bne op_parts        ;   pre-data stuff
             cmp #LABEL          ; & = New label
             beq DefLabel        ; ,,
             cmp #BYTE           ; Colon = Byte entry (route to hex editor)
@@ -555,7 +558,7 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             beq TextEdit        ; ,,
             cmp #BINARY         ; % = Binary entry (route to binary editor)
             beq BinaryEdit      ; ,,
-            cmp #"#"            ; # = Parse immediate operand (quotes and %)
+op_parts:   cmp #"#"            ; # = Parse immediate operand (quotes and %)
             beq ImmedOp         ; ,,         
             cmp #"$"            ; $ = Parse the operand
             bne loop            ; ,,
@@ -1366,11 +1369,11 @@ good_label: ora #$80            ; High bit set indicates symbol is defined
             beq sym_found       ; ,,
             dey                 ; ,,
             bpl loop            ; ,,
-            ldy #MAX_LAB-2      ; Look for an empty symbol
--loop:      lda SYMBOL_L,y      ; ,,
-            beq sym_found       ; ,,
-            dey                 ; ,,
-            bpl loop            ; ,,
+            ldy #MAX_LAB-2      ; If the symbol isn't already in use, look for
+-loop:      lda SYMBOL_L,y      ;   an empty record
+            beq sym_found       ;   ,,
+            dey                 ;   ,,
+            bpl loop            ;   ,,
             pla                 ; No empty symbol is found; all symbols are in        
             jmp bad_label       ;   use. Return for error
 sym_found:  pla
@@ -1434,11 +1437,9 @@ next_undef: inx
             beq next_label
 show_fwd:   ldx IDX_SYM
             jsr LabListCo
-            lda #RVS_ON
-            jsr CharOut
             jsr HexPrefix
             ldy #$04
--loop:      lda #"?"
+-loop:      lda #">"
             jsr CharOut
             dey
             bne loop            
@@ -2087,7 +2088,7 @@ ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "BAD LABE",$cc
 ResErrMsg:  .asc "CANNOT RESOLV",$c5
