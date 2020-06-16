@@ -177,8 +177,8 @@ IGNORE_RB   = $af               ; Ignore relative branch range for forward refs
 INSTSIZE    = $b0               ; Instruction size
 SEARCH_C    = $b0               ; Search counter
 IDX_SYM     = $b0               ; Temporary symbol index storage
-IDX_IN      = $b1               ; Buffer index
-IDX_OUT     = $b2               ; Buffer index
+IDX_IN      = $b1               ; Buffer index - Input
+IDX_OUT     = $b2               ; Buffer index - Output
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
 INBUFFER    = $0230             ; Input buffer (22 bytes)
 ZP_TMP      = $0246             ; Zeropage Preservation (16 bytes)
@@ -1144,7 +1144,7 @@ srch_r:     rts
 ; Code Search
 ; Disassemble code from the effective address. If the disassembly at that
 ; address matches the input, indicate the starting address of the match.
-CodeSearch: lda TOOL_CHR
+CodeSearch: lda #T_DIS
             jsr CharOut
             jsr Address
             jsr Space           ; Positions the code into place for IsMatch
@@ -1165,7 +1165,7 @@ MemSearch:  ldy #$00
             bne loop
 no_match:   cmp #QUOTE          ; Is this the end of the search?
             bne next_check
-            lda TOOL_CHR
+            lda #T_MEM
             jsr CharOut            
             jsr Address
             jsr PrintBuff
@@ -1184,7 +1184,7 @@ SetupHex:   lda #QUOTE          ; Changing the start of INBUFFER to a quote
             bcc setup_done      ; If not, the transcription is done
             sta INBUFFER+5,y    ; Store the byte in the buffer
             iny
-            cpy #$04
+            cpy #$08
             bne loop
 setup_done: lda #QUOTE
             sta INBUFFER+5,y
@@ -2074,13 +2074,15 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"WWW.BEIGEMAZE.COM/WAX",LF,LF
+Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,LF
             .asc "WAX ON",$00
-Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "BAD LABE",$cc
 ResErrMsg:  .asc "CANNOT RESOLV",$c5
 RBErrMsg:   .asc "OUT OF RANG",$c5
+
+Pad4096:    .asc "JASON"
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
