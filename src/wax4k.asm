@@ -2074,14 +2074,14 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"GITHUB.COM/CHYSN/WAX",LF,LF
+Intro:      .asc LF,"WWW.BEIGEMAZE.COM/WAX",LF,LF
             .asc "WAX ON",$00
-Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "BAD LABE",$cc
 ResErrMsg:  .asc "CANNOT RESOLV",$c5
 RBErrMsg:   .asc "OUT OF RANG",$c5
-            
+
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
 ; instruction records. Every word in the table is in big-endian format, so
