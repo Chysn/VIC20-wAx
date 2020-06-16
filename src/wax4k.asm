@@ -131,6 +131,7 @@ ZEROPAGE_Y  = $90               ; e.g., LDX $FA,Y
 IMMEDIATE   = $a0               ; e.g., LDA #$2D
 IMPLIED     = $b0               ; e.g., INY
 RELATIVE    = $c0               ; e.g., BCC $181E
+ACCUM       = $d0               ; e.g., ROR A
 
 ; Other constants
 TABLE_END   = $f2               ; Indicates the end of mnemonic table
@@ -397,7 +398,11 @@ mnemonic_r: rts
 ; Dispatch display routines based on addressing mode
 DOperand:   cmp #IMPLIED        ; Handle each addressing mode with a subroutine
             beq mnemonic_r      ; Implied has no operand, so it goes to some RTS
-            cmp #RELATIVE
+            cmp #ACCUM          ;
+            bne ch_rel          ; Handle accumulator mode right here, because
+            lda #"A"            ;   it's super-small
+            jmp CharOut         ;   ,,
+ch_rel:     cmp #RELATIVE
             beq DisRel
             cmp #IMMEDIATE
             beq DisImm
@@ -703,7 +708,14 @@ reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match
             pla
             cmp #RELATIVE       ; If the addressing mode is relative, test
             beq test_rel        ;   separately and check range
-            jsr IsMatch
+            cmp #ACCUM          ; If the addressing mode is accumulator,
+            bne run_match       ;   test separately
+            lda IDX_IN
+            cmp #$0a
+            bcs reset
+            lda #$09
+            sta IDX_OUT
+run_match:  jsr IsMatch
             bcc reset
 match:      jsr NextValue
             lda EFADDR          ; Set the INSTSIZE location to the number of
@@ -2074,15 +2086,12 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,LF
-            .asc "WAX ON",$00
-Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Intro:      .asc LF,"WAX ON",$00
+Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "BAD LABE",$cc
 ResErrMsg:  .asc "CANNOT RESOLV",$c5
 RBErrMsg:   .asc "OUT OF RANG",$c5
-
-Pad4096:    .asc "JASON"
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
@@ -2119,11 +2128,11 @@ InstrSet:   .byte $09,$07       ; ADC
             .byte $21,$20       ; * AND (indirect,X)
             .byte $31,$30       ; * AND (indirect),Y
             .byte $0c,$d9       ; ASL
-            .byte $0a,$b0       ; * ASL accumulator
             .byte $06,$70       ; * ASL zeropage
             .byte $16,$80       ; * ASL zeropage,X
             .byte $0e,$40       ; * ASL absolute
             .byte $1e,$50       ; * ASL absolute,X
+            .byte $0a,$d0       ; * ASL accumulator
             .byte $10,$c7       ; BCC
             .byte $90,$c0       ; * BCC relative
             .byte $10,$e7       ; BCS
@@ -2224,11 +2233,11 @@ InstrSet:   .byte $09,$07       ; ADC
             .byte $ac,$40       ; * LDY absolute
             .byte $bc,$50       ; * LDY absolute,X
             .byte $64,$e5       ; LSR
-            .byte $4a,$b0       ; * LSR accumulator
             .byte $46,$70       ; * LSR zeropage
             .byte $56,$80       ; * LSR zeropage,X
             .byte $4e,$40       ; * LSR absolute
             .byte $5e,$50       ; * LSR absolute,X
+            .byte $4a,$d0       ; * LSR accumulator
             .byte $73,$e1       ; NOP
             .byte $ea,$b0       ; * NOP implied
             .byte $7c,$83       ; ORA
@@ -2249,17 +2258,17 @@ InstrSet:   .byte $09,$07       ; ADC
             .byte $83,$21       ; PLP
             .byte $28,$b0       ; * PLP implied
             .byte $93,$d9       ; ROL
-            .byte $2a,$b0       ; * ROL accumulator
             .byte $26,$70       ; * ROL zeropage
             .byte $36,$80       ; * ROL zeropage,X
             .byte $2e,$40       ; * ROL absolute
             .byte $3e,$50       ; * ROL absolute,X
+            .byte $2a,$d0       ; * ROL accumulator
             .byte $93,$e5       ; ROR
-            .byte $6a,$b0       ; * ROR accumulator
             .byte $66,$70       ; * ROR zeropage
             .byte $76,$80       ; * ROR zeropage,X
             .byte $6e,$40       ; * ROR absolute
             .byte $7e,$50       ; * ROR absolute,X
+            .byte $6a,$d0       ; * ROR accumulator
             .byte $95,$13       ; RTI
             .byte $40,$b0       ; * RTI implied
             .byte $95,$27       ; RTS

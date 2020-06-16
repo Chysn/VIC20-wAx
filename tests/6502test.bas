@@ -15,7 +15,7 @@
 113 @1c1f and $1313,y
 114 @1c22 and ($14,x)
 115 @1c24 and ($15),y
-116 @1c26 asl 
+116 @1c26 asl a
 117 @1c27 asl $17
 118 @1c29 asl $18,x
 119 @1c2b asl $1919
@@ -90,7 +90,7 @@
 188 @1cc3 ldy $88,x
 189 @1cc5 ldy $8989
 190 @1cc8 ldy $9090,x
-191 @1ccb lsr 
+191 @1ccb lsr a
 192 @1ccc lsr $92
 193 @1cce lsr $93,x
 194 @1cd0 lsr $9494
@@ -108,12 +108,12 @@
 206 @1ceb php 
 207 @1cec pla 
 208 @1ced plp 
-209 @1cee rol 
+209 @1cee rol a
 210 @1cef rol $10
 211 @1cf1 rol $11,x
 212 @1cf3 rol $1212
 213 @1cf6 rol $1313,x
-214 @1cf9 ror 
+214 @1cf9 ror a
 215 @1cfa ror $15
 216 @1cfc ror $16,x
 217 @1cfe ror $1717
