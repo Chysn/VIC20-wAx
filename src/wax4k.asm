@@ -172,7 +172,8 @@ RANGE_END   = $a9               ; End of range for Save and Copy
 TOOL_CHR    = $ab               ; Current function (T_ASM, T_DIS)
 OPCODE      = $ac               ; Assembly target for hypotesting
 OPERAND     = $ad               ; Operand storage (2 bytes)
-SP_OPERAND  = $af               ; Hypothetical relative branch operand
+TEMP_CALC   = $af               ; Temporary calculation
+IGNORE_RB   = $af               ; Ignore relative branch range for forward refs
 INSTSIZE    = $b0               ; Instruction size
 SEARCH_C    = $b0               ; Search counter
 IDX_SYM     = $b0               ; Temporary symbol index storage
@@ -236,6 +237,7 @@ Prepare:    tax                 ; Save A in X so Prepare can set TOOL_CHR
             stx TOOL_CHR        ; Store the tool character
             lda #$00            ; Initialize the input index for write
             sta IDX_IN          ; ,,
+            sta IGNORE_RB       ; Clear Ignore Relative Branch flag
             jsr Transcribe      ; Transcribe from CHRGET to INBUFFER
             lda #$ef            ; $0082 BEQ $008a -> BEQ $0073 (maybe)
             sta $83             ; ,,
@@ -549,7 +551,7 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             cmp #BINARY         ; % = Binary entry (route to binary editor)
             beq BinaryEdit      ; ,,
             cmp #"#"            ; # = Parse immediate operand (quotes and %)
-            beq ImmedOp         ; ,,            
+            beq ImmedOp         ; ,,         
             cmp #"$"            ; $ = Parse the operand
             bne loop            ; ,,
             jsr GetOperand      ; Once $ is found, then grab the operand
@@ -579,8 +581,9 @@ asm_error:  jmp AsmError
 ; new label.
 DefLabel:   jsr CharGet         ; Get the next character after the label;
             jsr SymbolIdx       ; Get a symbol index for the label in A
-            bcc LabError        ; Error if no symbol index could be secured
-            asl                 ; ,,
+            bcs have_label      ;
+            jmp LabError        ; Error if no symbol index could be secured
+have_label: asl                 ; ,,
             tay                 ; ,,
             jsr IsDefined       ; If this label is not yet defined, then
             bne is_def          ;   resolve the forward reference, if it
@@ -616,22 +619,32 @@ ImmedOp:    jsr CharGet
             bne try_quote
             jsr GetOperand
             lda OPERAND
-            sta SP_OPERAND
             jmp test
 try_quote:  cmp #QUOTE
             bne try_binary
             jsr CharGet
-            sta SP_OPERAND
+            sta OPERAND
             jsr CharGet
             cmp #QUOTE
             bne AsmError
-            jmp test
+            jmp insert_hex
 try_binary: cmp #"%"
             bne AsmError
             jsr BinaryByte
             bcc AsmError
-            ;sta SP_OPERAND     ; Storage to SP_OPERAND is done by Binary
-            jmp test            
+            sta OPERAND
+insert_hex: lda #$00            ; Store the hex value of the operand after the
+            sta IDX_OUT         ;   #, so it can be matched by Hypotest.
+            sta INBUFFER+11     ;   End it with 0 as a line delimiter
+            lda #"$"            ;   ,,
+            sta INBUFFER+8      ;   ,,
+            lda OPERAND         ;   ,,
+            jsr Hex             ;   ,,
+            lda OUTBUFFER       ;   ,,
+            sta INBUFFER+9      ;   ,,
+            lda OUTBUFFER+1     ;   ,,
+            sta INBUFFER+10     ;   ,,
+            jmp test
             
 ; Error Message
 ; Invalid opcode or formatting (ASSEMBLY)
@@ -642,13 +655,15 @@ MisError:   ldx #$01            ; ?MISMATCH ERROR
             .byte $3c           ; TOP (skip word)
 LabError:   ldx #$02            ; ?BAD LABEL ERROR
             .byte $3c           ; TOP (skip word)
-CannotRes:  ldx #$03            ; ?CANNOT RESOLVE ERROR            
+CannotRes:  ldx #$03            ; ?CANNOT RESOLVE ERROR 
+            .byte $3c           ; TOP (skip word)
+OutOfRange: ldx #$04            ; ?OUT OF RANGE ERROR           
             lda ErrAddr_L,x
             sta ERROR_PTR
             lda ErrAddr_H,x
             sta ERROR_PTR+1
             jsr Restore
-            jmp CUST_ERR           
+            jmp CUST_ERR          
 
 ; Get Operand
 ; Populate the operand for an instruction by looking forward in the buffer and
@@ -660,11 +675,6 @@ GetOperand: jsr Buff2Byte       ; Get the first byte
             bcs high_byte       ; If an 8-bit operand is provided, move the high
             lda OPERAND+1       ;   byte to the low byte. Otherwise, just
 high_byte:  sta OPERAND         ;   set the low byte with the input
-            sec                 ; Compute hypothetical relative branch
-            sbc EFADDR          ; Subtract the effective address address from
-            sec                 ;   the instruction target
-            sbc #$02            ; Offset by 2 to account for the instruction
-            sta SP_OPERAND      ; Save the speculative operand
 getop_r:    rts
             
 ; Hypothesis Test
@@ -691,10 +701,8 @@ reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match
             lda #$00            ; Add 0 delimiter to end of output buffer so
             jsr CharOut         ;  the match knows when to stop
             pla
-            cmp #RELATIVE       ; If the addressing mode is or immeditate,
-            beq test_sp         ;   test separately
-            cmp #IMMEDIATE      ;   ,,
-            beq test_sp         ;   ,,
+            cmp #RELATIVE       ; If the addressing mode is relative, test
+            beq test_rel        ;   separately and check range
             jsr IsMatch
             bcc reset
 match:      jsr NextValue
@@ -703,15 +711,58 @@ match:      jsr NextValue
             sbc #OPCODE         ;   ,,
             sta INSTSIZE        ;   ,,
             jmp RefreshPC       ; Restore the effective address to target addr
-test_sp:    lda #$0a            ; Handle speculative operands here; set
-            sta IDX_OUT         ;   a stop after four characters in output
-            jsr IsMatch         ;   buffer and check for a match
-            bcc reset          
-            lda SP_OPERAND      ; If the instruction matches, move the
-            sta OPERAND         ;   speculative operand to the working operand
-            jmp match           ; Treat this like a regular match from here
+test_rel:   lda #$0a
+            sta IDX_OUT
+            jsr IsMatch
+            bcc reset
+            jsr RefreshPC
+            jsr ComputeRB
+            sty OPERAND
+            lda #$02
+            sta INSTSIZE
+            sec
+            rts
 bad_code:   clc                 ; Clear carry flag to indicate failure
             rts
+            
+; Compute Relative Branch Offset
+; With branch instruction in EFADDR
+; And taget in OPERAND
+ComputeRB:  lda EFADDR+1        ; Stash the effective address, as the offset
+            pha                 ;   is computed from the start of the next
+            lda EFADDR          ;   instruction
+            pha                 ;   ,,
+            lda #$02            ;   ,,
+            clc                 ; Find the difference between the tool's new
+            adc EFADDR          ;   effective address and the candidate target
+            sta EFADDR          ;   address
+            lda #$00            ;   ,,
+            adc EFADDR+1        ;   ,,
+            sta EFADDR+1        ;   ,,
+            lda OPERAND         ;   ,,
+            sec                 ;   ,,
+            sbc EFADDR          ;   ,,
+            tay                 ;   ,, (Y will be the RB offset)
+            lda OPERAND+1       ;   ,,
+            sbc EFADDR+1        ;   ,,
+            tax                 ;   ,,
+            pla                 ; Put back the tool's effective address
+            sta EFADDR          ; ,,
+            pla                 ; ,,
+            sta EFADDR+1        ; ,,
+            cpx #$ff            ; Check the range; the difference must be between
+            beq neg             ;   $ff80 and $007f, inclusive
+            cpx #$00            ;   ,,
+            beq pos             ;   ,,
+rb_err:     lda IGNORE_RB
+            bne compute_r
+            jmp OutOfRange      ; BASIC error if out of range
+neg:        cpy #$80
+            bcc rb_err
+            rts
+pos:        cpy #$80
+            bcs rb_err
+compute_r:  rts            
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY DUMP COMPONENT
@@ -751,10 +802,10 @@ next_char:  iny
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 BinaryDisp: ldx #$00            ; Get the byte at the effective address
             lda (EFADDR,x)      ; ,,
-            sta SP_OPERAND      ; Store byte for binary conversion
+            sta TEMP_CALC      ; Store byte for binary conversion
             lda #%10000000      ; Start with high bit
 -loop:      pha
-            bit SP_OPERAND
+            bit TEMP_CALC
             beq is_zero
             lda #RVS_ON
             jsr CharOut
@@ -1417,6 +1468,7 @@ get_label:  asl                 ; ,,
             pla                 ;   its original position
             sta IDX_IN          ;   ,,
             jsr AddFwdRec       ; Add forward reference record for label Y
+            inc IGNORE_RB       ; Set relative branch ignore flag
             jmp ExpandSym       ; Use $0000 as a placeholder
             
 ; Symbol is Defined
@@ -1596,21 +1648,21 @@ ch_length:  lda EFADDR+1        ; Make sure that the ending page isn't lower
             sta EFADDR          ;   ,,
 set_ptrs:   lda EFADDR+1        ; Set up the BASIC start and end pointers
             sta $2c             ;   and stuff
-            sta $2e             ; ,,
-            sta $30             ; ,,
-            sta $32             ; ,,
-            lda #$01            ; ,,
-            sta $2b             ; ,,
-            lda #$03            ; ,,
-            sta $2d             ; ,,
-            sta $2f             ; ,,
-            sta $31             ; ,,
-            lda #$00            ; ,,
-            sta $33             ; ,,
-            sta $37             ; ,,
-            lda EFADDR          ; ,,
-            sta $34             ; ,,
-            sta $38             ; ,,
+            sta $2e             ;   ,,
+            sta $30             ;   ,,
+            sta $32             ;   ,,
+            lda #$01            ;   ,,
+            sta $2b             ;   ,,
+            lda #$03            ;   ,,
+            sta $2d             ;   ,,
+            sta $2f             ;   ,,
+            sta $31             ;   ,,
+            lda #$00            ;   ,,
+            sta $33             ;   ,,
+            sta $37             ;   ,,
+            lda EFADDR          ;   ,,
+            sta $34             ;   ,,
+            sta $38             ;   ,,
             ldy #$00            ; Clear the low byte. From here on out, we're     
             sty EFADDR          ;   dealing with the start of the BASIC stage
             ldy #$00            ; Look through the input buffer for an "N"
@@ -1807,7 +1859,7 @@ echo:       jmp CharOut
 ; Get Binary Byte
 ; Return in A     
 BinaryByte: lda #$00
-            sta SP_OPERAND
+            sta TEMP_CALC
             lda #%10000000
 -loop:      pha
             jsr CharGet
@@ -1816,15 +1868,15 @@ BinaryByte: lda #$00
             bne zero
             pla
             pha
-            ora SP_OPERAND
-            sta SP_OPERAND
+            ora TEMP_CALC
+            sta TEMP_CALC
             jmp next_bit
 zero:       cpy #"0"
             bne bad_bin
 next_bit:   pla
             lsr
             bne loop
-            lda SP_OPERAND
+            lda TEMP_CALC
             sec
             rts
 bad_bin:    pla
@@ -2018,8 +2070,8 @@ ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >Bin2Base10-1,>InitSym-1,>BASICStage-1
 
 ; Addresses for error message text
-ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg
-ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg
+ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
+ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
 Intro:      .asc LF,"GITHUB.COM/CHYSN/WAX",LF,LF
@@ -2028,13 +2080,7 @@ Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "BAD LABE",$cc
 ResErrMsg:  .asc "CANNOT RESOLV",$c5
-
-; Notices
-Pad4096:    .asc "JASON JUSTIAN 2020",$00
-            .asc "JJUSTIAN@GMAIL.COM",$00
-            .asc "GITHUB.COM/CHYSN/WAX",$00
-            .asc "1234567890123456789012345678901234567890"
-            .asc "123456789012"
+RBErrMsg:   .asc "OUT OF RANG",$c5
             
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
