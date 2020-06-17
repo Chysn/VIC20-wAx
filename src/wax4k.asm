@@ -41,6 +41,9 @@
 LIST_NUM    = $10               ; Display this many lines
 SEARCH_L    = $10               ; Search this many pages (s * 256 bytes)
 DEF_DEVICE  = $08               ; Default device number
+SYM_END     = $02fd             ; End of Symbol Table
+MAX_LAB     = 16                ; Maximum number of labels
+MAX_FWD     = 15                ; Maximum number of forward references
 
 ; Tool Setup
 TOOL_COUNT  = $12               ; How many tools are there?
@@ -151,10 +154,6 @@ RVS_OFF     = $92               ; Reverse off
 ;
 ; Note that one of the labels is reserved for the special @/> label, so
 ; add one more to MAX_LAB than you need.
-SYM_END     = $02fd             ; End of Symbol Table
-MAX_LAB     = 11                ; Maximum number of labels
-MAX_FWD     = 8                 ; Maximum number of forward references
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ST_SIZE     = (MAX_LAB + MAX_FWD) * 3
 SYMBOL_L    = SYM_END-ST_SIZE+1 ; Symbol label definitions
 SYMBOL_A    = SYMBOL_L+MAX_LAB  ; Symbol addresses
@@ -271,21 +270,14 @@ List:       bcs addr_ok         ; If the provided address is OK, disassemble
             sta EFADDR          ;  persistent counter to continue listing
             lda X_PC+1          ;  after the last address
             sta EFADDR+1        ;  ,,
-            jmp is_list
-addr_ok:    lda INBUFFER+4      ; If there's code or anything after the command,
-            beq is_list         ;   treat it as an assembler tool
-            lda #T_ASM          ;   ,,
-            sta TOOL_CHR        ;   ,,
-            jmp Assemble        ;   ,,
-is_list:    jsr DirectMode      ; If the tool is in direct mode,
+addr_ok:    jsr DirectMode      ; If the tool is in direct mode,
             bne start_list      ;   cursor up to overwrite the original input
             lda #CRSRUP         ;   ,,
             jsr CHROUT          ;   ,,
 start_list: ldx #LIST_NUM       ; Default if no number has been provided
 ListLine:   txa
             pha
-            lda #$00
-            sta IDX_OUT
+            jsr ResetOut
             jsr BreakInd        ; Indicate breakpoint, if it's here
             lda TOOL_CHR        ; Start each line with the wedge character
             cmp #T_XDI          ; If the tool is the extended opcode disassemble
@@ -590,7 +582,7 @@ asm_error:  jmp AsmError
 DefLabel:   jsr CharGet         ; Get the next character after the label;
             jsr SymbolIdx       ; Get a symbol index for the label in A
             bcs have_label      ;
-            jmp LabError        ; Error if no symbol index could be secured
+            jmp SymError        ; Error if no symbol index could be secured
 have_label: asl                 ; ,,
             tay                 ; ,,
             jsr IsDefined       ; If this label is not yet defined, then
@@ -641,10 +633,9 @@ try_binary: cmp #"%"
             jsr BinaryByte
             bcc AsmError
             sta OPERAND
-insert_hex: lda #$00            ; Store the hex value of the operand after the
-            sta IDX_OUT         ;   #, so it can be matched by Hypotest.
-            sta INBUFFER+11     ;   End it with 0 as a line delimiter
-            lda #"$"            ;   ,,
+insert_hex: jsr ResetOut        ; Store the hex value of the operand after the
+            sta INBUFFER+11     ;   #, so it can be matched by Hypotest.
+            lda #"$"            ;   End it with 0 as a line delimiter
             sta INBUFFER+8      ;   ,,
             lda OPERAND         ;   ,,
             jsr Hex             ;   ,,
@@ -661,11 +652,11 @@ AsmError:   ldx #$00            ; ?ASSMEBLY ERROR
             .byte $3c           ; TOP (skip word)
 MisError:   ldx #$01            ; ?MISMATCH ERROR
             .byte $3c           ; TOP (skip word)
-LabError:   ldx #$02            ; ?BAD LABEL ERROR
+SymError:   ldx #$02            ; ?SYMBOL ERROR
             .byte $3c           ; TOP (skip word)
 CannotRes:  ldx #$03            ; ?CANNOT RESOLVE ERROR 
             .byte $3c           ; TOP (skip word)
-OutOfRange: ldx #$04            ; ?OUT OF RANGE ERROR           
+OutOfRange: ldx #$04            ; ?TOO FAR ERROR
             lda ErrAddr_L,x
             sta ERROR_PTR
             lda ErrAddr_H,x
@@ -907,8 +898,7 @@ SetupVec:   lda #<main          ; Intercept GONE to process wedge
 ; Replaces the default BRK handler. Shows the register display, goes to warm
 ; start.
 Break:      cld                 ; Escape hatch for accidentally-set Decimal flag
-            lda #$00
-            sta IDX_OUT
+            jsr ResetOut
             lda #<Registers     ; Print register display bar
             ldy #>Registers     ; ,,
             jsr PRTSTR          ; ,,
@@ -1085,8 +1075,7 @@ MemLoad:    lda #$00            ; Reset the input buffer index because there's
             jsr DirectMode      ; Show the loaded range if the load is done in
             beq show_range      ;   direct mode
             rts
-show_range: lda #$00            ; Show the loaded range
-            sta IDX_OUT         ; ,,
+show_range: jsr ResetOut        ; Show the loaded range
             jsr Linefeed        ; ,,
             lda #T_DIS          ; ,,
             jsr CharOut         ; ,,
@@ -1153,9 +1142,8 @@ check_end:  pla                 ; Has the effective address high byte advanced?
             lda KEYCVTRS        ;   search going
             and #$01            ;   ,,
             bne next_srch       ;   ,,
-srch_stop:  lda #$00            ; Start a new output buffer to indicate the
-            sta IDX_OUT         ;   ending search address
-            lda #"/"            ;   ,,
+srch_stop:  jsr ResetOut        ; Start a new output buffer to indicate the
+            lda #"/"            ;   ending search address
             jsr CharOut         ;   ,,
             jsr Address         ;   ,,
             jsr PrintBuff       ;   ,,
@@ -1289,8 +1277,7 @@ bin_conv_r: rts
 
 ; Base-10 to Hex
 Base102Hex: jsr UpOver
-            lda #$00
-            sta IDX_OUT
+            jsr ResetOut
             jsr HexPrefix
             ldy #<INBUFFER
             lda #>INBUFFER
@@ -1389,6 +1376,7 @@ sym_found:  pla
             
 ; Show Label List           
 LabelList:  ldx #$00
+            stx TEMP_CALC       ; Count forward reference usage
 -loop:      txa                 ; Save the iterator from PrintBuff, etc.
             pha                 ; ,,
             asl                 ; Y is the symbol table reference
@@ -1413,8 +1401,7 @@ next_label: pla
             inx
             cpx #MAX_LAB
             bne loop
-            lda #$00            ; Show the current value of the external PC
-            sta IDX_OUT
+            jsr ResetOut           ; Show the current value of the external PC
             jsr Space
             jsr Space
             lda #"*"
@@ -1425,35 +1412,42 @@ next_label: pla
             jsr Hex
             lda X_PC
             jsr Hex
+            jsr Space
+            lda #">"
+            jsr CharOut
+            lda TEMP_CALC
+            jsr Hex
             jsr PrintBuff
             rts
 undefd:     stx IDX_SYM
-            ldx #$00
+            ldy #$00            ; Forward reference count for this label
+            ldx #$00            ; Forward record index
 -loop:      lda SYMBOL_F,x
             bpl next_undef
-            and #$0f
+            and #$3f
             cmp IDX_SYM
-            beq show_fwd
+            bne next_undef
+            iny
 next_undef: inx
             inx
             inx
-            cpx #$18
+            cpx #MAX_FWD*3
             bne loop
+            cpy #$00
             beq next_label
-show_fwd:   ldx IDX_SYM
+show_fwd:   tya
+            clc
+            adc TEMP_CALC
+            sta TEMP_CALC
+            ldx IDX_SYM
             jsr LabListCo
-            jsr HexPrefix
-            ldy #$04
--loop:      lda #">"
+            lda #">"
             jsr CharOut
-            dey
-            bne loop            
 fwd_d:      jsr PrintBuff
             jmp next_label
 
 ; Label List Common            
-LabListCo:  lda #$00
-            sta IDX_OUT
+LabListCo:  jsr ResetOut
             jsr Space
             lda #"-"
             jsr CharOut
@@ -1475,7 +1469,7 @@ HandleSym:  lda IDX_IN          ; If - is the first character in the input
 start_exp:  jsr CHRGET          ; Get the next character, the label
             jsr SymbolIdx       ; Get the symbol index
             bcs get_label
-            jmp LabError        ; If not, BAD LABEL ERROR
+            jmp SymError        ; If not, ?SYMBOL ERROR
 get_label:  asl                 ; ,,
             tay                 ; ,,
             jsr IsDefined
@@ -1499,8 +1493,7 @@ is_defined: rts
 ; Expand Symbol
 ; and return to Transcribe
 ExpandSym:  sty IDX_SYM
-            lda #$00
-            sta IDX_OUT
+            jsr ResetOut
             jsr HexPrefix
             ldy #$01            ; See if the user has entered H or L after
             lda ($7a),y         ;   the label
@@ -1546,7 +1539,7 @@ ResolveFwd: lda IDX_SYM
             inx
             inx
             inx
-            cpx #$18
+            cpx #MAX_FWD*3
             bne loop
             rts                 ; Label not found in forward reference table
 fwd_used:   lda SYMBOL_F+1,x    ; A forward reference for this label has been
@@ -1617,7 +1610,7 @@ AddFwdRec:  ldx #$00            ; Search the forward symbol table for a
 next_used:  inx                 ;   ,,
             inx                 ;   ,,
             inx                 ;   ,,
-            cpx #$18            ;   ,,
+            cpx #MAX_FWD*3      ;   ,,
             bne loop            ;   ,,
 find_empty: ldx #$00            ; Now, search ALL the records, this time looking
 -loop:      lda SYMBOL_F,x      ;   for an unused record.
@@ -1625,9 +1618,9 @@ find_empty: ldx #$00            ; Now, search ALL the records, this time looking
             inx
             inx
             inx
-            cpx #$18            ; Check the limit of forward reference records
+            cpx #MAX_FWD*3      ; Check the limit of forward reference records
             bne loop
-            rts                 ; No records are left, so leave with no entry 
+            jmp SymError        ; No records are left, so do Label Error 
 empty_rec:  tya
             lsr
             ora #$80            ; Set the high bit to indicate record in use
@@ -1699,8 +1692,7 @@ new:        lda #$00            ; Zero out the first few bytes of the stage so
             bpl loop            ;   ,,
 finish:     jsr Rechain
             jmp (READY)
-bank_r:     lda #$00            ; Provide info about the start of BASIC
-            sta IDX_OUT         ; ,,
+bank_r:     jsr ResetOut        ; Provide info about the start of BASIC
             jsr UpOver          ; ,,
             jsr HexPrefix       ; ,,
             lda $2c             ; ,,
@@ -1982,8 +1974,7 @@ add_only:   beq x_add
 
 ; Expand External Program Counter
 ; Replace asterisk with the X_PC
-ExpandXPC:  lda #$00            ; Clear the output buffer, which will be used
-            sta IDX_OUT         ;   to construct the hex address
+ExpandXPC:  jsr ResetOut
             lda X_PC+1
             jsr Hex
             lda X_PC
@@ -1995,7 +1986,12 @@ ExpandXPC:  lda #$00            ; Clear the output buffer, which will be used
             cpy #$04
             bne loop
             jmp Transcribe
-     
+           
+; Reset Output Buffer
+ResetOut:   lda #$00
+            sta IDX_OUT
+            rts            
+                 
 ; Add Input
 ; Add a character to the input buffer and advance the counter
 AddInput:   ldx IDX_IN
@@ -2047,8 +2043,7 @@ Prompt:     txa                 ; Based on the incoming X register, advance
             sta X_PC+1          ;   ,,
             jsr DirectMode      ; If the user is in direct mode, show a prompt,
             bne prompt_r        ;   otherwise, return to get next command
-            lda #$00            ; Reset the output buffer to generate the
-            sta IDX_OUT         ;   prompt
+            jsr ResetOut        ; Reset the output buffer to generate the prompt
             lda TOOL_CHR        ; The prompt begins with the current tool's
             jsr CharOut         ;   wedge character
             lda X_PC+1          ; Show the high byte
@@ -2093,11 +2088,11 @@ ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
-LabErrMsg:  .asc "BAD LABE",$cc
-ResErrMsg:  .asc "CANNOT RESOLV",$c5
-RBErrMsg:   .asc "RANG",$c5
+LabErrMsg:  .asc "SYMBO",$cc
+ResErrMsg:  .asc "CAN",$27,"T RESOLV",$c5
+RBErrMsg:   .asc "TOO FA",$d2
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
