@@ -12,7 +12,7 @@ xa -l toc/toc4k -o 2732/wax4k.bin src/wax4k.asm
 printf "\x00\x60" | cat - 2732/wax4k.bin > vic/wax4k
 c1541 vic/wax.d64 -write vic/wax4k
 head -c 2048 2732/wax4k.bin > 2716/wax4k-L.bin
-tail -c 2038 2732/wax4k.bin > 2716/wax4k-H.bin
+tail -c 2048 2732/wax4k.bin > 2716/wax4k-H.bin
 
 ## Build 6502 Extended Instuction Table
 xa -o src/6502x.obj src/6502x.asm
@@ -45,6 +45,6 @@ petcat -w2 -o vic/immedtest.prg -- tests/immedtest.bas
 c1541 vic/wax.d64 -write vic/immedtest.prg
 
 ## Build Block 3 2716 binary
-sed 's/\* = \$a000/\* = \$6000/' src/wax.asm > src/wax-blk3.asm
-xa -o vic/wax-blk3.bin src/wax-blk3.asm
+sed 's/\* = \$a000/\* = \$6000/' src/wax.asm > asm/wax-blk3.asm
+xa -o 2716/wax2k-blk3.bin src/wax-blk3.asm
 
