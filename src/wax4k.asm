@@ -654,9 +654,11 @@ MisError:   ldx #$01            ; ?MISMATCH ERROR
             .byte $3c           ; TOP (skip word)
 SymError:   ldx #$02            ; ?SYMBOL ERROR
             .byte $3c           ; TOP (skip word)
-CannotRes:  ldx #$03            ; ?CANNOT RESOLVE ERROR 
+CannotRes:  ldx #$03            ; ?CAN'T RESOLVE ERROR 
             .byte $3c           ; TOP (skip word)
 OutOfRange: ldx #$04            ; ?TOO FAR ERROR
+            .byte $3c           ; TOP (skip word)
+NoForwards: ldx #$05            ; ?FORWARD ERROR            
             lda ErrAddr_L,x
             sta ERROR_PTR
             lda ErrAddr_H,x
@@ -1402,12 +1404,8 @@ next_label: pla
             cpx #MAX_LAB
             bne loop
             jsr ResetOut           ; Show the current value of the external PC
-            jsr Space
-            jsr Space
             lda #"*"
             jsr CharOut
-            jsr Space
-            jsr HexPrefix
             lda X_PC+1
             jsr Hex
             lda X_PC
@@ -1620,7 +1618,7 @@ find_empty: ldx #$00            ; Now, search ALL the records, this time looking
             inx
             cpx #MAX_FWD*3      ; Check the limit of forward reference records
             bne loop
-            jmp SymError        ; No records are left, so do Label Error 
+            jmp NoForwards      ; No records are left, so do error 
 empty_rec:  tya
             lsr
             ora #$80            ; Set the high bit to indicate record in use
@@ -2083,8 +2081,8 @@ ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >Bin2Base10-1,>InitSym-1,>BASICStage-1
 
 ; Addresses for error message text
-ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
-ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
+ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg,<FwErrMsg
+ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg,>FwErrMsg
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
@@ -2093,6 +2091,7 @@ AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CAN",$27,"T RESOLV",$c5
 RBErrMsg:   .asc "TOO FA",$d2
+FwErrMsg:   .asc "FORWAR",$c4
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
