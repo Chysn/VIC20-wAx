@@ -713,10 +713,15 @@ reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match
             beq test_rel        ;   separately and check range
             cmp #ACCUM          ; If the addressing mode is accumulator,
             bne run_match       ;   test separately
-            lda IDX_IN
-            cmp #$0a
-            bcs reset
-            lda #$09
+            lda IDX_IN          ; If the candidate is greater than 4 characters,
+            cmp #$0a            ;   it cannot be an accumulator instruction
+            bcs reset           ;   ,, 
+            ldy #$07            ; For accumulator mode, the character following
+            lda INBUFFER,y      ;   the mnemonic may be either $00 (ROR), or
+            beq ch_accum        ;   "A" (ROR A).
+            cmp #"A"            ;   ,,
+            bne reset
+ch_accum:   lda #$09
             sta IDX_OUT
 run_match:  jsr IsMatch
             bcc reset
@@ -726,15 +731,15 @@ match:      jsr NextValue
             sbc #OPCODE         ;   ,,
             sta INSTSIZE        ;   ,,
             jmp RefreshPC       ; Restore the effective address to target addr
-test_rel:   lda #$0a
-            sta IDX_OUT
-            jsr IsMatch
-            bcc reset
-            jsr RefreshPC
-            jsr ComputeRB
-            sty OPERAND
-            lda #$02
-            sta INSTSIZE
+test_rel:   lda #$0a            ; For relative branch instructions, first check
+            sta IDX_OUT         ;   the name of the instruction. If that checks
+            jsr IsMatch         ;   out, compute the relative branch offset and
+            bcc reset           ;   insert it into memory, if it's within range
+            jsr RefreshPC       ;   ,,
+            jsr ComputeRB       ;   ,,
+            sty OPERAND         ;   ,,
+            lda #$02            ;   ,, 
+            sta INSTSIZE        ;   ,,
             sec
             rts
 bad_code:   clc                 ; Clear carry flag to indicate failure
@@ -2088,11 +2093,11 @@ ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"*Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "BAD LABE",$cc
 ResErrMsg:  .asc "CANNOT RESOLV",$c5
-RBErrMsg:   .asc "OUT OF RANG",$c5
+RBErrMsg:   .asc "RANG",$c5
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and
