@@ -41,7 +41,7 @@
 LIST_NUM    = $10               ; Display this many lines
 SEARCH_L    = $10               ; Search this many pages (s * 256 bytes)
 DEF_DEVICE  = $08               ; Default device number
-SYM_END     = $02fd             ; End of Symbol Table
+SYM_END     = $02ff             ; Top of Symbol Table
 MAX_LAB     = 16                ; Maximum number of labels
 MAX_FWD     = 15                ; Maximum number of forward references
 
@@ -160,7 +160,7 @@ SYMBOL_A    = SYMBOL_L+MAX_LAB  ; Symbol addresses
 SYMBOL_F    = SYMBOL_A+MAX_LAB*2; Symbol unresolved forward references
 
 ; Assembler workspace
-X_PC        = $2fe              ; Persistent Counter (2 bytes)
+X_PC        = $01               ; Persistent Counter (2 bytes)
 WORK        = $a3               ; Temporary workspace (2 bytes)
 MNEM        = $a3               ; Current Mnemonic (2 bytes)
 EFADDR      = $a5               ; Program Counter (2 bytes)
@@ -1401,7 +1401,7 @@ next_label: pla
             inx
             cpx #MAX_LAB
             bne loop
-            jsr ResetOut           ; Show the current value of the external PC
+            jsr ResetOut           ; Show the value of the persistent counter
             jsr Space
             lda #"*"
             jsr CharOut
@@ -1936,7 +1936,7 @@ write_r:    rts
 Transcribe: jsr CHRGET          ; Get character from input buffer
             cmp #$00            ; If it's 0, then quit transcribing and return
             beq xscribe_r       ; ,,
-            cmp #$ac            ; Replace an asterisk with the external program
+            cmp #$ac            ; Replace an asterisk with the persistent
             beq ExpandXPC       ;   counter
             cmp #";"            ; If it's a comment, then quit transcribing
             beq comment         ;   unless we're in quote mode
@@ -2085,8 +2085,8 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg,<FwErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg,>FwErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,LF,"WAX ON",$00
+Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CAN",$27,"T RESOLV",$c5
