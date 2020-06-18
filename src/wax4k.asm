@@ -317,10 +317,7 @@ continue:   jsr PrintBuff
             lda TOOL_CHR        ; If the breakpoint was set, don't update
             cmp #T_BRK          ;   the persistent counter or show a tool
             beq list_r          ;   prompt
-list_stop:  lda EFADDR          ; Update the persistent counter with
-            sta X_PC            ;   the effective address
-            lda EFADDR+1        ;   ,,
-            sta X_PC+1          ;   ,,
+list_stop:  jsr EAtoPC          ; Update persistent counter with effective addr
             lda TOOL_CHR        ; If the extended disassembler is the tool,
             cmp #T_XDI          ;   change the character to +
             bne next_page       ;   ,,
@@ -847,10 +844,10 @@ Tester:     ldy #$00
             iny
             cpy #$08
             bne loop
-test_r:     tya                 ; Update the persistent counter so that
-            clc                 ;   the assertion tester can be used with
-            adc EFADDR          ;   the asterisk
-            sta X_PC            ;   ,,
+test_r:     tya                 ; Update effective address with number of
+            clc                 ;   bytes tested, in order to update the
+            adc EFADDR          ;   persistent counter
+            sta X_PC            ;
             lda #$00            ;   ,,
             adc EFADDR+1        ;   ,,
             sta X_PC+1          ;   ,,
@@ -1223,13 +1220,16 @@ MemCopy:    bcc copy_err        ; Get parameters as 16-bit hex addresses for
             bne advance         ; ,,
             lda EFADDR          ; ,,
             cmp RANGE_END       ; ,,
-            beq copy_r          ; If so, leave the copy tool
+            beq copy_end        ; If so, leave the copy tool
 advance:    jsr NextValue       ; If not, advance the effective address and the
             inc X_PC            ;   target to the next address for more
             bne loop            ;   copying
             inc X_PC+1          ;   ,,
             jmp loop            ;   ,,
-copy_r:     rts     
+copy_end:   inc X_PC            ; Advance the persistent counter to one byte
+            bne copy_r          ;   beyond the end of the copy
+            inc X_PC+1          ;   ,,
+copy_r:     rts               
 copy_err:   jsr Restore         ; Something was wrong with an address; show
             jmp SYNTAX_ERR      ;   SYNTAX ERROR
             
@@ -1315,8 +1315,8 @@ InitSym:    lda INBUFFER
             beq LabelList       ; ,,
             jsr RefreshPC       ; If no valid address is provided, just leave
             bcc init_r          ;   X_PC as it was
-            lda EFADDR          ; Initialize location counter
-            sta X_PC            ; ,,
+EAtoPC:     lda EFADDR          ; Initialize persistent counter with effective
+            sta X_PC            ;   address
             lda EFADDR+1        ; ,,
             sta X_PC+1          ; ,,
 init_r      rts
@@ -2033,11 +2033,10 @@ PrintBuff:  lda #$00            ; End the buffer with 0
 ; advanced
 Prompt:     txa                 ; Based on the incoming X register, advance
             clc                 ;   the effecive address and store in the
-            adc EFADDR          ;   External Program Counter. This is how wAx
-            sta X_PC            ;   remembers where it was.
-            lda #$00            ;   ,,
+            adc EFADDR          ;   persistent counter. This is how wAx
+            lda #$00            ;   remembers where it was.
             adc EFADDR+1        ;   ,,
-            sta X_PC+1          ;   ,,
+            jsr EAtoPC          ;   ,,
             jsr DirectMode      ; If the user is in direct mode, show a prompt,
             bne prompt_r        ;   otherwise, return to get next command
             jsr ResetOut        ; Reset the output buffer to generate the prompt
