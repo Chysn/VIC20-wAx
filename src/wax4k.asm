@@ -406,8 +406,7 @@ ch_rel:     cmp #RELATIVE
 
 ; Disassemble Indirect Operand
 DisInd:     pha
-            lda #"("
-            jsr CharOut
+            jsr OpenParen
             pla
             cmp #INDIRECT
             bne ind_xy
@@ -1378,7 +1377,6 @@ sym_found:  pla
             
 ; Show Label List           
 LabelList:  ldx #$00
-            stx TEMP_CALC       ; Count forward reference usage
 -loop:      txa                 ; Save the iterator from PrintBuff, etc.
             pha                 ; ,,
             asl                 ; Y is the symbol table reference
@@ -1404,16 +1402,14 @@ next_label: pla
             cpx #MAX_LAB
             bne loop
             jsr ResetOut           ; Show the current value of the external PC
+            jsr Space
             lda #"*"
             jsr CharOut
+            jsr Space
+            jsr HexPrefix
             lda X_PC+1
             jsr Hex
             lda X_PC
-            jsr Hex
-            jsr Space
-            lda #">"
-            jsr CharOut
-            lda TEMP_CALC
             jsr Hex
             jsr PrintBuff
             rts
@@ -1434,19 +1430,21 @@ next_undef: inx
             cpy #$00
             beq next_label
 show_fwd:   tya
-            clc
-            adc TEMP_CALC
-            sta TEMP_CALC
+            pha
             ldx IDX_SYM
             jsr LabListCo
+            jsr Space
+            lda #RVS_ON
+            jsr CharOut
             lda #">"
             jsr CharOut
+            pla
+            jsr Hex
 fwd_d:      jsr PrintBuff
             jmp next_label
 
 ; Label List Common            
 LabListCo:  jsr ResetOut
-            jsr Space
             lda #"-"
             jsr CharOut
             lda SYMBOL_L,x
@@ -1837,6 +1835,8 @@ next_r:     ldx #$00
             rts
 
 ; Commonly-Used Characters
+OpenParen:  lda #"("
+            .byte $3c           ; TOP (skip word)
 CloseParen: lda #")"
             .byte $3c           ; TOP (skip word)
 Comma:      lda #","
