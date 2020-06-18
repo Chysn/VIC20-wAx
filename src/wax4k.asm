@@ -166,7 +166,6 @@ MNEM        = $a3               ; Current Mnemonic (2 bytes)
 EFADDR      = $a5               ; Program Counter (2 bytes)
 CHARDISP    = $a7               ; Character display for Memory (2 bytes)
 LANG_PTR    = $a7               ; Language Pointer (2 bytes)
-COPY_TARGET = $a7               ; Copy target address
 INSTDATA    = $a9               ; Instruction data (2 bytes)
 RANGE_END   = $a9               ; End of range for Save and Copy
 TOOL_CHR    = $ab               ; Current function (T_ASM, T_DIS)
@@ -1212,13 +1211,13 @@ MemCopy:    bcc copy_err        ; Get parameters as 16-bit hex addresses for
             sta RANGE_END       ; ,,
             jsr Buff2Byte       ; Target
             bcc copy_err        ; ,,
-            sta COPY_TARGET+1   ; ,,
+            sta X_PC+1          ; ,,
             jsr Buff2Byte       ; ,,    
             bcc copy_err        ; ,,
-            sta COPY_TARGET     ; ,,
+            sta X_PC            ; ,,
             ldx #$00            ; Copy memory from the start address...
 -loop:      lda (EFADDR,x)      ; ,,
-            sta (COPY_TARGET,x) ; ...To the target address
+            sta (X_PC,x) ; ...To the target address
             lda EFADDR+1        ; ,,
             cmp RANGE_END+1     ; Have we reached the end of the copy range?
             bne advance         ; ,,
@@ -1226,9 +1225,9 @@ MemCopy:    bcc copy_err        ; Get parameters as 16-bit hex addresses for
             cmp RANGE_END       ; ,,
             beq copy_r          ; If so, leave the copy tool
 advance:    jsr NextValue       ; If not, advance the effective address and the
-            inc COPY_TARGET     ;   target to the next address for more
+            inc X_PC            ;   target to the next address for more
             bne loop            ;   copying
-            inc COPY_TARGET+1   ;   ,,
+            inc X_PC+1          ;   ,,
             jmp loop            ;   ,,
 copy_r:     rts     
 copy_err:   jsr Restore         ; Something was wrong with an address; show
