@@ -2034,9 +2034,10 @@ PrintBuff:  lda #$00            ; End the buffer with 0
 Prompt:     txa                 ; Based on the incoming X register, advance
             clc                 ;   the effecive address and store in the
             adc EFADDR          ;   persistent counter. This is how wAx
-            lda #$00            ;   remembers where it was.
+            sta X_PC            ;   remembers where it was
+            lda #$00            ;   ,,
             adc EFADDR+1        ;   ,,
-            jsr EAtoPC          ;   ,,
+            sta X_PC+1          ;   ,,
             jsr DirectMode      ; If the user is in direct mode, show a prompt,
             bne prompt_r        ;   otherwise, return to get next command
             jsr ResetOut        ; Reset the output buffer to generate the prompt
@@ -2084,7 +2085,7 @@ ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg,>FwErrMsg
 
 ; Text display tables                      
 Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,LF,"WAX ON",$00
-Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CAN",$27,"T RESOLV",$c5
