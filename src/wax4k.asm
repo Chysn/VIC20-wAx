@@ -42,8 +42,9 @@ LIST_NUM    = $10               ; Display this many lines
 SEARCH_L    = $10               ; Search this many pages (s * 256 bytes)
 DEF_DEVICE  = $08               ; Default device number
 SYM_END     = $02ff             ; Top of Symbol Table
-MAX_LAB     = 16                ; Maximum number of labels
+MAX_LAB     = 16                ; Maximum number of user labels + 1
 MAX_FWD     = 15                ; Maximum number of forward references
+ERR_VAR     = "U"               ; Unresolved Forward Error value (U%)
 
 ; Tool Setup
 TOOL_COUNT  = $12               ; How many tools are there?
@@ -652,8 +653,6 @@ SymError:   ldx #$02            ; ?SYMBOL ERROR
 CannotRes:  ldx #$03            ; ?CAN'T RESOLVE ERROR 
             .byte $3c           ; TOP (skip word)
 OutOfRange: ldx #$04            ; ?TOO FAR ERROR
-            .byte $3c           ; TOP (skip word)
-NoForwards: ldx #$05            ; ?FORWARD ERROR            
             lda ErrAddr_L,x
             sta ERROR_PTR
             lda ErrAddr_H,x
@@ -1310,9 +1309,9 @@ UpOver:     lda #CRSRUP         ; Cursor up
 ; Initialize Symbol Table
 ; And also, initialize the location counter
 InitSym:    lda INBUFFER        
-            beq init_clear      ; If the tool is alone, clear the symbol table
-            cmp #LABEL          ; If - follows the tool, show the symbol list
-            beq LabelList       ; ,,
+            beq LabelList       ; If the tool is alone, show the symbol table
+            cmp #LABEL          ; If - follows the tool, clear the symbol list
+            beq init_clear      ; ,,
             jsr RefreshPC       ; If no valid address is provided, just leave
             bcc init_r          ;   X_PC as it was
 EAtoPC:     lda EFADDR          ; Initialize persistent counter with effective
@@ -1615,7 +1614,23 @@ find_empty: ldx #$00            ; Now, search ALL the records, this time looking
             inx
             cpx #MAX_FWD*3      ; Check the limit of forward reference records
             bne loop
-            jmp NoForwards      ; No records are left, so do error 
+            lda #ERR_VAR+$80    ; If there are no more forward reference
+            sta $45             ;   records, set U% to 1 in BASIC.
+            lda #$80            
+            sta $46             ; Set the second name character to blank
+            sta $0e             ; Set the variable to an integer (U%)
+            asl
+            sta $0d             ; Set to numeric
+            jsr $d0e7           ; Get the address of U% by creating or finding
+            sta $49             ; Set the address of the variable data
+            sty $4a             ; ,,
+            ldy #$01            ; Offset for the low byte
+            lda #$01            ; The low byte value
+            sta ($49),y         ; Set the variable low byte
+            lda #$00            ; The high byte value
+            iny
+            sta ($49),y         ; Set the variable high byte
+            rts
 empty_rec:  tya
             lsr
             ora #$80            ; Set the high bit to indicate record in use
@@ -2080,17 +2095,16 @@ ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >Bin2Base10-1,>InitSym-1,>BASICStage-1
 
 ; Addresses for error message text
-ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg,<FwErrMsg
-ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg,>FwErrMsg
+ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
+ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,LF,"WAX ON",$00
-Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Intro:      .asc LF,"WAX ON",$00
+Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
-ResErrMsg:  .asc "CAN",$27,"T RESOLV",$c5
+ResErrMsg:  .asc "CANNOT RESOLV",$c5
 RBErrMsg:   .asc "TOO FA",$d2
-FwErrMsg:   .asc "FORWAR",$c4
 
 ; Instruction Set
 ; This table contains two types of one-word records--mnemonic records and

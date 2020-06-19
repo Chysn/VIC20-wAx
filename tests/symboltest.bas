@@ -1,5 +1,5 @@
    10 print "{up}  testing...     ";
-  100 *
+  100 *-
   101 @; test def
   102 @02a5 -a
   103 *1800 ; set pc
