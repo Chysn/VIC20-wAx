@@ -43,6 +43,7 @@ DEF_DEVICE  = $08               ; Default device number
 SYM_END     = $02ff             ; Top of Symbol Table
 MAX_LAB     = 19                ; Maximum number of user labels + 1
 MAX_FWD     = 12                ; Maximum number of forward references
+OVER_VAR    = "U"               ; Unresolved References
 
 ; Tool Setup
 TOOL_COUNT  = $12               ; How many tools are there?
@@ -1024,8 +1025,6 @@ MemSave:    bcc save_err        ; Bail if the address is no good
             ldy RANGE_END+1     ; ,,
             jsr SAVE            ; ,,
             bcs DiskError
-            lda #$42            ; Close the file
-            jsr CLOSE           ; ,,
             jmp Linefeed
 save_err:   jsr Restore
             jmp SYNTAX_ERR      ; To ?SYNTAX ERROR      
@@ -1062,8 +1061,6 @@ MemLoad:    lda #$00            ; Reset the input buffer index because there's
             lda #$00            ; Command for LOAD
             jsr LOAD            
             bcs DiskError
-            lda #$42            ; Close the file
-            jsr CLOSE           ; ,,
             jsr DirectMode      ; Show the loaded range if the load is done in
             beq show_range      ;   direct mode
             rts
@@ -1616,6 +1613,19 @@ find_empty: ldx #$00            ; Now, search ALL the records, this time looking
             bne loop
 overflow:   inc OVERFLOW_F      ; Increment overflow counter if no records are
             beq overflow        ;   left; if it rolls to 0, set it to 1 instead
+            lda #OVER_VAR+$80
+            sta $45
+            and #$80
+            sta $46
+            sta $0e
+            asl
+            sta $0d
+            jsr $d0e7
+            sta $49
+            sty $4a
+            ldy #$01
+            lda OVERFLOW_F
+            sta ($49),y            
             rts
 empty_rec:  tya
             lsr
@@ -2089,8 +2099,8 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc "BEIGEMAZE.COM/WAX",LF,LF,"WAX ON",$00
-Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Intro:      .asc LF,"WAX ON",$00
+Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CANNOT RESOLV",$c5
