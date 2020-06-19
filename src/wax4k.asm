@@ -1311,14 +1311,15 @@ EAtoPC:     lda EFADDR          ; Initialize persistent counter with effective
             sta X_PC            ;   address
             lda EFADDR+1        ; ,,
             sta X_PC+1          ; ,,
-init_r      rts
-init_clear: ldy #ST_SIZE-1      ; Initialize bytes for the symbol table
-            lda #$00            ;   See the Symbol Table section at the top for
-            sta OVERFLOW_F      ;   information about resizing or relocating the
--loop:      sta SYMBOL_L,y      ;   symbol table
+            lda #$00            ; Reset the unresolved forward overflow count
+            sta OVERFLOW_F      ; ,,
+            jmp SetVar          ; And initialize U% for BASIC
+init_clear: lda #$00
+            ldy #ST_SIZE-1      ; Initialize bytes for the symbol table
+-loop:      sta SYMBOL_L,y      ;   ,,
             dey                 ;   ,,
             bpl loop            ;   ,,
-            rts
+init_r:     rts
             
 ; Get Symbol Index            
 SymbolIdx:  cmp #"@"            ; @ and > are special symbols that are always
@@ -1613,7 +1614,7 @@ find_empty: ldx #$00            ; Now, search ALL the records, this time looking
             bne loop
 overflow:   inc OVERFLOW_F      ; Increment overflow counter if no records are
             beq overflow        ;   left; if it rolls to 0, set it to 1 instead
-            lda #OVER_VAR+$80
+SetVar:     lda #OVER_VAR+$80
             sta $45
             and #$80
             sta $46
@@ -2099,8 +2100,8 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Intro:      .asc LF,"WAX ON",LF,$00
+Registers:  .asc LF,"*Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CANNOT RESOLV",$c5
