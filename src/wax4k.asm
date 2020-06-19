@@ -35,16 +35,14 @@
 ; LABEL DEFINITIONS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 
-* = $6000 
-
 ; Configuration
+*           = $6000             ; Assembly location
 LIST_NUM    = $10               ; Display this many lines
 SEARCH_L    = $10               ; Search this many pages (s * 256 bytes)
 DEF_DEVICE  = $08               ; Default device number
 SYM_END     = $02ff             ; Top of Symbol Table
-MAX_LAB     = 16                ; Maximum number of user labels + 1
-MAX_FWD     = 15                ; Maximum number of forward references
-ERR_VAR     = "U"               ; Unresolved Forward Error value (U%)
+MAX_LAB     = 19                ; Maximum number of user labels + 1
+MAX_FWD     = 12                ; Maximum number of forward references
 
 ; Tool Setup
 TOOL_COUNT  = $12               ; How many tools are there?
@@ -155,10 +153,11 @@ RVS_OFF     = $92               ; Reverse off
 ;
 ; Note that one of the labels is reserved for the special @/> label, so
 ; add one more to MAX_LAB than you need.
-ST_SIZE     = (MAX_LAB + MAX_FWD) * 3
+ST_SIZE     = (MAX_LAB + MAX_FWD) * 3 + 1
 SYMBOL_L    = SYM_END-ST_SIZE+1 ; Symbol label definitions
 SYMBOL_A    = SYMBOL_L+MAX_LAB  ; Symbol addresses
 SYMBOL_F    = SYMBOL_A+MAX_LAB*2; Symbol unresolved forward references
+OVERFLOW_F  = SYMBOL_F+MAX_FWD*3; Symbol unresolved reference overflow count
 
 ; Assembler workspace
 X_PC        = $01               ; Persistent Counter (2 bytes)
@@ -784,8 +783,7 @@ Memory:     ldy #$00
             beq show_char
             jsr Space
             jmp loop       
-show_char:  lda #RVS_ON         ; Reverse on for the characters
-            jsr CharOut
+show_char:  jsr ReverseOn         ; Reverse on for the characters
             ldy #$00
 -loop:      lda CHARDISP,y
             and #$7f            ; Mask off the high bit for character display;
@@ -814,8 +812,7 @@ BinaryDisp: ldx #$00            ; Get the byte at the effective address
 -loop:      pha
             bit TEMP_CALC
             beq is_zero
-            lda #RVS_ON
-            jsr CharOut
+            jsr ReverseOn
             lda #"1"
             jsr CharOut
             lda #RVS_OFF
@@ -944,8 +941,7 @@ BreakInd:   ldy #$00            ; Is this a BRK instruction?
             lda BREAKPOINT+1    ; ,,
             cmp EFADDR+1        ; ,,
             bne ind_r           ; ,,
-            lda #RVS_ON         ; Reverse on for the breakpoint
-            jsr CharOut
+            jsr ReverseOn         ; Reverse on for the breakpoint
             lda BREAKPOINT+2    ; Temporarily restore the breakpoint byte
             sta (EFADDR),y      ;   for disassembly purposes
 ind_r:      rts        
@@ -1321,8 +1317,9 @@ EAtoPC:     lda EFADDR          ; Initialize persistent counter with effective
 init_r      rts
 init_clear: ldy #ST_SIZE-1      ; Initialize bytes for the symbol table
             lda #$00            ;   See the Symbol Table section at the top for
--loop:      sta SYMBOL_L,y      ;   information about resizing or relocating the
-            dey                 ;   symbol table
+            sta OVERFLOW_F      ;   information about resizing or relocating the
+-loop:      sta SYMBOL_L,y      ;   symbol table
+            dey                 ;   ,,
             bpl loop            ;   ,,
             rts
             
@@ -1388,7 +1385,6 @@ LabelList:  ldx #$00
             lda EFADDR+1        ;   ,,
             beq undefd          ; Undefined, but it might be a forward reference
 show_label: jsr LabListCo       ; Add elements common to both listed item
-            jsr HexPrefix
             lda EFADDR+1
             jsr Hex
             lda EFADDR
@@ -1404,12 +1400,19 @@ next_label: pla
             lda #"*"
             jsr CharOut
             jsr Space
-            jsr HexPrefix
             lda X_PC+1
             jsr Hex
             lda X_PC
             jsr Hex
-            jsr PrintBuff
+            lda OVERFLOW_F
+            beq lablist_r
+            pha
+            jsr Space
+            jsr ReverseOn
+            jsr GT
+            pla
+            jsr Hex
+lablist_r:  jsr PrintBuff
             rts
 undefd:     stx IDX_SYM
             ldy #$00            ; Forward reference count for this label
@@ -1431,11 +1434,8 @@ show_fwd:   tya
             pha
             ldx IDX_SYM
             jsr LabListCo
-            jsr Space
-            lda #RVS_ON
-            jsr CharOut
-            lda #">"
-            jsr CharOut
+            jsr ReverseOn
+            jsr GT
             pla
             jsr Hex
 fwd_d:      jsr PrintBuff
@@ -1614,22 +1614,8 @@ find_empty: ldx #$00            ; Now, search ALL the records, this time looking
             inx
             cpx #MAX_FWD*3      ; Check the limit of forward reference records
             bne loop
-            lda #ERR_VAR+$80    ; If there are no more forward reference
-            sta $45             ;   records, set U% to 1 in BASIC.
-            lda #$80            
-            sta $46             ; Set the second name character to blank
-            sta $0e             ; Set the variable to an integer (U%)
-            asl
-            sta $0d             ; Set to numeric
-            jsr $d0e7           ; Get the address of U% by creating or finding
-            sta $49             ; Set the address of the variable data
-            sty $4a             ; ,,
-            ldy #$01            ; Offset for the low byte
-            lda #$01            ; The low byte value
-            sta ($49),y         ; Set the variable low byte
-            lda #$00            ; The high byte value
-            iny
-            sta ($49),y         ; Set the variable high byte
+overflow:   inc OVERFLOW_F      ; Increment overflow counter if no records are
+            beq overflow        ;   left; if it rolls to 0, set it to 1 instead
             rts
 empty_rec:  tya
             lsr
@@ -1849,6 +1835,10 @@ next_r:     ldx #$00
             rts
 
 ; Commonly-Used Characters
+GT:         lda #">"
+            .byte $3c           ; TOP (skip word)
+ReverseOn   lda #RVS_ON
+            .byte $3c           ; TOP (skip word)
 OpenParen:  lda #"("
             .byte $3c           ; TOP (skip word)
 CloseParen: lda #")"
@@ -2099,8 +2089,8 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,"*BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Intro:      .asc "BEIGEMAZE.COM/WAX",LF,LF,"WAX ON",$00
+Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CANNOT RESOLV",$c5
