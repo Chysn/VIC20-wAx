@@ -1015,7 +1015,7 @@ MemSave:    bcc save_err        ; Bail if the address is no good
             jsr Buff2Byte       ; Convert next 2 characters to byte
             bcc save_err        ; Fail if the byte couldn't be parsed
             sta RANGE_END       ; Save to the range low byte
-            jsr DiskSetup       ; SETLFS, get filename length, etc.  
+            jsr FileSetup       ; SETLFS, get filename length, etc.  
             ldx #<INBUFFER+9    ; ,,
             ldy #>INBUFFER+9    ; ,,
             jsr SETNAM          ; ,,
@@ -1023,43 +1023,49 @@ MemSave:    bcc save_err        ; Bail if the address is no good
             ldx RANGE_END       ; ,,
             ldy RANGE_END+1     ; ,,
             jsr SAVE            ; ,,
-            bcs DiskError
+            bcs FileError
             jmp Linefeed
 save_err:   jsr Restore
             jmp SYNTAX_ERR      ; To ?SYNTAX ERROR      
 
 ; Show System Disk Error            
-DiskError:  pha
+FileError:  pha
             jsr Restore
             pla
-            jmp ERROR_NO 
+            bne show_error      ; Error in A will be $00 if a cassette save is
+            lda #$1e            ;   stopped, so override that to ?BREAK ERROR
+show_error: jmp ERROR_NO 
             
 ; Memory Load
-MemLoad:    lda #$00            ; Reset the input buffer index because there's
+MemLoad:    lda DEVICE          ; The wAx MemLoad subroutine cannot be used
+            cmp #$01            ;   for the cassette system because it
+            bne device_ok       ;   needs to access the file twice. Throw an
+            lda #$09            ;   ?ILLEGAL DEVICE NUMBER error
+            jmp FileError       ;   ,,
+device_ok:  lda #$00            ; Reset the input buffer index because there's
             sta IDX_IN          ;   no address for this command
-            jsr DiskSetup       ; SETLFS, get filename length, etc.
+            jsr FileSetup       ; SETLFS, get filename length, etc.
             ldx #<INBUFFER+1    ; Set location of filename
             ldy #>INBUFFER+1    ; ,,
             jsr SETNAM          ; ,,
             jsr OPEN
-            bcs DiskError
+            bcs open_err
             ldx #$42
             jsr CHKIN
-            bcs DiskError
+            bcs open_err
             jsr CHRIN
             sta X_PC
             jsr CHRIN
             sta X_PC+1
-            jsr CLRCHN
+open_err:   jsr CLRCHN
             lda #$42
             jsr CLOSE       
-            lda #$42            ; Set up logical file
             ldx DEVICE          ; ,,
             ldy #$01            ; ,, (load to header location)
             jsr SETLFS          ; ,,
             lda #$00            ; Command for LOAD
             jsr LOAD            
-            bcs DiskError
+            bcs FileError
             jsr DirectMode      ; Show the loaded range if the load is done in
             beq show_range      ;   direct mode
             rts
@@ -1081,7 +1087,7 @@ show_range: jsr ResetOut        ; Show the loaded range
 ; Disk Setup
 ; Clear breakpoint, set up logical file, get filename length, return in A
 ; for call to SETNAM            
-DiskSetup:  jsr ClearBP         ; Clear breakpoint
+FileSetup:  jsr ClearBP         ; Clear breakpoint
             lda #$42            ; Set up logical file
             ldx DEVICE          ; ,,
             ldy #$00            ; ,,
@@ -2088,11 +2094,11 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,LF,"WAX ON",$00
-Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
+Intro:      .asc LF,"BEIGEMAZE.COM/WAX",$00
+Registers:  .asc LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
-ResErrMsg:  .asc "CANNOT RESOLV",$c5
+ResErrMsg:  .asc "CAN",$2f,"T RESOLV",$c5
 RBErrMsg:   .asc "TOO FA",$d2
 
 ; Instruction Set
