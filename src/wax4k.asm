@@ -269,9 +269,11 @@ List:       bcs addr_ok         ; If the provided address is OK, disassemble
             sta EFADDR          ;  persistent counter to continue listing
             lda X_PC+1          ;  after the last address
             sta EFADDR+1        ;  ,,
-addr_ok:    lda INBUFFER+4
-            beq check_dir
-            jmp Assemble
+addr_ok:    lda INBUFFER+4      ; If there's stuff after the list command,
+            beq check_dir       ;   treat it as an assemble command; change
+            lda #T_ASM          ;   the tool to the Assemble tool and route to
+            sta TOOL_CHR        ;   Assemble
+            jmp Assemble        ;   ,,
 check_dir:  jsr DirectMode      ; If the tool is in direct mode,
             bne start_list      ;   cursor up to overwrite the original input
             lda #CRSRUP         ;   ,,
@@ -734,15 +736,10 @@ ComputeRB:  lda EFADDR+1        ; Stash the effective address, as the offset
             pha                 ;   is computed from the start of the next
             lda EFADDR          ;   instruction
             pha                 ;   ,,
-            lda #$02            ;   ,,
-            clc                 ; Find the difference between the tool's new
-            adc EFADDR          ;   effective address and the candidate target
-            sta EFADDR          ;   address
-            lda #$00            ;   ,,
-            adc EFADDR+1        ;   ,,
-            sta EFADDR+1        ;   ,,
-            lda OPERAND         ;   ,,
-            sec                 ;   ,,
+            jsr NextValue       ; EFADDR += 2
+            jsr NextValue       ; ,,
+            lda OPERAND         ; Subtract operand from effective address
+            sec                 ;   to get offset
             sbc EFADDR          ;   ,,
             tay                 ;   ,, (Y will be the RB offset)
             lda OPERAND+1       ;   ,,
@@ -784,9 +781,10 @@ show_char:  jsr ReverseOn         ; Reverse on for the characters
 -loop:      lda CHARDISP,y
             cmp #$a0            ; Everything from 160 on is allowed in the
             bcs add_char        ;   display unchaged
-            and #$7f            ; Mask off the high bit for character display;
-            cmp #QUOTE          ; Don't show double quotes
-            beq alter_char      ; ,,
+            cmp #$80            ; Change everything between 128 and 159 
+            bcs alter_char      ; ,,
+            cmp #QUOTE          ; Don't show double quote character because it
+            beq alter_char      ;   turns on quote mode
             cmp #$20            ; Show everything else at and above space
             bcs add_char        ; ,,
 alter_char: lda #$2e            ; Everything else gets a .
@@ -2092,7 +2090,7 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00
+Intro:      .asc LF,LF,"BEIGEMAZE.COM/WAX",LF,$00
 Registers:  .asc LF,"*Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
