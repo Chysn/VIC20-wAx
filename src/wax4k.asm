@@ -45,12 +45,12 @@ MAX_LAB     = 19                ; Maximum number of user labels + 1
 MAX_FWD     = 12                ; Maximum number of forward references
 
 ; Tool Setup
-TOOL_COUNT  = $12               ; How many tools are there?
+TOOL_COUNT  = $11               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
-T_XDI       = $ff               ; Wedge character pi for extended opcodes
+T_XDI       = ","               ; Wedge character , for extended opcodes
 T_ASM       = "@"               ; Wedge character @ for assembly
-T_MEM       = ","               ; Wedge character , for memory dump
-T_BIN       = "'"               ; Wedge character ' for binary dump
+T_MEM       = ":"               ; Wedge character : for memory dump
+T_BIN       = "%"               ; Wedge character ' for binary dump
 T_TST       = $b2               ; Wedge character = for tester
 T_BRK       = "!"               ; Wedge character ! for breakpoint
 T_REG       = ";"               ; Wedge character ; for register set
@@ -61,7 +61,6 @@ T_SRC       = $ad               ; Wedge character / for search
 T_CPY       = "&"               ; Wedge character & for copy
 T_H2T       = "$"               ; Wedge character $ for hex to base 10
 T_T2H       = "#"               ; Wedge character # for base 10 to hex
-T_B2T       = "%"               ; Wedge character % for binary to base 10
 T_SYM       = $ac               ; Wedge character * for symbol initialization
 T_BAS       = $ae               ; Wedge character ^ for BASIC stage select
 BYTE        = ":"               ; .byte entry character
@@ -401,7 +400,8 @@ ch_rel:     cmp #RELATIVE
 
 ; Disassemble Indirect Operand
 DisInd:     pha
-            jsr OpenParen
+            lda #"("
+            jsr CharOut
             pla
             cmp #INDIRECT
             bne ind_xy
@@ -548,7 +548,7 @@ op_parts:   cmp #"#"            ; # = Parse immediate operand (quotes and %)
             beq ImmedOp         ; ,,         
             cmp #"$"            ; $ = Parse the operand
             bne loop            ; ,,
-            jsr GetOperand      ; Once $ is found, then grab the operand
+main_op:    jsr GetOperand      ; Once $ is found, then grab the operand
 test:       jsr Hypotest        ; Line is done; hypothesis test for a match
             bcc asm_error       ; Clear carry means the test failed
             ldy #$00            ; A match was found! Transcribe the good code
@@ -608,25 +608,44 @@ pull_code:  ldy #$00
 ; (1) $dd       - Hexadecimal 
 ; (2) "c"       - Character
 ; (3) %bbbbbbbb - Binary
-ImmedOp:    jsr CharGet
-            cmp #"$"
-            bne try_quote
-            jsr GetOperand
-            lda OPERAND
-            jmp test
-try_quote:  cmp #QUOTE
-            bne try_binary
-            jsr CharGet
-            sta OPERAND
-            jsr CharGet
-            cmp #QUOTE
-            bne AsmError
-            jmp insert_hex
-try_binary: cmp #"%"
-            bne AsmError
-            jsr BinaryByte
-            bcc AsmError
-            sta OPERAND
+; (4) #d[d][d]  - Base 10
+ImmedOp:    jsr CharGet         ; This is the character right after #
+            cmp #"$"            ; If it's $, go back to get regular $ operand
+            beq main_op         ; ,,
+try_quote:  cmp #QUOTE          ; If it's a double quote, make sure it's a one
+            bne try_binary      ;   character surrounded by quotes. If it is,
+            jsr CharGet         ;   set it as the operand and convert it to
+            sta OPERAND         ;   hex for the hypotester
+            jsr CharGet         ;   ,,
+            cmp #QUOTE          ;   ,,
+            bne AsmError        ;   ,, Error if the second quote isn't here
+            beq insert_hex      ;   ,,
+try_binary: cmp #"%"            ; If it's a binary prefix sigil %, convert
+            bne try_base10      ;   the eight binary bits and, if valid,
+            jsr BinaryByte      ;   set the operand and convert it to hex
+            bcc AsmError        ;   ,,
+            sta OPERAND         ;   ,,
+            bcs insert_hex      ;   ,,
+try_base10: lda $7b             ; Now look for a base-10 number by temporarily
+            pha                 ;   setting CHRGET's buffer to wAx's input
+            lda $7a             ;   buffer and scanning for base-10 digits.
+            pha                 ;   ,,
+            ldy #<INBUFFER+8    ; Point the CHRGET buffer at the location
+            lda #>INBUFFER+8    ;   after the #
+            sty $7a             ;   ,, 
+            sta $7b             ;   ,,
+            jsr CHRGOT          ; Call CHRGOT to start verifying numbers
+            bcs AsmError        ;   ,,
+            jsr ASCFLT          ; Convert the buffer text into FAC1
+            jsr MAKADR          ; Convert FAC1 to 16-bit unsigned integer
+            cmp #$00            ; High byte from MAKADR is in A
+            bne AsmError        ; Error if high byte is set; too big for immed
+            sty OPERAND         ; Low byte from MAKADR is in Y
+            pla                 ; Put the CHRGET buffer back so BASIC doesn't
+            sta $7a             ;   freak out
+            pla                 ;   ,,
+            sta $7b             ;   ,,
+            ; Fall through to insert_hex
 insert_hex: jsr ResetOut        ; Store the hex value of the operand after the
             sta INBUFFER+11     ;   #, so it can be matched by Hypotest.
             lda #"$"            ;   End it with 0 as a line delimiter
@@ -1060,13 +1079,16 @@ cassette:   ldy #$01            ; ,, (load to header location)
             jsr SETLFS          ; ,,
             lda #$00            ; Command for LOAD
             jsr LOAD            
-            bcs FileError            
+            bcs FileError
             jsr DirectMode      ; Show the loaded range if the load is done in
             beq show_range      ;   direct mode
-            rts
-show_range: jsr ResetOut        ; Show the loaded range
-            jsr Linefeed        ; ,,
-            lda #T_DIS          ; ,,
+load_r:     rts
+show_range: jsr ResetOut
+            jsr Linefeed
+            ldx DEVICE          ; If the device numbr is 1, skip the start/end
+            cpx #$01            ;   display
+            beq load_r          ;   ,,
+            lda #T_DIS          ; Show the loaded range, if from disk
             jsr CharOut         ; ,,
             lda X_PC+1          ; ,,
             jsr Hex             ; ,,
@@ -1088,8 +1110,8 @@ FileSetup:  jsr ClearBP         ; Clear breakpoint
             ldy #$00            ; ,,
             jsr SETLFS          ; ,,
             jsr CharGet         ; Check that the filename begins with a
-            cmp #QUOTE          ;   quote. If not, error
-            bne setup_err       ;   ,,
+            cmp #QUOTE          ;   quote. If not, treat it as a zero-length
+            bne setup_r         ;   name.
             ldy #$00
 -loop:      jsr CharGet
             beq setup_err
@@ -1250,22 +1272,6 @@ two_bytes:  jsr UpOver
             jsr Linefeed
 hex_conv_r: rts            
             
-; Binary to Base-10           
-Bin2Base10: lda #$00            ; Reset input buffer
-            sta IDX_IN          ; ,,
-            jsr BinaryByte      ; Get binary byte
-            bcc bin_conv_r
-            pha
-            jsr UpOver
-            lda #"#"
-            jsr CHROUT
-            pla
-            tax
-            lda #$00
-            jsr PRTFIX
-            jsr Linefeed
-bin_conv_r: rts
-
 ; Base-10 to Hex
 Base102Hex: jsr UpOver
             jsr ResetOut
@@ -1405,7 +1411,6 @@ next_label: pla
             beq lablist_r
             pha
             jsr Space
-            jsr ReverseOn
             jsr GT
             pla
             jsr Hex
@@ -1431,7 +1436,6 @@ show_fwd:   tya
             pha
             ldx IDX_SYM
             jsr LabListCo
-            jsr ReverseOn
             jsr GT
             pla
             jsr Hex
@@ -1783,7 +1787,7 @@ CharGet:    ldx IDX_IN
 ; Get two characters from the buffer and evaluate them as a hex byte
 Buff2Byte:  jsr CharGet
             jsr Char2Nyb
-            bcc not_found       ; See Lookup subroutine above
+            bcc buff2_r         ; Return with Carry clear if invalid
             asl                 ; Multiply high nybble by 16
             asl                 ;   ,,
             asl                 ;   ,,
@@ -1837,8 +1841,6 @@ next_r:     ldx #$00
 GT:         lda #">"
             .byte $3c           ; TOP (skip word)
 ReverseOn   lda #RVS_ON
-            .byte $3c           ; TOP (skip word)
-OpenParen:  lda #"("
             .byte $3c           ; TOP (skip word)
 CloseParen: lda #")"
             .byte $3c           ; TOP (skip word)
@@ -2076,15 +2078,15 @@ DirectMode: ldy CURLIN+1
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
 ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA,T_BIN
-            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_B2T,T_SYM,T_BAS
+            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_SYM,T_BAS
 ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<Register-1,<Execute-1
             .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1,<List-1
             .byte <List-1,<Search-1,<MemCopy-1,<Hex2Base10-1,<Base102Hex-1
-            .byte <Bin2Base10-1,<InitSym-1,<BASICStage-1
+            .byte <InitSym-1,<BASICStage-1
 ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1,>List-1
             .byte >List-1,>Search-1,>MemCopy-1,>Hex2Base10-1,>Base102Hex-1
-            .byte >Bin2Base10-1,>InitSym-1,>BASICStage-1
+            .byte >InitSym-1,>BASICStage-1
 
 ; Addresses for error message text
 ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
@@ -2092,7 +2094,8 @@ ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
 Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00
-Registers:  .asc LF," Y  X  A  P  S  PC",LF,";",$00
+Registers:  .asc LF,$b0,"Y",$c0,$c0,"X",$c0,$c0,"A",$c0,$c0
+            .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,$c0,LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CAN",$2f,"T RESOLV",$c5
