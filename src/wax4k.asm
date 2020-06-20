@@ -161,7 +161,7 @@ SYMBOL_F    = SYMBOL_A+MAX_LAB*2; Symbol unresolved forward references
 OVERFLOW_F  = SYMBOL_F+MAX_FWD*3; Symbol unresolved reference overflow count
 
 ; Assembler workspace
-X_PC        = $03               ; Persistent Counter (2 bytes)
+X_PC        = $01               ; Persistent Counter (2 bytes)
 WORK        = $a3               ; Temporary workspace (2 bytes)
 MNEM        = $a3               ; Current Mnemonic (2 bytes)
 EFADDR      = $a5               ; Program Counter (2 bytes)
