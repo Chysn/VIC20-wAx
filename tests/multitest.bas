@@ -1,4 +1,4 @@
-   10 print "{up}  testing...     ";
+   10 print "{up}  pass #1..."
   100 *-
   101 *1c00
   102 @* lda -0
@@ -28,7 +28,7 @@
   128 @* -8 cld
   129 @* -9
   130 @* -t
-  200 if peek(767) then 101
+  200 if peek(767) then print "{up}  pass #2...     ";:goto101
   500 =1c00 ad291cac2a1c0d2b
   501 =*    1c2d2b1ca22ba01c
   502 =*    8d2b1c8e2b1c8c2e
