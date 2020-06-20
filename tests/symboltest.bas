@@ -32,5 +32,6 @@
   307 =*    024a454a
   308 =*    4c0000
   999 print "{blue}[ok]{black}"
-  1000 print "{blue}tests complete!"
-  1005 new
+ 1000 print"* multi-pass assembly"
+ 1005 print"  {cyan}loading...{black}"
+ 1010 load"multipass.prg",8
