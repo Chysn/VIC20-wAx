@@ -269,6 +269,7 @@ List:       bcs addr_ok         ; If the provided address is OK, disassemble
             sta EFADDR          ;  persistent counter to continue listing
             lda X_PC+1          ;  after the last address
             sta EFADDR+1        ;  ,,
+            jmp check_dir       ;  ,,
 addr_ok:    lda INBUFFER+4      ; If there's stuff after the list command,
             beq check_dir       ;   treat it as an assemble command; change
             lda #T_ASM          ;   the tool to the Assemble tool and route to
@@ -2090,8 +2091,8 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc "  BEIGEMAZE.COM/WAX",LF,$00
-Registers:  .asc LF,"*Y: X: A: P: S: PC::",LF,";",$00
+Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00
+Registers:  .asc LF," Y  X  A  P  S  PC",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CAN",$2f,"T RESOLV",$c5
