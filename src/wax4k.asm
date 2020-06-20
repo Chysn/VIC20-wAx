@@ -1024,8 +1024,6 @@ MemSave:    bcc save_err        ; Bail if the address is no good
             ldy RANGE_END+1     ; ,,
             jsr SAVE            ; ,,
             bcs DiskError
-            lda #$42            ; Close the file
-            jsr CLOSE           ; ,,
             jmp Linefeed
 save_err:   jsr Restore
             jmp SYNTAX_ERR      ; To ?SYNTAX ERROR      
@@ -1062,8 +1060,6 @@ MemLoad:    lda #$00            ; Reset the input buffer index because there's
             lda #$00            ; Command for LOAD
             jsr LOAD            
             bcs DiskError
-            lda #$42            ; Close the file
-            jsr CLOSE           ; ,,
             jsr DirectMode      ; Show the loaded range if the load is done in
             beq show_range      ;   direct mode
             rts
@@ -1312,16 +1308,17 @@ InitSym:    lda INBUFFER
             bcc init_r          ;   X_PC as it was
 EAtoPC:     lda EFADDR          ; Initialize persistent counter with effective
             sta X_PC            ;   address
-            lda EFADDR+1        ; ,,
-            sta X_PC+1          ; ,,
-init_r      rts
-init_clear: ldy #ST_SIZE-1      ; Initialize bytes for the symbol table
-            lda #$00            ;   See the Symbol Table section at the top for
-            sta OVERFLOW_F      ;   information about resizing or relocating the
--loop:      sta SYMBOL_L,y      ;   symbol table
-            dey                 ;   ,,
-            bpl loop            ;   ,,
+            lda EFADDR+1        ;   ,,
+            sta X_PC+1          ;   ,,
+            lda #$00            ; Reset forward reference overflow counter
+            sta OVERFLOW_F      ; ,,
             rts
+init_clear: lda #$00            ; Initialize bytes for the symbol table
+            ldy #ST_SIZE-1      ;   See the Symbol Table section at the top for
+-loop:      sta SYMBOL_L,y      ;   information about resizing or relocating the
+            dey                 ;   symbol table
+            bpl loop            ;   ,,
+init_r:     rts
             
 ; Get Symbol Index            
 SymbolIdx:  cmp #"@"            ; @ and > are special symbols that are always
@@ -1616,7 +1613,9 @@ find_empty: ldx #$00            ; Now, search ALL the records, this time looking
             bne loop
 overflow:   inc OVERFLOW_F      ; Increment overflow counter if no records are
             beq overflow        ;   left; if it rolls to 0, set it to 1 instead
-            rts
+            jsr DirectMode      ; If the overflow happens in direct mode, show
+            bne addfwd_r        ;   the Symbol Error. In BASIC, this condition
+            jmp SymError        ;   can be caught, so keep going for multi-pass
 empty_rec:  tya
             lsr
             ora #$80            ; Set the high bit to indicate record in use
@@ -1633,7 +1632,7 @@ store_rec:  sta SYMBOL_F,x      ; Store the label index in the record
             sta SYMBOL_F+1,x    ;   forward reference record for (hopefully)
             lda EFADDR+1        ;   later resolution
             sta SYMBOL_F+2,x    ;   ,,
-            rts
+addfwd_r:   rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BASIC STAGE SELECT COMPONENT
@@ -2089,7 +2088,7 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc "BEIGEMAZE.COM/WAX",LF,LF,"WAX ON",$00
+Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,LF,"WAX ON",$00
 Registers:  .asc LF,"BRK",LF," Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc

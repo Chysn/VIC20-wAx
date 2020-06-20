@@ -44,6 +44,10 @@ c1541 vic/wax.d64 -write vic/symboltest.prg
 petcat -w2 -o vic/immedtest.prg -- tests/immedtest.bas
 c1541 vic/wax.d64 -write vic/immedtest.prg
 
+##   Test multi-pass assembly
+petcat -w2 -o vic/multitest.prg -- tests/multitest.bas
+c1541 vic/wax.d64 -write vic/multitest.prg
+
 ## Build Block 3 2716 binary
 sed 's/\* = \$a000/\* = \$6000/' src/wax.asm > src/wax-blk3.asm
 xa -o 2716/wax2k-blk3.bin src/wax-blk3.asm

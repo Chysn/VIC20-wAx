@@ -34,4 +34,4 @@
   999 print "{blue}[ok]{black}"
  1000 print"* multi-pass assembly"
  1005 print"  {cyan}loading...{black}"
- 1010 load"multipass.prg",8
+ 1010 load"multitest.prg",8
