@@ -47,7 +47,7 @@ MAX_FWD     = 12                ; Maximum number of forward references
 ; Tool Setup
 TOOL_COUNT  = $12               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
-T_XDI       = $aa               ; Wedge character + for extended opcode
+T_XDI       = $ff               ; Wedge character pi for extended opcodes
 T_ASM       = "@"               ; Wedge character @ for assembly
 T_MEM       = ","               ; Wedge character , for memory dump
 T_BIN       = "'"               ; Wedge character ' for binary dump
@@ -58,12 +58,12 @@ T_EXE       = $5f               ; Wedge character left-arrow for code execute
 T_SAV       = $b1               ; Wedge character > for save
 T_LOA       = $b3               ; Wedge character < for load
 T_SRC       = $ad               ; Wedge character / for search
-T_CPY       = "&"               ; Wedge character up arrow for copy
+T_CPY       = "&"               ; Wedge character & for copy
 T_H2T       = "$"               ; Wedge character $ for hex to base 10
 T_T2H       = "#"               ; Wedge character # for base 10 to hex
 T_B2T       = "%"               ; Wedge character % for binary to base 10
 T_SYM       = $ac               ; Wedge character * for symbol initialization
-T_BAS       = $ae               ; Wedge character up for BASIC stage select
+T_BAS       = $ae               ; Wedge character ^ for BASIC stage select
 BYTE        = ":"               ; .byte entry character
 BINARY      = "%"               ; Binary entry character
 LABEL       = $ab               ; Forward relative branch character
@@ -94,6 +94,7 @@ CLRCHN      = $ffcc             ; Close channel
 ASCFLT      = $dcf3             ; Convert base-10 to FAC1
 MAKADR      = $d7f7             ; FAC1 to Integer
 DEVICE      = $ba               ; Save device
+ISCNTC      = $ffe1             ; Check Stop key
 
 ; System resources - Vectors and Pointers
 IGONE       = $0308             ; Vector to GONE
@@ -111,7 +112,6 @@ CURLIN      = $39               ; Current line number
 KBSIZE      = $c6               ;   advancing the assembly address
 MISMATCH    = $c2cd             ; "MISMATCH"
 KEYCVTRS    = $028d             ; Keyboard codes
-LSTX        = $c5               ; Keyboard matrix
 
 ; System resources - Registers
 ACC         = $030c             ; Saved Accumulator
@@ -269,7 +269,10 @@ List:       bcs addr_ok         ; If the provided address is OK, disassemble
             sta EFADDR          ;  persistent counter to continue listing
             lda X_PC+1          ;  after the last address
             sta EFADDR+1        ;  ,,
-addr_ok:    jsr DirectMode      ; If the tool is in direct mode,
+addr_ok:    lda INBUFFER+4
+            beq check_dir
+            jmp Assemble
+check_dir:  jsr DirectMode      ; If the tool is in direct mode,
             bne start_list      ;   cursor up to overwrite the original input
             lda #CRSRUP         ;   ,,
             jsr CHROUT          ;   ,,
@@ -279,10 +282,7 @@ ListLine:   txa
             jsr ResetOut
             jsr BreakInd        ; Indicate breakpoint, if it's here
             lda TOOL_CHR        ; Start each line with the wedge character
-            cmp #T_XDI          ; If the tool is the extended opcode disassemble
-            bne show_tool       ;   then change it to a regular +
-            lda #"+"            ;   ,,
-show_tool:  jsr CharOut
+            jsr CharOut
             lda EFADDR+1        ; Show the address
             jsr Hex             ; ,,
             lda EFADDR          ; ,,
@@ -305,9 +305,8 @@ to_bin:     lda #BINARY         ; The binary entry character goes after the
 continue:   jsr PrintBuff      
             pla
             tax
-            ldy LSTX            ; Exit if STOP key is pressed
-            cpy #$18            ; ,,          
-            beq list_stop       ; ,,
+            jsr ISCNTC          ; Exit if STOP key is pressed
+            beq list_stop       ; ,,          
             dex                 ; Exit if loop is done
             bne ListLine        ; ,,
             inx                 ; But if the loop is done, but a SHift key
@@ -319,10 +318,7 @@ continue:   jsr PrintBuff
             beq list_r          ;   prompt
 list_stop:  jsr EAtoPC          ; Update persistent counter with effective addr
             lda TOOL_CHR        ; If the extended disassembler is the tool,
-            cmp #T_XDI          ;   change the character to +
-            bne next_page       ;   ,,
-            lda #"+"            ;   ,,
-next_page:  sta KEYBUFF         ; Provide a tool for the next page
+            sta KEYBUFF         ; Provide a tool for the next page
             lda #CRSRLF         ; ,,
             sta KEYBUFF+1       ; ,,
             lda #$02            ; ,,
@@ -786,6 +782,8 @@ Memory:     ldy #$00
 show_char:  jsr ReverseOn         ; Reverse on for the characters
             ldy #$00
 -loop:      lda CHARDISP,y
+            cmp #$a0            ; Everything from 160 on is allowed in the
+            bcs add_char        ;   display unchaged
             and #$7f            ; Mask off the high bit for character display;
             cmp #QUOTE          ; Don't show double quotes
             beq alter_char      ; ,,
@@ -1037,17 +1035,15 @@ FileError:  pha
 show_error: jmp ERROR_NO 
             
 ; Memory Load
-MemLoad:    lda DEVICE          ; The wAx MemLoad subroutine cannot be used
-            cmp #$01            ;   for the cassette system because it
-            bne device_ok       ;   needs to access the file twice. Throw an
-            lda #$09            ;   ?ILLEGAL DEVICE NUMBER error
-            jmp FileError       ;   ,,
-device_ok:  lda #$00            ; Reset the input buffer index because there's
+MemLoad:    lda #$00            ; Reset the input buffer index because there's
             sta IDX_IN          ;   no address for this command
             jsr FileSetup       ; SETLFS, get filename length, etc.
             ldx #<INBUFFER+1    ; Set location of filename
             ldy #>INBUFFER+1    ; ,,
             jsr SETNAM          ; ,,
+            ldx DEVICE          ; If the device numbr is 1, skip the extra
+            cpx #$01            ;   OPEN and go directly to LOAD
+            beq cassette        ;   ,,
             jsr OPEN
             bcs open_err
             ldx #$42
@@ -1061,11 +1057,11 @@ open_err:   jsr CLRCHN
             lda #$42
             jsr CLOSE       
             ldx DEVICE          ; ,,
-            ldy #$01            ; ,, (load to header location)
+cassette:   ldy #$01            ; ,, (load to header location)
             jsr SETLFS          ; ,,
             lda #$00            ; Command for LOAD
             jsr LOAD            
-            bcs FileError
+            bcs FileError            
             jsr DirectMode      ; Show the loaded range if the load is done in
             beq show_range      ;   direct mode
             rts
@@ -1114,9 +1110,8 @@ Search:     bcc srch_r          ; Bail if the address is no good
             beq srch_r          ; ,,
             lda #SEARCH_L       ; Set the search limit (in pages)
             sta SEARCH_C        ; ,,
-next_srch:  lda LSTX            ; Keep searching code until the user presses
-            cmp #$18            ;   Stop key
-            beq srch_stop       ;   ,,
+next_srch:  jsr ISCNTC            ; Keep searching code until the user presses
+            beq srch_stop       ;   Stop key
             lda EFADDR+1        ; Store the effective address high byte for
             pha                 ;   later comparison
             ldx #$00            ; 
@@ -1972,7 +1967,10 @@ handle_sym: ldy TOOL_CHR        ; The label character is not handled by the
             ldy $83             ; Don't handle symbols if the & is in quotes
             cpy #$06            ;   (as in an immediate operand, or text entry)
             beq x_add           ;   ,,
-            jmp HandleSym       ;   ,,
+            ldy IDX_IN          ; If the label character occurs deep in the
+            cpy #$0d            ;   input, don't handle a symbol. It's in the
+            bcs x_add           ;   memory dump display.
+            jmp HandleSym
 comment:    ldy $83
             cpy #$06
             beq add_only
@@ -2094,8 +2092,8 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"BEIGEMAZE.COM/WAX",$00
-Registers:  .asc LF," Y: X: A: P: S: PC::",LF,";",$00
+Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00
+Registers:  .asc LF,"*Y: X: A: P: S: PC::",LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CAN",$2f,"T RESOLV",$c5
