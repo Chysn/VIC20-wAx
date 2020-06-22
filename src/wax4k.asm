@@ -1131,12 +1131,11 @@ Search:     bcc srch_r          ; Bail if the address is no good
             beq srch_r          ; ,,
             lda #SEARCH_L       ; Set the search limit (in pages)
             sta SEARCH_C        ; ,,
-next_srch:  jsr ISCNTC            ; Keep searching code until the user presses
+next_srch:  jsr ISCNTC          ; Keep searching code until the user presses
             beq srch_stop       ;   Stop key
             lda EFADDR+1        ; Store the effective address high byte for
             pha                 ;   later comparison
-            ldx #$00            ; 
-            stx IDX_OUT         ; Clear output buffer for possible result
+            jsr ResetOut        ; Clear output buffer for possible result
             lda INBUFFER+4      ; What kind of search is this?
             cmp #QUOTE          ; Character search
             beq MemSearch       ; ,,
@@ -1165,7 +1164,8 @@ srch_r:     rts
 CodeSearch: lda #T_DIS
             jsr CharOut
             jsr Address
-            jsr Space           ; Positions the code into place for IsMatch
+            lda #";"            ; Adds comment so the disassembly works
+            jsr CharOut         ; Positions the code into place for IsMatch
             jsr Disasm          ; Disassmble the code at the effective address
             jsr IsMatch         ; If it matches the input, show the address
             bcc check_end       ; ,,
@@ -1452,32 +1452,6 @@ LabListCo:  jsr ResetOut
             jsr Space
             rts
             
-; Handle Symbols 
-; Either defer them for generation, expand them, or mark them as forward
-; references.           
-HandleSym:  lda IDX_IN          ; If - is the first character in the input
-            cmp #$04            ;   buffer after the address, defer the
-            bne start_exp       ;   symbol for handling by the assembler
-            lda #LABEL          ;   ,,
-            jsr AddInput        ;   ,,
-            jmp Transcribe      ;   ,,
-start_exp:  jsr CHRGET          ; Get the next character, the label
-            jsr SymbolIdx       ; Get the symbol index
-            bcs get_label
-            jmp SymError        ; If not, ?SYMBOL ERROR
-get_label:  asl                 ; ,,
-            tay                 ; ,,
-            jsr IsDefined
-            bne ExpandSym
-            lda IDX_IN          ; The symbol has not yet been defined; parse
-            pha                 ;   the first hex numbers to set the program
-            jsr RefreshPC       ;   counter, then return the input index to
-            pla                 ;   its original position
-            sta IDX_IN          ;   ,,
-            jsr AddFwdRec       ; Add forward reference record for label Y
-            inc IGNORE_RB       ; Set relative branch ignore flag
-            jmp ExpandSym       ; Use $0000 as a placeholder
-            
 ; Symbol is Defined
 ; Zero flag is clear if symbol is defined
 IsDefined:  lda SYMBOL_A,y
@@ -1685,10 +1659,10 @@ set_ptrs:   lda EFADDR+1        ; Set up the BASIC start and end pointers
             bne loop            ;   just rechain the area as if it were a BASIC
             beq finish          ;   program
 new:        lda #$00            ; Zero out the first few bytes of the stage so
-            ldy #$03            ;   that it looks like a NEW program
--loop:      sta (EFADDR),y      ;   ,,
-            dey                 ;   ,,
-            bpl loop            ;   ,,
+            ldy #$02            ;   that it looks like a NEW program. I'm not
+-loop:      sta (EFADDR),y      ;   using BASIC's NEW at $c642 because it does
+            dey                 ;   not store $00 at the page boundary, which
+            bpl loop            ;   causes problems.
 finish:     jsr Rechain
             jmp (READY)
 bank_r:     jsr ResetOut        ; Provide info about the start of BASIC
@@ -1971,7 +1945,28 @@ handle_sym: ldy TOOL_CHR        ; The label character is not handled by the
             ldy IDX_IN          ; If the label character occurs deep in the
             cpy #$0d            ;   input, don't handle a symbol. It's in the
             bcs x_add           ;   memory dump display.
-            jmp HandleSym
+            lda IDX_IN          ; If - is the first character in the input
+            cmp #$04            ;   buffer after the address, defer the
+            bne start_exp       ;   symbol for handling by the assembler
+            lda #LABEL          ;   ,,
+            jsr AddInput        ;   ,,
+            jmp Transcribe      ;   ,,
+start_exp:  jsr CHRGET          ; Get the next character, the label
+            jsr SymbolIdx       ; Get the symbol index
+            bcs get_label
+            jmp SymError        ; If not, ?SYMBOL ERROR
+get_label:  asl                 ; ,,
+            tay                 ; ,,
+            jsr IsDefined
+            bne go_expand
+            lda IDX_IN          ; The symbol has not yet been defined; parse
+            pha                 ;   the first hex numbers to set the program
+            jsr RefreshPC       ;   counter, then return the input index to
+            pla                 ;   its original position
+            sta IDX_IN          ;   ,,
+            jsr AddFwdRec       ; Add forward reference record for label Y
+            inc IGNORE_RB       ; Set relative branch ignore flag
+go_expand:  jmp ExpandSym       ; Use $0000 as a placeholder
 comment:    ldy $83
             cpy #$06
             beq add_only
@@ -2093,7 +2088,7 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00
+Intro:      .asc LF,"  BEIGEMAZE.COM/WAX",LF,$00
 Registers:  .asc LF,$b0,"Y",$c0,$c0,"X",$c0,$c0,"A",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,$c0,LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
