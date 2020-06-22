@@ -1523,7 +1523,7 @@ fwd_used:   lda SYMBOL_F+1,x    ; A forward reference for this label has been
             pla
             tax
             bcs get_admode      ; ,,
-            jmp CannotRes       ; Not a valid instruction; CANNOT RESOLVE ERROR
+            jmp CannotRes       ; Not a valid instruction; CAN'T RESOLVE ERROR
 get_admode: lda INSTDATA+1      ; Get the addressing mode
             cmp #RELATIVE       ; If it's a relative branch instruction,
             beq load_rel        ;   calculate the branch offset
@@ -2093,7 +2093,7 @@ Registers:  .asc LF,$b0,"Y",$c0,$c0,"X",$c0,$c0,"A",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,$c0,LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
-ResErrMsg:  .asc "CAN",$2f,"T RESOLV",$c5
+ResErrMsg:  .asc "CAN",$27,"T RESOLV",$c5
 RBErrMsg:   .asc "TOO FA",$d2
 
 ; Instruction Set
