@@ -71,7 +71,6 @@ LABEL       = $ab               ; Forward relative branch character
 GONE        = $c7e4
 CHRGET      = $0073
 CHRGOT      = $0079
-PRTSTR      = $cb1e             ; Print from data (Y,A)
 PRTFIX      = $ddcd             ; Print base-10 number
 SYS         = $e133             ; BASIC SYS start
 CHROUT      = $ffd2
@@ -156,7 +155,9 @@ ST_SIZE     = (MAX_LAB + MAX_FWD) * 3 + 1
 SYMBOL_L    = SYM_END-ST_SIZE+1 ; Symbol label definitions
 SYMBOL_A    = SYMBOL_L+MAX_LAB  ; Symbol addresses
 SYMBOL_F    = SYMBOL_A+MAX_LAB*2; Symbol unresolved forward references
-OVERFLOW_F  = SYMBOL_F+MAX_FWD*3; Symbol unresolved reference overflow count
+SYMBOL_FL   = SYMBOL_F+MAX_FWD  ;   Forward reference low bytes
+SYMBOL_FH   = SYMBOL_FL+MAX_FWD ;   Forward reference high bytes
+OVERFLOW_F  = SYMBOL_FH+MAX_FWD ; Symbol unresolved reference overflow count
 
 ; Assembler workspace
 X_PC        = $03               ; Persistent Counter (2 bytes)
@@ -189,7 +190,7 @@ Install:    jsr Rechain         ; Rechain BASIC program
             jsr SetupVec        ; Set up vectors (IGONE and BRK)
             lda #<Intro         ; Announce that wAx is on
             ldy #>Intro         ; ,,
-            jsr PRTSTR          ; ,,
+            jsr PrintStr        ; ,,
             lda #DEF_DEVICE     ; Set default device number
             sta DEVICE
             jmp (READY)         ; READY.
@@ -695,9 +696,9 @@ getop_r:    rts
 ; that's the instruction to assemble at the effective address. If Hypotest tries
 ; all the opcodes without a match, then the candidate instruction is invalid.
 Hypotest:   jsr ResetLang       ; Reset language table
-reset:      ldy #$06            ; Offset disassembly by 5 bytes for buffer match   
+reset:      ldy #$06            ; Offset disassembly by 6 bytes for buffer match   
             sty IDX_OUT         ;   b/c output buffer will be "$00AC INST"
-            lda #OPCODE         ; Write location to PC for hypotesting
+            lda #OPCODE         ; Write location to effective addr for hypotesting
             sta EFADDR          ; ,,
             ldy #$00            ; Set the effective address high byte
             sty EFADDR+1        ; ,,
@@ -744,7 +745,7 @@ test_rel:   lda #$0a            ; For relative branch instructions, first check
             sty OPERAND         ;   ,,
             lda #$02            ;   ,, 
             sta INSTSIZE        ;   ,,
-            sec
+            sec                 ; Set carry to indicate success
             rts
 bad_code:   clc                 ; Clear carry flag to indicate failure
             rts
@@ -823,7 +824,7 @@ next_char:  iny
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 BinaryDisp: ldx #$00            ; Get the byte at the effective address
             lda (EFADDR,x)      ; ,,
-            sta TEMP_CALC      ; Store byte for binary conversion
+            sta TEMP_CALC       ; Store byte for binary conversion
             lda #%10000000      ; Start with high bit
 -loop:      pha
             bit TEMP_CALC
@@ -859,7 +860,7 @@ Tester:     ldy #$00
 test_r:     tya                 ; Update effective address with number of
             clc                 ;   bytes tested, in order to update the
             adc EFADDR          ;   persistent counter
-            sta X_PC            ;
+            sta X_PC            ;   ,,
             lda #$00            ;   ,,
             adc EFADDR+1        ;   ,,
             sta X_PC+1          ;   ,,
@@ -872,7 +873,7 @@ test_err:   jmp MisError
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 SetBreak:   php
             jsr ClearBP         ; Clear the old breakpoint, if it exists
-            plp                 ; If no breakpoint is chosen (e.g., if ! was)
+            plp                 ; If no breakpoint is chosen (e.g., if ! was
             bcc SetupVec        ;   by itself), just clear the breakpoint
             lda EFADDR          ; Add a new breakpoint at the effective address
             sta BREAKPOINT      ; ,,
@@ -910,7 +911,7 @@ Break:      cld                 ; Escape hatch for accidentally-set Decimal flag
             jsr ResetOut
             lda #<Registers     ; Print register display bar
             ldy #>Registers     ; ,,
-            jsr PRTSTR          ; ,,
+            jsr PrintStr        ; ,,
             ldy #$04            ; Pull four values off the stack and add
 -loop:      pla                 ;   each one to the buffer. These values came
             jsr Hex             ;   from the hardware IRQ, and are Y,X,A,P.
@@ -1227,7 +1228,7 @@ MemCopy:    bcc copy_err        ; Get parameters as 16-bit hex addresses for
             sta X_PC            ; ,,
             ldx #$00            ; Copy memory from the start address...
 -loop:      lda (EFADDR,x)      ; ,,
-            sta (X_PC,x) ; ...To the target address
+            sta (X_PC,x)        ; ...To the target address
             lda EFADDR+1        ; ,,
             cmp RANGE_END+1     ; Have we reached the end of the copy range?
             bne advance         ; ,,
@@ -1426,9 +1427,7 @@ undefd:     stx IDX_SYM
             bne next_undef
             iny
 next_undef: inx
-            inx
-            inx
-            cpx #MAX_FWD*3
+            cpx #MAX_FWD
             bne loop
             cpy #$00
             beq next_label
@@ -1506,14 +1505,12 @@ ResolveFwd: lda IDX_SYM
             beq fwd_used
             and #%10111111      ; Mask away high-byte specifier for next check
             inx
-            inx
-            inx
-            cpx #MAX_FWD*3
+            cpx #MAX_FWD
             bne loop
             rts                 ; Label not found in forward reference table
-fwd_used:   lda SYMBOL_F+1,x    ; A forward reference for this label has been
+fwd_used:   lda SYMBOL_FL,x     ; A forward reference for this label has been
             sta CHARAC          ;   found; store the address in zero page for
-            lda SYMBOL_F+2,x    ;   updating the code at this address.
+            lda SYMBOL_FH,x     ;   updating the code at this address.
             sta CHARAC+1        ;   ,,
             txa
             pha
@@ -1570,24 +1567,20 @@ clear_back: lda #$00            ; Clear the forward reference table record for
 ; Each forward reference record consists of three bytes-
 ; Offset 0 - Label Index OR %10000000
 AddFwdRec:  ldx #$00            ; Search the forward symbol table for a
--loop:      lda SYMBOL_F+1,x    ;   record in use with the same address.
+-loop:      lda SYMBOL_FL,x     ;   record in use with the same address.
             cmp EFADDR          ;   If such a record is found, re-use it
             bne next_used       ;   rather than searching the empty records
-            lda SYMBOL_F+2,x    ;   ,,
+            lda SYMBOL_FH,x     ;   ,,
             cmp EFADDR+1        ;   ,,
             beq empty_rec       ;   ,,
 next_used:  inx                 ;   ,,
-            inx                 ;   ,,
-            inx                 ;   ,,
-            cpx #MAX_FWD*3      ;   ,,
+            cpx #MAX_FWD        ;   ,,
             bne loop            ;   ,,
 find_empty: ldx #$00            ; Now, search ALL the records, this time looking
 -loop:      lda SYMBOL_F,x      ;   for an unused record.
             beq empty_rec       ; This is an empty record, so use it
             inx
-            inx
-            inx
-            cpx #MAX_FWD*3      ; Check the limit of forward reference records
+            cpx #MAX_FWD        ; Check the limit of forward reference records
             bne loop
 overflow:   inc OVERFLOW_F      ; Increment overflow counter if no records are
             beq overflow        ;   left; if it rolls to 0, set it to 1 instead
@@ -1607,9 +1600,9 @@ empty_rec:  tya
             ora #$40            ;   be used on resolution
 store_rec:  sta SYMBOL_F,x      ; Store the label index in the record
             lda EFADDR          ; Store the current effective address in the
-            sta SYMBOL_F+1,x    ;   forward reference record for (hopefully)
+            sta SYMBOL_FL,x     ;   forward reference record for (hopefully)
             lda EFADDR+1        ;   later resolution
-            sta SYMBOL_F+2,x    ;   ,,
+            sta SYMBOL_FH,x     ;   ,,
 addfwd_r:   rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -1824,9 +1817,6 @@ Space:      lda #" "
             .byte $3c           ; TOP (skip word)
 HexPrefix:  lda #"$"
             jmp CharOut
- 
-Linefeed:   lda #LF
-            jmp CHROUT 
             
 ; Write hexadecimal character
 Hex:        pha                 ; Hex converter based on from WOZ Monitor,
@@ -2023,14 +2013,30 @@ last_char:  and #$7f            ; Take out bit 7 and
  
 ; Print Buffer
 ; Add a $00 delimiter to the end of the output buffer, and print it out           
-PrintBuff:  lda #$00            ; End the buffer with 0
-            jsr CharOut         ; ,,
-            lda #<OUTBUFFER     ; Print the line
-            ldy #>OUTBUFFER     ; ,,
-            jsr PRTSTR          ; ,,
-            lda #RVS_OFF        ; Reverse off after each line
+PrintBuff:  lda #$00
+            jsr CharOut
+            lda #<OUTBUFFER
+            ldy #>OUTBUFFER
+            jsr PrintStr
+print_done: lda #RVS_OFF        ; Reverse off after each line
             jsr CHROUT          ; ,,
-            jmp Linefeed
+            ; Fall through to Linefeed
+
+Linefeed:   lda #LF
+            jmp CHROUT             
+           
+; Print String
+; Like BASIC's $cb1e, but not destructive to BASIC memory when coming from
+; the BASIC input buffer (see $d4bb)         
+PrintStr:   sta CHARAC
+            sty CHARAC+1
+            ldy #$00
+-loop:      lda (CHARAC),y
+            beq print_r
+            jsr CHROUT
+            iny
+            bne loop
+print_r:    rts            
             
 ; Prompt for Next Line
 ; X should be set to the number of bytes the effective address should be
@@ -2088,9 +2094,9 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"  BEIGEMAZE.COM/WAX",LF,$00
+Intro:      .asc "BEIGEMAZE.COM/WAX",LF,$00
 Registers:  .asc LF,$b0,"Y",$c0,$c0,"X",$c0,$c0,"A",$c0,$c0
-            .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,$c0,LF,";",$00
+            .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CAN",$27,"T RESOLV",$c5
