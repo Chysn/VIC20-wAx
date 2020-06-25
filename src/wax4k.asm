@@ -1397,7 +1397,6 @@ next_label: pla
             bne loop
             jsr ResetOut           ; Show the value of the persistent counter
             jsr Space
-            jsr Space
             lda #"*"
             jsr CharOut
             jsr Space
@@ -1409,6 +1408,7 @@ next_label: pla
             beq lablist_r
             pha
             jsr Space
+            jsr ReverseOn
             jsr GT
             pla
             jsr Hex
@@ -1432,6 +1432,7 @@ show_fwd:   tya
             pha
             ldx IDX_SYM
             jsr LabListCo
+            jsr ReverseOn
             jsr GT
             pla
             jsr Hex
@@ -1440,7 +1441,6 @@ fwd_d:      jsr PrintBuff
 
 ; Label List Common            
 LabListCo:  jsr ResetOut
-            jsr Space
             lda #"-"
             jsr CharOut
             lda SYMBOL_L,x
