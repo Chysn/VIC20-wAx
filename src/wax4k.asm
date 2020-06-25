@@ -153,8 +153,9 @@ RVS_OFF     = $92               ; Reverse off
 ; add one more to MAX_LAB than you need.
 ST_SIZE     = (MAX_LAB + MAX_FWD) * 3 + 1
 SYMBOL_L    = SYM_END-ST_SIZE+1 ; Symbol label definitions
-SYMBOL_A    = SYMBOL_L+MAX_LAB  ; Symbol addresses
-SYMBOL_F    = SYMBOL_A+MAX_LAB*2; Symbol unresolved forward references
+SYMBOL_AL   = SYMBOL_L+MAX_LAB  ; Symbol address low bytes
+SYMBOL_AH   = SYMBOL_AL+MAX_LAB ; Symbol address high bytes
+SYMBOL_F    = SYMBOL_AH+MAX_LAB ; Symbol unresolved forward references
 SYMBOL_FL   = SYMBOL_F+MAX_FWD  ;   Forward reference low bytes
 SYMBOL_FH   = SYMBOL_FL+MAX_FWD ;   Forward reference high bytes
 OVERFLOW_F  = SYMBOL_FH+MAX_FWD ; Symbol unresolved reference overflow count
@@ -578,17 +579,15 @@ DefLabel:   jsr CharGet         ; Get the next character after the label;
             jsr SymbolIdx       ; Get a symbol index for the label in A
             bcs have_label      ;
             jmp SymError        ; Error if no symbol index could be secured
-have_label: asl                 ; ,,
-            tay                 ; ,,
-            jsr IsDefined       ; If this label is not yet defined, then
+have_label: jsr IsDefined       ; If this label is not yet defined, then
             bne is_def          ;   resolve the forward reference, if it
             sty IDX_SYM         ;   was used
             jsr ResolveFwd      ;   ,,
             ldy IDX_SYM
 is_def:     lda EFADDR          ; Set the label address
-            sta SYMBOL_A,y      ; ,,
+            sta SYMBOL_AL,y     ; ,,
             lda EFADDR+1        ; ,,
-            sta SYMBOL_A+1,y    ; ,,
+            sta SYMBOL_AH,y     ; ,,
             jsr CharGet
             cmp #$00
             bne pull_code
@@ -1336,11 +1335,10 @@ spec_fwd:   cmp #$b1            ; Handle the > label by giving it the special
             bne sym_range       ;   symbol index, and then clearing out the
             ldy #MAX_LAB-1      ;   address for the symbol so that it's treated
             tya                 ;   as a forward reference
-            asl                 ;
             tax
             lda #$00
-            sta SYMBOL_A,x
-            sta SYMBOL_A+1,x
+            sta SYMBOL_AL,x
+            sta SYMBOL_AH,x
 spec_lab:   lda #"@"+$80            ;   > is a forward reference, when used,
             pha                 ;   but the special symbol is always "@"
             bne sym_found
@@ -1370,7 +1368,6 @@ good_label: ora #$80            ; High bit set indicates symbol is defined
             jmp bad_label       ;   use. Return for error
 sym_found:  pla
             sta SYMBOL_L,y      ; Populate the symbol label table with the name
-            tya                 ;
             sec                 ; Set Carry flag indicates success
             rts            
             
@@ -1378,11 +1375,10 @@ sym_found:  pla
 LabelList:  ldx #$00
 -loop:      txa                 ; Save the iterator from PrintBuff, etc.
             pha                 ; ,,
-            asl                 ; Y is the symbol table reference
             tay                 ; ,,
-            lda SYMBOL_A,y      ; Stash the current value in EFADDR
+            lda SYMBOL_AL,y     ; Stash the current value in EFADDR
             sta EFADDR          ; ,,
-            lda SYMBOL_A+1,y    ; ,,
+            lda SYMBOL_AH,y     ; ,,
             sta EFADDR+1        ; ,,
             lda EFADDR          ; If this symbol is undefined (meaning, it is
             bne show_label      ;   $0000, then skip it)
@@ -1400,6 +1396,7 @@ next_label: pla
             cpx #MAX_LAB
             bne loop
             jsr ResetOut           ; Show the value of the persistent counter
+            jsr Space
             jsr Space
             lda #"*"
             jsr CharOut
@@ -1443,6 +1440,7 @@ fwd_d:      jsr PrintBuff
 
 ; Label List Common            
 LabListCo:  jsr ResetOut
+            jsr Space
             lda #"-"
             jsr CharOut
             lda SYMBOL_L,x
@@ -1453,9 +1451,9 @@ LabListCo:  jsr ResetOut
             
 ; Symbol is Defined
 ; Zero flag is clear if symbol is defined
-IsDefined:  lda SYMBOL_A,y
+IsDefined:  lda SYMBOL_AL,y
             bne is_defined
-            lda SYMBOL_A+1,y
+            lda SYMBOL_AH,y
 is_defined: rts             
 
 ; Expand Symbol
@@ -1469,13 +1467,13 @@ ExpandSym:  sty IDX_SYM
             ldy IDX_SYM
             cmp #"L"            ; If L is specified, jump right to the low
             beq insert_lo       ;   byte
-            lda SYMBOL_A+1,y    ; Otherwise, add the high byte
+            lda SYMBOL_AH,y     ; Otherwise, add the high byte
             jsr Hex             ; ,,
             pla                 ; Pull and push back the CHRGET input
             pha                 ; ,,
             cmp #"H"            ; If the high byte was specified, skip
             beq do_expand       ;   the low byte
-insert_lo:  lda SYMBOL_A,y
+insert_lo:  lda SYMBOL_AL,y
             jsr Hex
 do_expand:  lda #$00            ; Add delimiter, since the hex operand can
             jsr CharOut         ;   vary in length
@@ -1495,7 +1493,6 @@ expand_r:   jmp Transcribe
             
 ; Resolve Forward Reference            
 ResolveFwd: lda IDX_SYM
-            lsr
             ora #$80            ; Set high bit, which is what we look for here
             ldx #$00            ; First order of business is finding unresolved
 -loop:      cmp SYMBOL_F,x      ;   records that match the label
@@ -1588,7 +1585,6 @@ overflow:   inc OVERFLOW_F      ; Increment overflow counter if no records are
             bne addfwd_r        ;   the Symbol Error. In BASIC, this condition
             jmp SymError        ;   can be caught, so keep going for multi-pass
 empty_rec:  tya
-            lsr
             ora #$80            ; Set the high bit to indicate record in use
             pha
             ldy #$01            ; Look at the next character in the CHRGET
@@ -1945,9 +1941,7 @@ start_exp:  jsr CHRGET          ; Get the next character, the label
             jsr SymbolIdx       ; Get the symbol index
             bcs get_label
             jmp SymError        ; If not, ?SYMBOL ERROR
-get_label:  asl                 ; ,,
-            tay                 ; ,,
-            jsr IsDefined
+get_label:  jsr IsDefined
             bne go_expand
             lda IDX_IN          ; The symbol has not yet been defined; parse
             pha                 ;   the first hex numbers to set the program
@@ -2094,7 +2088,7 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc "BEIGEMAZE.COM/WAX",LF,$00
+Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00
 Registers:  .asc LF,$b0,"Y",$c0,$c0,"X",$c0,$c0,"A",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
