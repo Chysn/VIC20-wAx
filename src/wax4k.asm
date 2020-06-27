@@ -152,8 +152,8 @@ RVS_OFF     = $92               ; Reverse off
 ; Note that one of the labels is reserved for the special @/> label, so
 ; add one more to MAX_LAB than you need.
 ST_SIZE     = (MAX_LAB + MAX_FWD) * 3 + 1
-SYMBOL_L    = SYM_END-ST_SIZE+1 ; Symbol label definitions
-SYMBOL_AL   = SYMBOL_L+MAX_LAB  ; Symbol address low bytes
+SYMBOL_D    = SYM_END-ST_SIZE+1 ; Symbol label definitions
+SYMBOL_AL   = SYMBOL_D+MAX_LAB  ; Symbol address low bytes
 SYMBOL_AH   = SYMBOL_AL+MAX_LAB ; Symbol address high bytes
 SYMBOL_F    = SYMBOL_AH+MAX_LAB ; Symbol unresolved forward references
 SYMBOL_FL   = SYMBOL_F+MAX_FWD  ;   Forward reference low bytes
@@ -331,7 +331,7 @@ list_r:     jmp EnableBP        ; Re-enable breakpoint, if necessary
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DISASSEMBLER COMPONENTS
-; https://github.com/Chysn/wAx/wiki/1-6502-Disassembler
+; https://github.com/Chysn/wAx/wiki/6502-Disassembler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Disassemble
 ; Disassemble a single instruction at the effective address
@@ -480,7 +480,7 @@ abs_ind:    jsr Comma           ; This is an indexed addressing mode, so
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY EDITOR COMPONENTS
-; https://github.com/Chysn/wAx/wiki/4-Memory-Editor
+; https://github.com/Chysn/wAx/wiki/Memory-Editor
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 MemEditor:  lda #$04            ; The number of allowed bytes is temporarily
             sta CHARAC          ;   stored in CHARAC.
@@ -528,7 +528,7 @@ BinaryEdit: jsr BinaryByte      ; Get 8 binary bits
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSEMBLER COMPONENTS
-; https://github.com/Chysn/wAx/wiki/2-6502-Assembler
+; https://github.com/Chysn/wAx/wiki/6502-Assembler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Assemble:   bcc asm_r           ; Bail if the address is no good
             lda INBUFFER+4      ; If the user just pressed Return at the prompt,
@@ -593,15 +593,15 @@ is_def:     lda EFADDR          ; Set the label address
             bne pull_code
             ldx #$00            ; Return to BASIC or prompt for the same
             jmp Prompt          ;   address again
-pull_code:  ldy #$00
--loop:      iny
-            lda INBUFFER+5,y
-            sta INBUFFER+3,y
-            bne loop
-            lda #$04
-            sta IDX_IN
-            sec
-            jmp Assemble
+pull_code:  ldy #$00            ; If there's code after the label, pull it
+-loop:      iny                 ;   two spaces, replacing the label. This
+            lda INBUFFER+5,y    ;   positions the instruction for use with
+            sta INBUFFER+3,y    ;   Hypotest later
+            bne loop            ;   ,,
+            lda #$04            ; Reset the buffer position to the start
+            sta IDX_IN          ;   of the code  
+            sec                 ;   ,,
+            jmp Assemble        ;   ,,
  
 ; Parse Immediate Operand
 ; Immediate operand octets are expressed in the following formats--
@@ -785,7 +785,7 @@ compute_r:  rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY DUMP COMPONENT
-; https://github.com/Chysn/wAx/wiki/3-Memory-Dump
+; https://github.com/Chysn/wAx/wiki/Memory-Dump
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Memory:     ldy #$00
 -loop:      lda (EFADDR),y
@@ -819,7 +819,7 @@ next_char:  iny
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BINARY DUMP COMPONENT
-; https://github.com/Chysn/wAx/wiki/3-Memory-Dump
+; https://github.com/Chysn/wAx/wiki/Memory-Dump#binary-dump
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 BinaryDisp: ldx #$00            ; Get the byte at the effective address
             lda (EFADDR,x)      ; ,,
@@ -846,7 +846,7 @@ is_zero:    lda #"0"
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSERTION TESTER COMPONENT
-; https://github.com/Chysn/wAx/wiki/8-Assertion-Tester 
+; https://github.com/Chysn/wAx/wiki/Assertion-Tester 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Tester:     ldy #$00
 -loop:      jsr Buff2Byte
@@ -868,7 +868,7 @@ test_err:   jmp MisError
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BREAKPOINT COMPONENTS
-; https://github.com/Chysn/wAx/wiki/7-Breakpoint-Manager
+; https://github.com/Chysn/wAx/wiki/Breakpoint-Manager
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 SetBreak:   php
             jsr ClearBP         ; Clear the old breakpoint, if it exists
@@ -977,7 +977,7 @@ enable_r:   rts
              
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; REGISTER COMPONENT
-; https://github.com/Chysn/wAx/wiki/5-Register-Editor
+; https://github.com/Chysn/wAx/wiki/Register-Editor
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Register:   bcc register_r      ; Don't set Y and X if they're not provided
             lda EFADDR+1        ; Two bytes are already set in the program
@@ -992,7 +992,7 @@ register_r: rts
                                                 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINE EXECUTION COMPONENT
-; https://github.com/Chysn/wAx/wiki/6-Subroutine-Execution
+; https://github.com/Chysn/wAx/wiki/Subroutine-Execution
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Execute:    pla                 ; Get rid of the return address to Return, as
             pla                 ;   it will not be needed (see BRK below)
@@ -1022,7 +1022,7 @@ ex_brk:     brk                 ; Trigger the BRK handler
            
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY SAVE AND LOAD COMPONENTS
-; https://github.com/Chysn/wAx/wiki/9-Memory-Save
+; https://github.com/Chysn/wAx/wiki/Memory-Save-and-Load
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 MemSave:    bcc save_err        ; Bail if the address is no good
             jsr Buff2Byte       ; Convert 2 characters to a byte   
@@ -1125,6 +1125,7 @@ setup_err:  jmp save_err
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SEARCH COMPONENTS
+; https://github.com/Chysn/wAx/wiki/Search
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Search:     bcc srch_r          ; Bail if the address is no good
             lda INBUFFER+4      ; Bail if there's nothing to search
@@ -1210,6 +1211,7 @@ setup_done: lda #QUOTE
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; COPY COMPONENTS
+; https://github.com/Chysn/wAx/wiki/Copy-and-Fill
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Copy
 MemCopy:    bcc copy_err        ; Get parameters as 16-bit hex addresses for
@@ -1248,7 +1250,7 @@ copy_err:   jsr Restore         ; Something was wrong with an address; show
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; NUMERIC CONVERSION COMPONENTS
-; https://github.com/Chysn/wAx/wiki/Number-Conversion
+; https://github.com/Chysn/wAx/wiki/Numeric-Conversion
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 ; Hex to Base-10
 Hex2Base10:	lda #$00            ; Reset input buffer
@@ -1303,6 +1305,8 @@ UpOver:     lda #CRSRUP         ; Cursor up
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SYMBOLIC ASSEMBLER COMPONENTS
+; https://github.com/Chysn/wAx/wiki/Symbol-Table-Manager
+; https://github.com/Chysn/wAx/wiki/Labels
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 ; Initialize Symbol Table
 ; And also, initialize the location counter
@@ -1321,7 +1325,7 @@ EAtoPC:     lda EFADDR          ; Initialize persistent counter with effective
             rts
 init_clear: lda #$00            ; Initialize bytes for the symbol table
             ldy #ST_SIZE-1      ;   See the Symbol Table section at the top for
--loop:      sta SYMBOL_L,y      ;   information about resizing or relocating the
+-loop:      sta SYMBOL_D,y      ;   information about resizing or relocating the
             dey                 ;   symbol table
             bpl loop            ;   ,,
 init_r:     rts
@@ -1355,19 +1359,19 @@ bad_label:  clc
 good_label: ora #$80            ; High bit set indicates symbol is defined
             pha
             ldy #MAX_LAB-2      ; See if the label is already in the table
--loop:      cmp SYMBOL_L,y      ; ,,
+-loop:      cmp SYMBOL_D,y      ; ,,
             beq sym_found       ; ,,
             dey                 ; ,,
             bpl loop            ; ,,
             ldy #MAX_LAB-2      ; If the symbol isn't already in use, look for
--loop:      lda SYMBOL_L,y      ;   an empty record
+-loop:      lda SYMBOL_D,y      ;   an empty record
             beq sym_found       ;   ,,
             dey                 ;   ,,
             bpl loop            ;   ,,
             pla                 ; No empty symbol is found; all symbols are in        
             jmp bad_label       ;   use. Return for error
 sym_found:  pla
-            sta SYMBOL_L,y      ; Populate the symbol label table with the name
+            sta SYMBOL_D,y      ; Populate the symbol label table with the name
             sec                 ; Set Carry flag indicates success
             rts            
             
@@ -1443,7 +1447,7 @@ fwd_d:      jsr PrintBuff
 LabListCo:  jsr ResetOut
             lda #"-"
             jsr CharOut
-            lda SYMBOL_L,x
+            lda SYMBOL_D,x
             and #$7f
             jsr CharOut
             jsr Space
@@ -1603,6 +1607,7 @@ addfwd_r:   rts
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BASIC STAGE SELECT COMPONENT
+; https://github.com/Chysn/wAx/wiki/Change-BASIC-Stage
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 BASICStage: lda #$00            ; Reset the input buffer index
             sta IDX_IN          ;
