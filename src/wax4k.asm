@@ -803,8 +803,6 @@ show_char:  jsr ReverseOn         ; Reverse on for the characters
             bcs add_char        ;   display unchaged
             cmp #$80            ; Change everything between 128 and 159 
             bcs alter_char      ; ,,
-            cmp #QUOTE          ; Don't show double quote character because it
-            beq alter_char      ;   turns on quote mode
             cmp #$20            ; Show everything else at and above space
             bcs add_char        ; ,,
 alter_char: lda #$2e            ; Everything else gets a .
@@ -2033,6 +2031,8 @@ PrintStr:   sta CHARAC
 -loop:      lda (CHARAC),y
             beq print_r
             jsr CHROUT
+            lda #$00
+            sta $d4
             iny
             bne loop
 print_r:    rts            
