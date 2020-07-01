@@ -272,10 +272,8 @@ List:       bcs addr_ok         ; If the provided address is OK, disassemble
             sta EFADDR+1        ;  ,,
             jmp check_dir       ;  ,,
 addr_ok:    lda INBUFFER+4      ; If there's stuff after the list command,
-            beq check_dir       ;   treat it as an assemble command; change
-            lda #T_ASM          ;   the tool to the Assemble tool and route to
-            sta TOOL_CHR        ;   Assemble
-            jmp Assemble        ;   ,,
+            beq check_dir       ;   treat it as an assemble command by routing
+            jmp Assemble        ;   to Assemble
 check_dir:  jsr DirectMode      ; If the tool is in direct mode,
             bne start_list      ;   cursor up to overwrite the original input
             lda #CRSRUP         ;   ,,
@@ -482,7 +480,8 @@ abs_ind:    jsr Comma           ; This is an indexed addressing mode, so
 ; MEMORY EDITOR COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/Memory-Editor
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-MemEditor:  lda #$04            ; The number of allowed bytes is temporarily
+MemEditor:  sta TOOL_CHR        ; Set tool character for prompt
+            lda #$04            ; The number of allowed bytes is temporarily
             sta CHARAC          ;   stored in CHARAC.
             jsr DirectMode      ; If MemEditor is run in a BASIC program, allow
             beq start_mem       ;   more bytes per line, because we don't need
@@ -519,8 +518,9 @@ TextEdit:   ldy #$00            ; Y=Data Index
             
 ; Binary Editor
 ; If the input starts with a %, get one binary byte and store it in memory                   
-BinaryEdit: jsr BinaryByte      ; Get 8 binary bits
-            bcc edit_r          ; If invalid, exit assembler
+BinaryEdit: sta TOOL_CHR        ; Set tool character for prompt
+            jsr BinaryByte      ; Get 8 binary bits
+            ;bcc edit_r         ; If invalid, errors at BinaryByte
             ldy #$00            ; Store the valid byte to memory
             sta (EFADDR),y      ; ,,
             iny                 ; Increment the byte count and return to
@@ -530,7 +530,14 @@ BinaryEdit: jsr BinaryByte      ; Get 8 binary bits
 ; ASSEMBLER COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/6502-Assembler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Assemble:   bcc asm_r           ; Bail if the address is no good
+; Centrally-located error jump
+asm_error:  jmp AsmError
+
+; Assemble 6502 Instruction
+; Or data
+Assemble:   lda #" "            ; Set tool character to space for the prompt
+            sta TOOL_CHR        ; ,,
+            bcc asm_r           ; Bail if the address is no good
             lda INBUFFER+4      ; If the user just pressed Return at the prompt,
             beq asm_r           ;   go back to BASIC
 -loop:      jsr CharGet         ; Look through the buffer for either
@@ -570,7 +577,6 @@ test:       jsr Hypotest        ; Line is done; hypothesis test for a match
 nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
             jsr Prompt          ; Prompt for next line if in direct mode
 asm_r:      rts
-asm_error:  jmp AsmError
 
 ; Define Label
 ; Create a new label entry, and resolve any forward references to the
@@ -623,7 +629,7 @@ try_quote:  cmp #QUOTE          ; If it's a double quote, make sure it's a one
 try_binary: cmp #"%"            ; If it's a binary prefix sigil %, convert
             bne try_base10      ;   the eight binary bits and, if valid,
             jsr BinaryByte      ;   set the operand and convert it to hex
-            bcc AsmError        ;   ,,
+            ;bcc AsmError       ;   ,, (errors at BinaryByte)
             sta OPERAND         ;   ,,
             bcs insert_hex      ;   ,,
 try_base10: lda $7b             ; Now look for a base-10 number by temporarily
@@ -1855,9 +1861,7 @@ next_bit:   pla
             lda TEMP_CALC
             sec
             rts
-bad_bin:    pla
-            clc
-            rts 
+bad_bin:    jmp AsmError
  
 ; Show Address
 ; 16-bit hex address at effective address          
@@ -2050,13 +2054,13 @@ Prompt:     txa                 ; Based on the incoming X register, advance
             jsr DirectMode      ; If the user is in direct mode, show a prompt,
             bne prompt_r        ;   otherwise, return to get next command
             jsr ResetOut        ; Reset the output buffer to generate the prompt
-            lda TOOL_CHR        ; The prompt begins with the current tool's
+            lda #T_ASM          ; The prompt begins with the assembler tool's
             jsr CharOut         ;   wedge character
             lda X_PC+1          ; Show the high byte
             jsr Hex             ;   ,,
             lda X_PC            ;   ,,
             jsr Hex             ; Then the low byte
-            lda #CRSRRT         ;   ,,
+            lda TOOL_CHR        ; Then the tool character
             jsr CharOut         ;   ,,
             ldy #$00
 -loop:      lda OUTBUFFER,y     ; Copy the output buffer into KEYBUFF, which
