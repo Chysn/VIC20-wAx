@@ -1092,7 +1092,7 @@ show_range: jsr ResetOut
             jsr Hex             ; ,,
             lda X_PC            ; ,,
             jsr Hex             ; ,,
-            jsr Space           ; ,,
+            jsr Semicolon       ; ,, (comment so disassembly works)
             lda $af             ; ,,
             jsr Hex             ; ,,
             lda $ae             ; ,,
@@ -1163,8 +1163,7 @@ srch_r:     rts
 CodeSearch: lda #T_DIS
             jsr CharOut
             jsr Address
-            lda #";"            ; Adds comment so the disassembly works
-            jsr CharOut         ; Positions the code into place for IsMatch
+            jsr Semicolon       ; Adds comment so the disassembly works
             jsr Disasm          ; Disassmble the code at the effective address
             jsr IsMatch         ; If it matches the input, show the address
             bcc check_end       ; ,,
@@ -1804,6 +1803,8 @@ next_r:     ldx #$00
             rts
 
 ; Commonly-Used Characters
+Semicolon:  lda #";"            ; TOP (skip word)
+            .byte $3c
 GT:         lda #">"
             .byte $3c           ; TOP (skip word)
 ReverseOn   lda #RVS_ON
@@ -1839,15 +1840,14 @@ BinaryByte: lda #$00
             lda #%10000000
 -loop:      pha
             jsr CharGet
-            tay
-            cpy #"1"
+            cmp #"1"
             bne zero
             pla
             pha
             ora TEMP_CALC
             sta TEMP_CALC
             jmp next_bit
-zero:       cpy #"0"
+zero:       cmp #"0"
             bne bad_bin
 next_bit:   pla
             lsr
@@ -2031,8 +2031,8 @@ PrintStr:   sta CHARAC
 -loop:      lda (CHARAC),y
             beq print_r
             jsr CHROUT
-            lda #$00
-            sta $d4
+            lda #$00            ; Turn off quote mode for each character
+            sta $d4             ; ,,
             iny
             bne loop
 print_r:    rts            
