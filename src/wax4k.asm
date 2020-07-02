@@ -63,8 +63,6 @@ T_H2T       = "$"               ; Wedge character $ for hex to base 10
 T_T2H       = "#"               ; Wedge character # for base 10 to hex
 T_SYM       = $ac               ; Wedge character * for symbol initialization
 T_BAS       = $ae               ; Wedge character ^ for BASIC stage select
-BYTE        = ":"               ; .byte entry character
-BINARY      = "%"               ; Binary entry character
 LABEL       = $ab               ; Forward relative branch character
 
 ; System resources - Routines
@@ -297,13 +295,11 @@ ListLine:   txa
             jsr Space           ; Space goes after address for Disassembly
             jsr Disasm
             jmp continue
-to_mem:     lda #BYTE           ; The .byte entry character goes after the
-            jsr CharOut         ;   address for memory display
-            jsr Memory          ;   ,,
+to_mem:     jsr CharOut         ; Memory editor character goes after address
+            jsr Memory          ; Do Memory display
             jmp continue
-to_bin:     lda #BINARY         ; The binary entry character goes after the
-            jsr CharOut         ;   address for binary display
-            jsr BinaryDisp      ;   ,,          
+to_bin:     jsr CharOut         ; Binary editor character goes after address
+            jsr BinaryDisp      ; Do Binary display
 continue:   jsr PrintBuff      
             pla
             tax
@@ -347,7 +343,7 @@ disasm_op:  lda INSTDATA+1      ; Pass addressing mode to operand routine
             jmp NextValue       ; Advance to the next line of code
 
 ; Unknown Opcode
-Unknown:    lda #BYTE           ; Byte entry before an unknown byte
+Unknown:    lda #T_MEM          ; Memory entry before an unknown byte
             jsr CharOut         ; ,,
             lda INSTDATA        ; The unknown opcode is still here   
             jsr Hex             
@@ -547,11 +543,11 @@ Assemble:   lda #" "            ; Set tool character to space for the prompt
             bne op_parts        ;   pre-data stuff
             cmp #LABEL          ; & = New label
             beq DefLabel        ; ,,
-            cmp #BYTE           ; Colon = Byte entry (route to hex editor)
+            cmp #T_MEM          ; Colon = Byte entry (route to hex editor)
             beq MemEditor       ; ,,
             cmp #QUOTE          ; " = Text entry (route to text editor)
             beq TextEdit        ; ,,
-            cmp #BINARY         ; % = Binary entry (route to binary editor)
+            cmp #T_BIN          ; % = Binary entry (route to binary editor)
             beq BinaryEdit      ; ,,
 op_parts:   cmp #"#"            ; # = Parse immediate operand (quotes and %)
             beq ImmedOp         ; ,,         
@@ -811,7 +807,7 @@ show_char:  jsr ReverseOn         ; Reverse on for the characters
             bcs alter_char      ; ,,
             cmp #$20            ; Show everything else at and above space
             bcs add_char        ; ,,
-alter_char: lda #$2e            ; Everything else gets a .
+alter_char: lda #" "            ; Everything else gets a space
 add_char:   jsr CharOut         ; ,,
             inc EFADDR
             bne next_char
@@ -961,7 +957,7 @@ BreakInd:   ldy #$00            ; Is this a BRK instruction?
             lda BREAKPOINT+1    ; ,,
             cmp EFADDR+1        ; ,,
             bne ind_r           ; ,,
-            jsr ReverseOn         ; Reverse on for the breakpoint
+            jsr ReverseOn       ; Reverse on for the breakpoint
             lda BREAKPOINT+2    ; Temporarily restore the breakpoint byte
             sta (EFADDR),y      ;   for disassembly purposes
 ind_r:      rts        
@@ -1404,6 +1400,7 @@ next_label: pla
             bne loop
             jsr ResetOut           ; Show the value of the persistent counter
             jsr Space
+            jsr Space
             lda #"*"
             jsr CharOut
             jsr Space
@@ -1448,6 +1445,7 @@ fwd_d:      jsr PrintBuff
 
 ; Label List Common            
 LabListCo:  jsr ResetOut
+            jsr Space
             lda #"-"
             jsr CharOut
             lda SYMBOL_D,x
@@ -1663,7 +1661,7 @@ new:        lda #$00            ; Zero out the first few bytes of the stage so
 finish:     jsr Rechain
             jmp (READY)
 bank_r:     jsr ResetOut        ; Provide info about the start of BASIC
-            jsr UpOver          ; ,,
+            jsr Space           ; ,,
             jsr HexPrefix       ; ,,
             lda $2c             ; ,,
             jsr Hex             ; ,,
@@ -1822,7 +1820,24 @@ Comma:      lda #","
 Space:      lda #" "
             .byte $3c           ; TOP (skip word)
 HexPrefix:  lda #"$"
-            jmp CharOut
+            ; Fall through to CharOut
+            
+; Character to Output
+; Add the character in A to the outut byffer            
+CharOut:    sta CHARAC          ; Save temporary character
+            tya                 ; Save registers
+            pha                 ; ,,
+            txa                 ; ,,
+            pha                 ; ,,
+            ldx IDX_OUT         ; Write to the next OUTBUFFER location
+            lda CHARAC          ; ,,
+            sta OUTBUFFER,x     ; ,,
+            inc IDX_OUT         ; ,,
+            pla                 ; Restore registers
+            tax                 ; ,,
+            pla                 ; ,,
+            tay                 ; ,,
+write_r:    rts             
             
 ; Write hexadecimal character
 Hex:        pha                 ; Hex converter based on from WOZ Monitor,
@@ -1883,23 +1898,6 @@ Param_16:   jsr HexPrefix
             jsr Hex
             pla
             jmp Hex
-
-; Character to Output
-; Add the character in A to the outut byffer            
-CharOut:    sta CHARAC          ; Save temporary character
-            tya                 ; Save registers
-            pha                 ; ,,
-            txa                 ; ,,
-            pha                 ; ,,
-            ldx IDX_OUT         ; Write to the next OUTBUFFER location
-            lda CHARAC          ; ,,
-            sta OUTBUFFER,x     ; ,,
-            inc IDX_OUT         ; ,,
-            pla                 ; Restore registers
-            tax                 ; ,,
-            pla                 ; ,,
-            tay                 ; ,,
-write_r:    rts 
 
 ; Transcribe to Buffer
 ; Get a character from the input buffer and transcribe it to the
@@ -2098,7 +2096,7 @@ ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
 Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00
-Registers:  .asc LF,$b0,"Y",$c0,$c0,"X",$c0,$c0,"A",$c0,$c0
+Registers:  .asc LF, LF,$b0,"Y",$c0,$c0,"X",$c0,$c0,"A",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
