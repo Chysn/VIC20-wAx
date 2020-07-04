@@ -941,8 +941,8 @@ Break:      pla                 ; Get values from stack and put them in the
             tax                 ;   ,,
             pla                 ;   ,,
             plp                 ; Get the processor status
-            jsr SYS_TAIL        ; Store regiters in SYS locations
             cld                 ; Escape hatch for accidentally-set Decimal flag
+            jsr SYS_TAIL        ; Store regiters in SYS locations
             pla                 ; Get Program Counter from interrupt and put
             sta X_PC            ;   it in the persistent counter
             pla                 ;   ,,
