@@ -41,15 +41,14 @@ LIST_NUM    = $10               ; Display this many lines
 TOOL_COUNT  = $09               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
 T_ASM       = "@"               ; Wedge character @ for assembly
-T_MEM       = ","               ; Wedge character , for memory dump
+T_MEM       = ":"               ; Wedge character , for memory dump
 T_TST       = $b2               ; Wedge character = for tester
 T_BRK       = "!"               ; Wedge character ! for breakpoint
 T_REG       = ";"               ; Wedge character ; for register set
 T_EXE       = $5f               ; Wedge character left-arrow for code execute
 T_SAV       = $b1               ; Wedge character > for save
 T_LOA       = $b3               ; Wedge character < for load
-BYTE        = ":"               ; .byte Entry Character
-FWDR        = "*"               ; Forward Relative Branch Character
+FWDR        = "-"               ; Forward Relative Branch Character
 DEVICE      = $08               ; Save device
 
 ; System resources - Routines
@@ -247,7 +246,7 @@ ListLine:   txa
             jsr Space           ; Space goes after address for Disassembly
             jsr Disasm
             jmp continue
-to_mem:     lda #BYTE           ; The .byte entry character goes after the
+to_mem:     lda #T_MEM          ; The .byte entry character goes after the
             jsr CharOut         ;   address for memory display
             jsr Memory          ;   ,,
 continue:   jsr PrintBuff      
@@ -281,7 +280,7 @@ Disasm:     ldy #$00            ; Get the opcode
             jmp NextValue       ; Advance to the next line of code
 
 ; Unknown Opcode
-Unknown:    lda #BYTE           ; Byte entry before an unknown byte
+Unknown:    lda #T_MEM          ; Byte entry before an unknown byte
             jsr CharOut         ; ,,
             lda INSTDATA        ; The unknown opcode is still here   
             jsr Hex             
@@ -450,7 +449,7 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             beq test            ;   0, which should indicate implied mode, or:
             cmp #FWDR           ; * = Handle forward relative branching
             beq HandleFwd       ; ,,
-            cmp #BYTE           ; . = Start .byte entry (route to hex editor)
+            cmp #T_MEM          ; . = Start .byte entry (route to hex editor)
             beq MemEditor       ; ,,
             cmp #QUOTE          ; " = Start text entry (route to text editor)
             beq TextEdit        ; ,,
@@ -1134,7 +1133,8 @@ ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
 
 ; Text display tables                      
 Intro:      .asc LF,"WAX ON",$00
-Registers:  .asc LF,LF,"*Y: X: A: P: S: PC::",LF,";",$00
+Registers:  .asc LF, LF,$b0,"Y",$c0,$c0,"X",$c0,$c0,"A",$c0,$c0
+            .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 
 ; Instruction Set

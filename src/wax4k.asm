@@ -50,7 +50,7 @@ T_DIS       = "."               ; Wedge character . for disassembly
 T_XDI       = ","               ; Wedge character , for extended opcodes
 T_ASM       = "@"               ; Wedge character @ for assembly
 T_MEM       = ":"               ; Wedge character : for memory dump
-T_BIN       = "%"               ; Wedge character ' for binary dump
+T_BIN       = "%"               ; Wedge character % for binary dump
 T_TST       = $b2               ; Wedge character = for tester
 T_BRK       = "!"               ; Wedge character ! for breakpoint
 T_REG       = ";"               ; Wedge character ; for register set
@@ -71,7 +71,8 @@ CHRGET      = $0073
 CHRGOT      = $0079
 PRTFIX      = $ddcd             ; Print base-10 number
 SYS         = $e133             ; BASIC SYS start
-CHROUT      = $ffd2
+SYS_TAIL    = $e144             ; BAIC SYS end
+CHROUT      = $ffd2             ; Print one character
 WARM_START  = $0302             ; BASIC warm start vector
 READY       = $c002             ; BASIC warm start with READY.
 NX_BASIC    = $c7ae             ; Get next BASIC command
@@ -434,7 +435,7 @@ DisZP:      pha
 DisRel:     jsr HexPrefix
             jsr NextValue       ; Get the operand of the instruction, advance
                                 ;   the effective address. It might seem weird
-                                ;   to advance the PC when I'm operating on it a
+                                ;   to advance the EA when I'm operating on it a
                                 ;   few lines down, but I need to add two
                                 ;   bytes to get the offset to the right spot.
                                 ;   One of those bytes is here, and the other
@@ -867,6 +868,32 @@ test_r:     tya                 ; Update effective address with number of
 test_err:   jmp MisError
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; SUBROUTINE EXECUTION COMPONENT
+; https://github.com/Chysn/wAx/wiki/Subroutine-Execution
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Execute:    pla                 ; Get rid of the return address to Return, as
+            pla                 ;   it will not be needed (see BRK below)
+            lda EFADDR          ; Set the temporary INT storage to the program
+            sta SYS_DEST        ;   counter. This is what SYS uses for its
+            lda EFADDR+1        ;   execution address, and I'm using that
+            sta SYS_DEST+1      ;   system to borrow saved Y,X,A,P values
+            jsr SetupVec        ; Make sure the BRK handler is enabled
+            php                 ; Store P to preserve Carry flag
+            jsr Restore         ; Restore zeropage workspace
+            plp                 ; The Carry flag indicates that no valid address
+            bcc RegDisp         ;   was provided; go to BRK if it was not
+            jsr SYS             ; Call BASIC SYS, but a little downline
+                                ;   This starts SYS at the register setup,
+                                ;   leaving out the part that adds a return
+                                ;   address to the stack. This omitted part
+                                ;   sends BASIC's SYS to a second half, which
+                                ;   updates the saved register values. In wAx,
+                                ;   the BRK handler calls the second half of
+                                ;   SYS after getting registers from the stack
+                                ;   set by the interrupt.
+            brk                 ; Trigger the BRK handler
+            
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BREAKPOINT COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/Breakpoint-Manager
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -904,29 +931,44 @@ SetupVec:   lda #<main          ; Intercept GONE to process wedge
             rts
 
 ; BRK Trapper
-; Replaces the default BRK handler. Shows the register display, goes to warm
-; start.
-Break:      cld                 ; Escape hatch for accidentally-set Decimal flag
-            jsr ResetOut
+; Replaces the default BRK handler. Gets registers from hardware interrupt
+; and puts them in the SYS register storage locations. Gets program counter
+; and stores it in the persistent counter location. Then falls through
+; to register display.
+Break:      pla                 ; Get resters
+            tay
+            pla
+            tax
+            pla
+            plp
+            cld                 ; Escape hatch for accidentally-set Decimal flag
+            jsr SYS_TAIL        ; Store regiters in SYS locations
+            pla
+            sta X_PC
+            pla
+            sta X_PC+1
+            ; Fall through to RegDisp
+
+; Register Display            
+RegDisp:    jsr ResetOut
             lda #<Registers     ; Print register display bar
             ldy #>Registers     ; ,,
             jsr PrintStr        ; ,,
-            ldy #$04            ; Pull four values off the stack and add
--loop:      pla                 ;   each one to the buffer. These values came
-            jsr Hex             ;   from the hardware IRQ, and are Y,X,A,P.
+            ldy #$00            ; Get registers' values from storage and add
+-loop:      lda ACC,y           ;   each one to the buffer. These values came
+            jsr Hex             ;   from the hardware IRQ, and are A,X,Y,P
             jsr Space           ;   ,,
-            dey                 ;   ,,
+            iny                 ;   ,,
+            cpy #$04            ;   ,,
             bne loop            ;   ,,
-            tsx                 ; Stack pointer
+            tsx                 ; Add stack pointer to the buffer
             txa                 ; ,,
             jsr Hex             ; ,,
             jsr Space           ; ,,
-            pla                 ; Program counter low
-            tay
-            pla                 ; Program counter high
-            jsr Hex             ; High to buffer
-            tya                 ; ,, 
-            jsr Hex             ; Low to buffer with no space
+            lda X_PC+1          ; Print high byte of persistent counter
+            jsr Hex             ; ,,
+            lda X_PC            ; Print low byte of persistent counter
+            jsr Hex             ; ,,
             jsr PrintBuff       ; Print the buffer
             jmp (WARM_START)    
             
@@ -979,47 +1021,17 @@ enable_r:   rts
 ; REGISTER COMPONENT
 ; https://github.com/Chysn/wAx/wiki/Register-Editor
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Register:   bcc register_r      ; Don't set Y and X if they're not provided
+Register:   bcc register_r      ; Don't set A and X if they're not provided
             lda EFADDR+1        ; Two bytes are already set in the program
-            sta YREG            ;   counter. These are Y and X
+            sta ACC             ;   counter. These are A and X
             lda EFADDR          ;   ,,
             sta XREG            ;   ,,
-            jsr Buff2Byte       ; Get a third byte to set Accumulator
-            sta ACC             ;   ,,
+            jsr Buff2Byte       ; Get a third byte to set Y
+            sta YREG            ;   ,,
             jsr Buff2Byte       ; Get a fourth byte to set Processor Status
             sta PROC            ;   ,,
 register_r: rts
                                                 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; SUBROUTINE EXECUTION COMPONENT
-; https://github.com/Chysn/wAx/wiki/Subroutine-Execution
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Execute:    pla                 ; Get rid of the return address to Return, as
-            pla                 ;   it will not be needed (see BRK below)
-            lda EFADDR          ; Set the temporary INT storage to the program
-            sta SYS_DEST        ;   counter. This is what SYS uses for its
-            lda EFADDR+1        ;   execution address, and I'm using that
-            sta SYS_DEST+1      ;   system to borrow saved Y,X,A,P values
-            jsr SetupVec        ; Make sure the BRK handler is enabled
-            php                 ; Store P to preserve Carry flag
-            jsr Restore         ; Restore zeropage workspace
-            plp                 ; The Carry flag indicates that no valid address
-            bcc ex_brk          ;   was provided; go to BRK if it was not
-            jsr SYS             ; Call BASIC SYS, but a little downline
-                                ;   This starts SYS at the register setup,
-                                ;   leaving out the part that adds a return
-                                ;   address to the stack. This omitted part
-                                ;   sends BASIC's SYS to a second half, which
-                                ;   updates the saved register values. I want
-                                ;   those values to remain as they are, for
-                                ;   repeat testing. To change this behavior,
-                                ;   you would do two things 1) Set the value
-                                ;   of the SYS label to $e127, and 2) Add
-                                ;   lda ACC right after jsr SYS, because the
-                                ;   second half of SYS messes with A, and you
-                                ;   want the BRK interrupt to get it right.
-ex_brk:     brk                 ; Trigger the BRK handler
-           
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY SAVE AND LOAD COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/Memory-Save-and-Load
@@ -1264,8 +1276,7 @@ Hex2Base10:	lda #$00            ; Reset input buffer
             sta EFADDR          ;   treat that as a low byte, and make the
             lda #$00            ;   high byte zero
             sta EFADDR+1        ;   ,,
-two_bytes:  jsr UpOver
-            lda #"#"
+two_bytes:  lda #"#"
             jsr CHROUT
             ldx EFADDR          ; Set up PRTFIX for base-10 integer output
             lda EFADDR+1        ; ,,
@@ -1274,8 +1285,7 @@ two_bytes:  jsr UpOver
 hex_conv_r: rts            
             
 ; Base-10 to Hex
-Base102Hex: jsr UpOver
-            jsr ResetOut
+Base102Hex: jsr ResetOut
             jsr HexPrefix
             ldy #<INBUFFER
             lda #>INBUFFER
@@ -1290,17 +1300,6 @@ Base102Hex: jsr UpOver
 only_low:   lda SYS_DEST
             jsr Hex
 b102h_r:    jmp PrintBuff
-
-; Up And Over
-; To display converted value
-UpOver:     lda #CRSRUP         ; Cursor up
-            jsr CHROUT
-            ldx #$0f
-            lda #CRSRRT         ; Cursor right
--loop       jsr CHROUT
-            dex
-            bne loop    
-            rts      
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SYMBOLIC ASSEMBLER COMPONENTS
@@ -1661,7 +1660,6 @@ new:        lda #$00            ; Zero out the first few bytes of the stage so
 finish:     jsr Rechain
             jmp (READY)
 bank_r:     jsr ResetOut        ; Provide info about the start of BASIC
-            jsr Space           ; ,,
             jsr HexPrefix       ; ,,
             lda $2c             ; ,,
             jsr Hex             ; ,,
@@ -2095,8 +2093,8 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00
-Registers:  .asc LF, LF,$b0,"Y",$c0,$c0,"X",$c0,$c0,"A",$c0,$c0
+Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,LF,"WAX ON",$00
+Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
