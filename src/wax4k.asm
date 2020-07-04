@@ -935,18 +935,18 @@ SetupVec:   lda #<main          ; Intercept GONE to process wedge
 ; and puts them in the SYS register storage locations. Gets program counter
 ; and stores it in the persistent counter location. Then falls through
 ; to register display.
-Break:      pla                 ; Get resters
-            tay
-            pla
-            tax
-            pla
-            plp
-            cld                 ; Escape hatch for accidentally-set Decimal flag
+Break:      pla                 ; Get values from stack and put them in the
+            tay                 ;   proper registers
+            pla                 ;   ,,
+            tax                 ;   ,,
+            pla                 ;   ,,
+            plp                 ; Get the processor status
             jsr SYS_TAIL        ; Store regiters in SYS locations
-            pla
-            sta X_PC
-            pla
-            sta X_PC+1
+            cld                 ; Escape hatch for accidentally-set Decimal flag
+            pla                 ; Get Program Counter from interrupt and put
+            sta X_PC            ;   it in the persistent counter
+            pla                 ;   ,,
+            sta X_PC+1          ;   ,,
             ; Fall through to RegDisp
 
 ; Register Display            
