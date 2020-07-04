@@ -873,15 +873,13 @@ test_err:   jmp MisError
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Execute:    pla                 ; Get rid of the return address to Return, as
             pla                 ;   it will not be needed (see BRK below)
+            bcc RegDisp         ; No address was provided; just show registers
             lda EFADDR          ; Set the temporary INT storage to the program
             sta SYS_DEST        ;   counter. This is what SYS uses for its
             lda EFADDR+1        ;   execution address, and I'm using that
             sta SYS_DEST+1      ;   system to borrow saved Y,X,A,P values
             jsr SetupVec        ; Make sure the BRK handler is enabled
-            php                 ; Store P to preserve Carry flag
             jsr Restore         ; Restore zeropage workspace
-            plp                 ; The Carry flag indicates that no valid address
-            bcc RegDisp         ;   was provided; go to BRK if it was not
             jsr SYS             ; Call BASIC SYS, but a little downline
                                 ;   This starts SYS at the register setup,
                                 ;   leaving out the part that adds a return
@@ -2093,7 +2091,7 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,LF,"WAX ON",$00
+Intro:      .asc LF,"  BEIGEMAZE.COM/WAX",LF,LF,"WAX ON",$00
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
