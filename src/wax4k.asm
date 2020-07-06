@@ -45,7 +45,7 @@ MAX_LAB     = 19                ; Maximum number of user labels + 1
 MAX_FWD     = 12                ; Maximum number of forward references
 
 ; Tool Setup
-TOOL_COUNT  = $11               ; How many tools are there?
+TOOL_COUNT  = $12               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
 T_XDI       = ","               ; Wedge character , for extended opcodes
 T_ASM       = "@"               ; Wedge character @ for assembly
@@ -63,6 +63,7 @@ T_H2T       = "$"               ; Wedge character $ for hex to base 10
 T_T2H       = "#"               ; Wedge character # for base 10 to hex
 T_SYM       = $ac               ; Wedge character * for symbol initialization
 T_BAS       = $ae               ; Wedge character ^ for BASIC stage select
+T_USR       = "'"               ; Wedge character ' for user tool
 LABEL       = $ab               ; Forward relative branch character
 
 ; System resources - Routines
@@ -161,6 +162,7 @@ OVERFLOW_F  = SYMBOL_FH+MAX_FWD ; Symbol unresolved reference overflow count
 
 ; Assembler workspace
 X_PC        = $03               ; Persistent Counter (2 bytes)
+USER_VECT   = $05               ; User tool vector (2 bytes)
 WORK        = $a3               ; Temporary workspace (2 bytes)
 MNEM        = $a3               ; Current Mnemonic (2 bytes)
 EFADDR      = $a5               ; Program Counter (2 bytes)
@@ -193,6 +195,10 @@ Install:    jsr Rechain         ; Rechain BASIC program
             jsr PrintStr        ; ,,
             lda #DEF_DEVICE     ; Set default device number
             sta DEVICE
+            lda #<Install
+            sta USER_VECT
+            lda #>Install
+            sta USER_VECT+1
             jmp (READY)         ; READY.
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -234,14 +240,12 @@ Prepare:    tax                 ; Save A in X so Prepare can set TOOL_CHR
             cpy #$10            ;   ,,
             bne loop            ;   ,,
             stx TOOL_CHR        ; Store the tool character
-            lda #$00            ; Initialize the input index for write
-            sta IDX_IN          ; ,,
+            jsr ResetIn         ; Initialize the input index for write
             sta IGNORE_RB       ; Clear Ignore Relative Branch flag
             jsr Transcribe      ; Transcribe from CHRGET to INBUFFER
             lda #$ef            ; $0082 BEQ $008a -> BEQ $0073 (maybe)
             sta $83             ; ,,
-RefreshPC:  lda #$00            ; Re-initialize for buffer read
-            sta IDX_IN          ; ,,
+RefreshPC:  jsr ResetIn         ; Re-initialize for buffer read
             jsr Buff2Byte       ; Convert 2 characters to a byte   
             bcc main_r          ; Fail if the byte couldn't be parsed
             sta EFADDR+1        ; Save to the EFADDR high byte
@@ -873,13 +877,13 @@ test_err:   jmp MisError
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Execute:    pla                 ; Get rid of the return address to Return, as
             pla                 ;   it will not be needed (see BRK below)
-            bcc RegDisp         ; No address was provided; just show registers
+            bcc iterate         ; No address was provided; just show registers
             lda EFADDR          ; Set the temporary INT storage to the program
             sta SYS_DEST        ;   counter. This is what SYS uses for its
             lda EFADDR+1        ;   execution address, and I'm using that
             sta SYS_DEST+1      ;   system to borrow saved Y,X,A,P values
             jsr SetupVec        ; Make sure the BRK handler is enabled
-            jsr Restore         ; Restore zeropage workspace
+iterate:    jsr Restore         ; Restore zeropage workspace
             jsr SYS             ; Call BASIC SYS, but a little downline
                                 ;   This starts SYS at the register setup,
                                 ;   leaving out the part that adds a return
@@ -890,7 +894,28 @@ Execute:    pla                 ; Get rid of the return address to Return, as
                                 ;   SYS after getting registers from the stack
                                 ;   set by the interrupt.
             brk                 ; Trigger the BRK handler
-            
+            nop                 ; Exit gracefully if <-* after subroutine
+            rts                 ;   execute
+                        
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; REGISTER COMPONENT
+; https://github.com/Chysn/wAx/wiki/Register-Editor
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+Register:   jsr ResetIn
+            jsr Buff2Byte
+            bcc RegDisp
+            sta ACC
+            jsr Buff2Byte
+            bcc register_r
+            sta XREG
+            jsr Buff2Byte
+            bcc register_r
+            sta YREG
+            jsr Buff2Byte
+            bcc register_r
+            sta PROC
+register_r: rts
+                        
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BREAKPOINT COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/Breakpoint-Manager
@@ -1014,22 +1039,7 @@ EnableBP:   lda BREAKPOINT+2
             tya                 ; ,,
             sta (CHARAC),y      ; ,,
 enable_r:   rts
-             
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; REGISTER COMPONENT
-; https://github.com/Chysn/wAx/wiki/Register-Editor
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Register:   bcc register_r      ; Don't set A and X if they're not provided
-            lda EFADDR+1        ; Two bytes are already set in the program
-            sta ACC             ;   counter. These are A and X
-            lda EFADDR          ;   ,,
-            sta XREG            ;   ,,
-            jsr Buff2Byte       ; Get a third byte to set Y
-            sta YREG            ;   ,,
-            jsr Buff2Byte       ; Get a fourth byte to set Processor Status
-            sta PROC            ;   ,,
-register_r: rts
-                                                
+                                                             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY SAVE AND LOAD COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/Memory-Save-and-Load
@@ -1063,8 +1073,7 @@ FileError:  pha
 show_error: jmp ERROR_NO 
             
 ; Memory Load
-MemLoad:    lda #$00            ; Reset the input buffer index because there's
-            sta IDX_IN          ;   no address for this command
+MemLoad:    jsr ResetIn         ; Reset the input buffer because there's no addr
             jsr FileSetup       ; SETLFS, get filename length, etc.
             ldx #<INBUFFER+1    ; Set location of filename
             ldy #>INBUFFER+1    ; ,,
@@ -1262,8 +1271,7 @@ copy_err:   jsr Restore         ; Something was wrong with an address; show
 ; https://github.com/Chysn/wAx/wiki/Numeric-Conversion
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 ; Hex to Base-10
-Hex2Base10:	lda #$00            ; Reset input buffer
-            sta IDX_IN          ; ,,
+Hex2Base10: jsr ResetIn         ; Reset input buffer
             jsr Buff2Byte
             bcc hex_conv_r      ; There's no byte available, so bail
             sta EFADDR+1
@@ -1397,7 +1405,6 @@ next_label: pla
             bne loop
             jsr ResetOut           ; Show the value of the persistent counter
             jsr Space
-            jsr Space
             lda #"*"
             jsr CharOut
             jsr Space
@@ -1442,7 +1449,6 @@ fwd_d:      jsr PrintBuff
 
 ; Label List Common            
 LabListCo:  jsr ResetOut
-            jsr Space
             lda #"-"
             jsr CharOut
             lda SYMBOL_D,x
@@ -1607,8 +1613,7 @@ addfwd_r:   rts
 ; BASIC STAGE SELECT COMPONENT
 ; https://github.com/Chysn/wAx/wiki/Change-BASIC-Stage
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
-BASICStage: lda #$00            ; Reset the input buffer index
-            sta IDX_IN          ;
+BASICStage: jsr ResetIn         ; Reset the input buffer index
             sta EFADDR          ; Set default end page
             jsr Buff2Byte       ; Get the first hex byte
             bcc bank_r          ; If no valid address was provided, show start
@@ -1674,6 +1679,12 @@ Rechain:    jsr $c533           ; Re-chain BASIC program to set BASIC
             lda $23             ;   ,,
             jmp $C655           ;   ,,
             
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; User Tool
+; https://github.com/Chysn/wAx/wiki/User-Tool
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+UserTool:	jmp (USER_VECT)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
@@ -1976,7 +1987,12 @@ ExpandXPC:  jsr ResetOut
 ; Reset Output Buffer
 ResetOut:   lda #$00
             sta IDX_OUT
-            rts            
+            rts    
+
+; Reset Input Buffer
+ResetIn:    lda #$00
+            sta IDX_IN
+            rts
                  
 ; Add Input
 ; Add a character to the input buffer and advance the counter
@@ -2076,22 +2092,22 @@ DirectMode: ldy CURLIN+1
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
 ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA,T_BIN
-            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_SYM,T_BAS
+            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_SYM,T_BAS,T_USR
 ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<Register-1,<Execute-1
             .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1,<List-1
             .byte <List-1,<Search-1,<MemCopy-1,<Hex2Base10-1,<Base102Hex-1
-            .byte <InitSym-1,<BASICStage-1
+            .byte <InitSym-1,<BASICStage-1,<UserTool-1
 ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1,>List-1
             .byte >List-1,>Search-1,>MemCopy-1,>Hex2Base10-1,>Base102Hex-1
-            .byte >InitSym-1,>BASICStage-1
+            .byte >InitSym-1,>BASICStage-1,>UserTool-1
 
 ; Addresses for error message text
 ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"  BEIGEMAZE.COM/WAX",LF,LF,"WAX ON",$00
+Intro:      .asc LF,"WAX ON",$00
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
