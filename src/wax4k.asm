@@ -8,6 +8,7 @@
 ; Release 2  - May 23, 2020
 ; Release 3  - May 30, 2020
 ; Release 4K - June 14, 2020
+; Release 5  - July 6, 2020
 ; Assembled with XA
 ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -71,7 +72,7 @@ GONE        = $c7e4
 CHRGET      = $0073
 CHRGOT      = $0079
 PRTFIX      = $ddcd             ; Print base-10 number
-SYS         = $e133             ; BASIC SYS start
+SYS         = $e12d             ; BASIC SYS start
 SYS_TAIL    = $e144             ; BAIC SYS end
 CHROUT      = $ffd2             ; Print one character
 WARM_START  = $0302             ; BASIC warm start vector
@@ -877,23 +878,15 @@ Execute:    bcc iterate         ; No address was provided; just show registers
             sta SYS_DEST        ;   counter. This is what SYS uses for its
             lda EFADDR+1        ;   execution address, and I'm using that
             sta SYS_DEST+1      ;   system to borrow saved Y,X,A,P values
-iterate:    pla
-            pla
-            lda #>RegDisp+1     ; Push the address-1 of Return onto the stack
-            pha                 ;   as the destination for RTS of the
-            lda #<RegDisp+1     ;   selected tool
+iterate:    pla                 ; Remove the address of Return on the stack and
+            pla                 ;   replace it with a return to the Register
+            lda #>RegDisp+1     ;   Display. It's RegDisp+1 to bypass the two
+            pha                 ;   PLAs at the beginning of that subroutine
+            lda #<RegDisp+1     ;   ,,
             pha                 ;   ,,
             jsr SetupVec        ; Make sure the BRK handler is enabled
             jsr Restore         ; Restore zeropage workspace
-            jmp $e12d           ; Call BASIC SYS, but a little downline
-                                ;   This starts SYS at the register setup,
-                                ;   leaving out the part that adds a return
-                                ;   address to the stack. This omitted part
-                                ;   sends BASIC's SYS to a second half, which
-                                ;   updates the saved register values. In wAx,
-                                ;   the BRK handler calls the second half of
-                                ;   SYS after getting registers from the stack
-                                ;   set by the interrupt.
+            jmp SYS             ; Call BASIC SYS, after the parameter parsing
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; REGISTER COMPONENT
