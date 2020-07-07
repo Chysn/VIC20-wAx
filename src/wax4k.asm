@@ -882,8 +882,8 @@ Execute:    pla                 ; Get rid of the return address to Return, as
             sta SYS_DEST        ;   counter. This is what SYS uses for its
             lda EFADDR+1        ;   execution address, and I'm using that
             sta SYS_DEST+1      ;   system to borrow saved Y,X,A,P values
-            jsr SetupVec        ; Make sure the BRK handler is enabled
-iterate:    jsr Restore         ; Restore zeropage workspace
+iterate:    jsr SetupVec        ; Make sure the BRK handler is enabled
+            jsr Restore         ; Restore zeropage workspace
             jsr SYS             ; Call BASIC SYS, but a little downline
                                 ;   This starts SYS at the register setup,
                                 ;   leaving out the part that adds a return
@@ -967,9 +967,9 @@ Break:      pla                 ; Get values from stack and put them in the
             cld                 ; Escape hatch for accidentally-set Decimal flag
             jsr SYS_TAIL        ; Store regiters in SYS locations
             pla                 ; Get Program Counter from interrupt and put
-            sta X_PC            ;   it in the persistent counter
+            sta SYS_DEST        ;   it in the persistent counter
             pla                 ;   ,,
-            sta X_PC+1          ;   ,,
+            sta SYS_DEST+1      ;   ,,
             ; Fall through to RegDisp
 
 ; Register Display            
@@ -988,9 +988,9 @@ RegDisp:    jsr ResetOut
             txa                 ; ,,
             jsr Hex             ; ,,
             jsr Space           ; ,,
-            lda X_PC+1          ; Print high byte of persistent counter
+            lda SYS_DEST+1      ; Print high byte of persistent counter
             jsr Hex             ; ,,
-            lda X_PC            ; Print low byte of persistent counter
+            lda SYS_DEST        ; Print low byte of persistent counter
             jsr Hex             ; ,,
             jsr PrintBuff       ; Print the buffer
             jmp (WARM_START)    
