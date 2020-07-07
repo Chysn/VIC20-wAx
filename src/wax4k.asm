@@ -195,12 +195,12 @@ Install:    jsr Rechain         ; Rechain BASIC program
             ldy #>Intro         ; ,,
             jsr PrintStr        ; ,,
             lda #DEF_DEVICE     ; Set default device number
-            sta DEVICE
-            lda #<Install
-            sta USER_VECT
-            lda #>Install
-            sta USER_VECT+1
-            jmp (READY)         ; READY.
+            sta DEVICE          ; ,,
+            lda #<Install       ; Set default User tool (to Install)
+            sta USER_VECT       ; ,,
+            lda #>Install       ; ,,
+            sta USER_VECT+1     ; ,,
+            jmp (READY)         ; Warm start with READY prompt
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MAIN PROGRAM
@@ -479,8 +479,7 @@ abs_ind:    jsr Comma           ; This is an indexed addressing mode, so
 ; MEMORY EDITOR COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/Memory-Editor
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-MemEditor:  sta TOOL_CHR        ; Set tool character for prompt
-            lda #$04            ; The number of allowed bytes is temporarily
+MemEditor:  lda #$04            ; The number of allowed bytes is temporarily
             sta CHARAC          ;   stored in CHARAC.
             jsr DirectMode      ; If MemEditor is run in a BASIC program, allow
             beq start_mem       ;   more bytes per line, because we don't need
@@ -517,8 +516,7 @@ TextEdit:   ldy #$00            ; Y=Data Index
             
 ; Binary Editor
 ; If the input starts with a %, get one binary byte and store it in memory                   
-BinaryEdit: sta TOOL_CHR        ; Set tool character for prompt
-            jsr BinaryByte      ; Get 8 binary bits
+BinaryEdit: jsr BinaryByte      ; Get 8 binary bits
             ;bcc edit_r         ; If invalid, errors at BinaryByte
             ldy #$00            ; Store the valid byte to memory
             sta (EFADDR),y      ; ,,
@@ -534,9 +532,7 @@ asm_error:  jmp AsmError
 
 ; Assemble 6502 Instruction
 ; Or data
-Assemble:   lda #" "            ; Set tool character to space for the prompt
-            sta TOOL_CHR        ; ,,
-            bcc asm_r           ; Bail if the address is no good
+Assemble:   bcc asm_r           ; Bail if the address is no good
             lda INBUFFER+4      ; If the user just pressed Return at the prompt,
             beq asm_r           ;   go back to BASIC
 -loop:      jsr CharGet         ; Look through the buffer for either
@@ -801,7 +797,7 @@ Memory:     ldy #$00
             beq show_char
             jsr Space
             jmp loop       
-show_char:  jsr ReverseOn         ; Reverse on for the characters
+show_char:  jsr ReverseOn       ; Reverse on for the characters
             ldy #$00
 -loop:      lda CHARDISP,y
             cmp #$a0            ; Everything from 160 on is allowed in the
@@ -1397,6 +1393,7 @@ next_label: pla
             bne loop
             jsr ResetOut        ; Show the value of the persistent counter
             jsr Space           ; ,,
+            jsr Space           ; ,,
             lda #"*"            ; ,,
             jsr CharOut         ; ,,
             jsr Space           ; ,,
@@ -1438,6 +1435,7 @@ fwd_d:      jsr PrintBuff
 
 ; Label List Common            
 LabListCo:  jsr ResetOut
+            jsr Space
             lda #"-"
             jsr CharOut
             lda SYMBOL_D,x
@@ -1652,6 +1650,7 @@ new:        lda #$00            ; Zero out the first few bytes of the stage so
 finish:     jsr Rechain
             jmp (READY)
 bank_r:     jsr ResetOut        ; Provide info about the start of BASIC
+            jsr Space           ; ,,
             jsr HexPrefix       ; ,,
             lda $2c             ; ,,
             jsr Hex             ; ,,
@@ -1931,14 +1930,11 @@ x_add:      jsr AddInput        ; Add the text to the buffer
             jmp Transcribe      ; (Carry is always set by AddInput)
 xscribe_r:  jmp AddInput        ; Add the final zero, and fix CHRGET...
 handle_sym: ldy TOOL_CHR        ; The label character is not handled by the
-            cpy #T_SYM          ;   symbol init tool, because use's used to
-            beq x_add           ;   call the symbol table display
+            cpy #T_SYM          ;   symbol init tool, because it's used to
+            beq x_add           ;   clear the symbol table
             ldy $83             ; Don't handle symbols if the & is in quotes
             cpy #$06            ;   (as in an immediate operand, or text entry)
             beq x_add           ;   ,,
-            ldy IDX_IN          ; If the label character occurs deep in the
-            cpy #$0d            ;   input, don't handle a symbol. It's in the
-            bcs x_add           ;   memory dump display.
             lda IDX_IN          ; If - is the first character in the input
             cmp #$04            ;   buffer after the address, defer the
             bne start_exp       ;   symbol for handling by the assembler
@@ -1962,6 +1958,8 @@ go_expand:  jmp ExpandSym       ; Use $0000 as a placeholder
 comment:    ldy $83
             cpy #$06
             beq add_only
+            lda #$06            ; Move into quote mode so that label characters
+            sta $83             ; are no longer expanded
             lda #$00
 add_only:   beq x_add
 
@@ -2060,8 +2058,8 @@ Prompt:     txa                 ; Based on the incoming X register, advance
             lda #T_ASM          ; The prompt begins with the assembler tool's
             jsr CharOut         ;   wedge character
             jsr PCAddr          ; Show persistent counter
-            lda TOOL_CHR        ; Then the tool character
-            jsr CharOut         ;   ,,
+            lda #CRSRRT         ; Cursor right if other than assembler
+            jsr CharOut         ; ,,
             ldy #$00
 -loop:      lda OUTBUFFER,y     ; Copy the output buffer into KEYBUFF, which
             sta KEYBUFF,y       ;   will simulate user entry
@@ -2099,7 +2097,7 @@ ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 ; Text display tables                      
 Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
-            .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
+            .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,$c0,LF,";",$00
 BreakMsg:   .asc LF,"*BRK",$00            
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
