@@ -288,10 +288,7 @@ ListLine:   txa
             jsr BreakInd        ; Indicate breakpoint, if it's here
             lda TOOL_CHR        ; Start each line with the wedge character
             jsr CharOut
-            lda EFADDR+1        ; Show the address
-            jsr Hex             ; ,,
-            lda EFADDR          ; ,,
-            jsr Hex             ; ,,            
+            jsr Address           
             lda TOOL_CHR        ; What tool is being used?
             cmp #T_MEM          ; Memory Dump
             beq to_mem          ; ,,
@@ -875,16 +872,20 @@ test_err:   jmp MisError
 ; SUBROUTINE EXECUTION COMPONENT
 ; https://github.com/Chysn/wAx/wiki/Subroutine-Execution
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Execute:    pla                 ; Get rid of the return address to Return, as
-            pla                 ;   it will not be needed (see BRK below)
-            bcc iterate         ; No address was provided; just show registers
+Execute:    bcc iterate         ; No address was provided; just show registers
             lda EFADDR          ; Set the temporary INT storage to the program
             sta SYS_DEST        ;   counter. This is what SYS uses for its
             lda EFADDR+1        ;   execution address, and I'm using that
             sta SYS_DEST+1      ;   system to borrow saved Y,X,A,P values
-iterate:    jsr SetupVec        ; Make sure the BRK handler is enabled
+iterate:    pla
+            pla
+            lda #>RegDisp+1     ; Push the address-1 of Return onto the stack
+            pha                 ;   as the destination for RTS of the
+            lda #<RegDisp+1     ;   selected tool
+            pha                 ;   ,,
+            jsr SetupVec        ; Make sure the BRK handler is enabled
             jsr Restore         ; Restore zeropage workspace
-            jsr SYS             ; Call BASIC SYS, but a little downline
+            jmp $e12d           ; Call BASIC SYS, but a little downline
                                 ;   This starts SYS at the register setup,
                                 ;   leaving out the part that adds a return
                                 ;   address to the stack. This omitted part
@@ -893,9 +894,6 @@ iterate:    jsr SetupVec        ; Make sure the BRK handler is enabled
                                 ;   the BRK handler calls the second half of
                                 ;   SYS after getting registers from the stack
                                 ;   set by the interrupt.
-            brk                 ; Trigger the BRK handler
-            nop                 ; Exit gracefully if <-* after subroutine
-            rts                 ;   execute
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; REGISTER COMPONENT
@@ -970,10 +968,17 @@ Break:      pla                 ; Get values from stack and put them in the
             sta SYS_DEST        ;   it in the persistent counter
             pla                 ;   ,,
             sta SYS_DEST+1      ;   ,,
+            pla
+            pla
+            lda #<BreakMsg      ; Print BRK
+            ldy #>BreakMsg      ; ,,
+            jsr PrintStr        ; ,,
             ; Fall through to RegDisp
 
 ; Register Display            
-RegDisp:    jsr ResetOut
+RegDisp:    pla
+            pla
+            jsr ResetOut
             lda #<Registers     ; Print register display bar
             ldy #>Registers     ; ,,
             jsr PrintStr        ; ,,
@@ -988,9 +993,9 @@ RegDisp:    jsr ResetOut
             txa                 ; ,,
             jsr Hex             ; ,,
             jsr Space           ; ,,
-            lda SYS_DEST+1      ; Print high byte of persistent counter
+            lda SYS_DEST+1      ; Print high byte of SYS destination
             jsr Hex             ; ,,
-            lda SYS_DEST        ; Print low byte of persistent counter
+            lda SYS_DEST        ; Print low byte of SYS destination
             jsr Hex             ; ,,
             jsr PrintBuff       ; Print the buffer
             jmp (WARM_START)    
@@ -1109,12 +1114,9 @@ show_range: jsr ResetOut
             beq load_r          ;   ,,
             lda #T_DIS          ; Show the loaded range, if from disk
             jsr CharOut         ; ,,
-            lda X_PC+1          ; ,,
-            jsr Hex             ; ,,
-            lda X_PC            ; ,,
-            jsr Hex             ; ,,
-            jsr Semicolon       ; ,, (comment so disassembly works)
-            lda $af             ; ,,
+            jsr PCAddr          ; Show the persistent counter
+            jsr Semicolon       ; Comment so disassembly works
+            lda $af             ; Show the end of the loaded range
             jsr Hex             ; ,,
             lda $ae             ; ,,
             jsr Hex             ; ,,
@@ -1393,34 +1395,28 @@ LabelList:  ldx #$00
             lda EFADDR+1        ;   ,,
             beq undefd          ; Undefined, but it might be a forward reference
 show_label: jsr LabListCo       ; Add elements common to both listed item
-            lda EFADDR+1
-            jsr Hex
-            lda EFADDR
-            jsr Hex
+            jsr Address
             jsr PrintBuff
 next_label: pla
             tax
             inx
             cpx #MAX_LAB
             bne loop
-            jsr ResetOut           ; Show the value of the persistent counter
-            jsr Space
-            lda #"*"
-            jsr CharOut
-            jsr Space
-            lda X_PC+1
-            jsr Hex
-            lda X_PC
-            jsr Hex
-            lda OVERFLOW_F
-            beq lablist_r
-            pha
-            jsr Space
-            jsr ReverseOn
-            jsr GT
-            pla
-            jsr Hex
-lablist_r:  jsr PrintBuff
+            jsr ResetOut        ; Show the value of the persistent counter
+            jsr Space           ; ,,
+            lda #"*"            ; ,,
+            jsr CharOut         ; ,,
+            jsr Space           ; ,,
+            jsr PCAddr          ; ,,
+            lda OVERFLOW_F      ; Show the overflow forward reference count
+            beq lablist_r       ;   (if any)
+            pha                 ;   ,,
+            jsr Space           ;   ,,
+            jsr ReverseOn       ;   ,,
+            jsr GT              ;   ,,
+            pla                 ;   ,,
+            jsr Hex             ;   ,,
+lablist_r:  jsr PrintBuff       ;   ,,
             rts
 undefd:     stx IDX_SYM
             ldy #$00            ; Forward reference count for this label
@@ -1885,12 +1881,19 @@ next_bit:   pla
             rts
 bad_bin:    jmp AsmError
  
-; Show Address
+; Show Effective Address
 ; 16-bit hex address at effective address          
 Address:    lda EFADDR+1        ; Show the address
             jsr Hex             ; ,,
             lda EFADDR          ; ,,
             jmp Hex             ; ,,   
+
+; Show Persistent Counter
+; 16-bit hex address at persistent counter address          
+PCAddr:     lda X_PC+1
+            jsr Hex
+            lda X_PC
+            jmp Hex
             
 ; Show 8-bit Parameter           
 Param_8:    jsr HexPrefix
@@ -1972,10 +1975,7 @@ add_only:   beq x_add
 ; Expand External Program Counter
 ; Replace asterisk with the X_PC
 ExpandXPC:  jsr ResetOut
-            lda X_PC+1
-            jsr Hex
-            lda X_PC
-            jsr Hex
+            jsr PCAddr
             ldy #$00
 -loop:      lda OUTBUFFER,y
             jsr AddInput
@@ -2066,10 +2066,7 @@ Prompt:     txa                 ; Based on the incoming X register, advance
             jsr ResetOut        ; Reset the output buffer to generate the prompt
             lda #T_ASM          ; The prompt begins with the assembler tool's
             jsr CharOut         ;   wedge character
-            lda X_PC+1          ; Show the high byte
-            jsr Hex             ;   ,,
-            lda X_PC            ;   ,,
-            jsr Hex             ; Then the low byte
+            jsr PCAddr          ; Show persistent counter
             lda TOOL_CHR        ; Then the tool character
             jsr CharOut         ;   ,,
             ldy #$00
@@ -2107,9 +2104,10 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables                      
-Intro:      .asc LF,"WAX ON",$00
+Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
+BreakMsg:   .asc LF,"*BRK",$00            
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CAN",$27,"T RESOLV",$c5
