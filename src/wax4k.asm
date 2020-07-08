@@ -878,18 +878,19 @@ Execute:    bcc iterate         ; No address was provided; just show registers
             sta SYS_DEST        ;   counter. This is what SYS uses for its
             lda EFADDR+1        ;   execution address, and I'm using that
             sta SYS_DEST+1      ;   system to borrow saved Y,X,A,P values
-iterate:    pla                 ; Remove the address of Return on the stack and
-            pla                 ;   replace it with a return to the Register
-            lda #>RegDisp+1     ;   Display. It's RegDisp+1 to bypass the two
+            lda #>RegDisp-1     ;   Display. It's RegDisp+1 to bypass the two
             pha                 ;   PLAs at the beginning of that subroutine
-            lda #<RegDisp+1     ;   ,,
+            lda #<RegDisp-1     ;   ,,
             pha                 ;   ,,
             jsr SetupVec        ; Make sure the BRK handler is enabled
             jsr Restore         ; Restore zeropage workspace
             jmp SYS             ; Call BASIC SYS, after the parameter parsing
+iterate:    pla                 ; Remove return to Return from the stack; it
+            pla                 ;   is not needed
+            jmp $e133
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; REGISTER COMPONENT
+; REGISTER COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/Register-Editor
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Register:   jsr ResetIn
@@ -906,6 +907,28 @@ Register:   jsr ResetIn
             bcc register_r
             sta PROC
 register_r: rts
+
+; Register Display            
+RegDisp:    jsr ResetOut
+            lda #<Registers     ; Print register display bar
+            ldy #>Registers     ; ,,
+            jsr PrintStr        ; ,,
+            ldy #$00            ; Get registers' values from storage and add
+-loop:      lda ACC,y           ;   each one to the buffer. These values came
+            jsr Hex             ;   from the hardware IRQ, and are A,X,Y,P
+            jsr Space           ;   ,,
+            iny                 ;   ,,
+            cpy #$04            ;   ,,
+            bne loop            ;   ,,
+            tsx                 ; Add stack pointer to the buffer
+            txa                 ; ,,
+            jsr Hex             ; ,,
+            jsr Space           ; ,,
+            lda SYS_DEST+1      ; Print high byte of SYS destination
+            jsr Hex             ; ,,
+            lda SYS_DEST        ; Print low byte of SYS destination
+            jsr Hex             ; ,,
+            jmp PrintBuff       ; Print the buffer
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; BREAKPOINT COMPONENTS
@@ -961,34 +984,8 @@ Break:      pla                 ; Get values from stack and put them in the
             sta SYS_DEST        ;   it in the persistent counter
             pla                 ;   ,,
             sta SYS_DEST+1      ;   ,,
-            pla                 ; Take off return address from SYS so we don't
-            pla                 ;   lose stack
-            ; Fall through to RegDisp
-
-; Register Display            
-RegDisp:    pla
-            pla
-            jsr ResetOut
-            lda #<Registers     ; Print register display bar
-            ldy #>Registers     ; ,,
-            jsr PrintStr        ; ,,
-            ldy #$00            ; Get registers' values from storage and add
--loop:      lda ACC,y           ;   each one to the buffer. These values came
-            jsr Hex             ;   from the hardware IRQ, and are A,X,Y,P
-            jsr Space           ;   ,,
-            iny                 ;   ,,
-            cpy #$04            ;   ,,
-            bne loop            ;   ,,
-            tsx                 ; Add stack pointer to the buffer
-            txa                 ; ,,
-            jsr Hex             ; ,,
-            jsr Space           ; ,,
-            lda SYS_DEST+1      ; Print high byte of SYS destination
-            jsr Hex             ; ,,
-            lda SYS_DEST        ; Print low byte of SYS destination
-            jsr Hex             ; ,,
-            jsr PrintBuff       ; Print the buffer
-            jmp (WARM_START)    
+            jsr RegDisp         ; Show the register display
+            jmp (WARM_START)
             
 ; Clear Breakpoint   
 ; Restore breakpoint byte and zero out breakpoint data         
