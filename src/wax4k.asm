@@ -65,7 +65,6 @@ T_T2H       = "#"               ; Wedge character # for base 10 to hex
 T_SYM       = $ac               ; Wedge character * for symbol initialization
 T_BAS       = $ae               ; Wedge character ^ for BASIC stage select
 T_USR       = "'"               ; Wedge character ' for user tool
-T_USL       = $5c               ; Wedge character GPB for user tool list
 LABEL       = $ab               ; Forward relative branch character
 
 ; System resources - Routines
@@ -74,6 +73,7 @@ CHRGET      = $0073
 CHRGOT      = $0079
 PRTFIX      = $ddcd             ; Print base-10 number
 SYS         = $e12d             ; BASIC SYS start
+SYS_BRK     = $e133             ; BASIC SYS continue after BRK
 SYS_TAIL    = $e144             ; BAIC SYS end
 CHROUT      = $ffd2             ; Print one character
 WARM_START  = $0302             ; BASIC warm start vector
@@ -192,15 +192,15 @@ BREAKPOINT  = $0256             ; Breakpoint data (3 bytes)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 Install:    jsr Rechain         ; Rechain BASIC program
             jsr SetupVec        ; Set up vectors (IGONE and BRK)
-            lda #<Intro         ; Announce that wAx is on
-            ldy #>Intro         ; ,,
-            jsr PrintStr        ; ,,
             lda #DEF_DEVICE     ; Set default device number
             sta DEVICE          ; ,,
             lda #<Install       ; Set default User tool (to Install)
             sta USER_VECT       ; ,,
             lda #>Install       ; ,,
             sta USER_VECT+1     ; ,,
+            lda #<Intro         ; Print register display bar
+            ldy #>Intro         ; ,,
+            jsr PrintStr        ; ,,
             jmp (READY)         ; Warm start with READY prompt
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -296,8 +296,6 @@ ListLine:   txa
             beq to_mem          ; ,,
             cmp #T_BIN          ; Binary Dump
             beq to_bin          ; ,,
-            cmp #T_USL          ; User list
-            beq to_user         ; ,,
             jsr Space           ; Space goes after address for Disassembly
             jsr Disasm
             jmp continue
@@ -306,8 +304,6 @@ to_mem:     jsr CharOut         ; Memory editor character goes after address
             jmp continue
 to_bin:     jsr CharOut         ; Binary editor character goes after address
             jsr BinaryDisp      ; Do Binary display
-            jmp continue
-to_user:    jsr UserTool        ; User tool            
 continue:   jsr PrintBuff      
             pla
             tax
@@ -873,21 +869,21 @@ test_err:   jmp MisError
 ; SUBROUTINE EXECUTION COMPONENT
 ; https://github.com/Chysn/wAx/wiki/Subroutine-Execution
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-Execute:    bcc iterate         ; No address was provided; just show registers
+Execute:    bcc iterate         ; No address was provided; continue from BRKpt
             lda EFADDR          ; Set the temporary INT storage to the program
             sta SYS_DEST        ;   counter. This is what SYS uses for its
             lda EFADDR+1        ;   execution address, and I'm using that
             sta SYS_DEST+1      ;   system to borrow saved Y,X,A,P values
-            lda #>RegDisp-1     ;   Display. It's RegDisp+1 to bypass the two
-            pha                 ;   PLAs at the beginning of that subroutine
-            lda #<RegDisp-1     ;   ,,
+            lda #>RegDisp-1     ; Add the register display return address to
+            pha                 ;   the stack, as the return point after the
+            lda #<RegDisp-1     ;   SYS tail
             pha                 ;   ,,
             jsr SetupVec        ; Make sure the BRK handler is enabled
             jsr Restore         ; Restore zeropage workspace
             jmp SYS             ; Call BASIC SYS, after the parameter parsing
 iterate:    pla                 ; Remove return to Return from the stack; it
             pla                 ;   is not needed
-            jmp $e133
+            jmp SYS_BRK         ; SYS with no tail return address
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; REGISTER COMPONENTS
@@ -984,6 +980,9 @@ Break:      pla                 ; Get values from stack and put them in the
             sta SYS_DEST        ;   it in the persistent counter
             pla                 ;   ,,
             sta SYS_DEST+1      ;   ,,
+            lda #<BreakMsg      ; Print BRK indicator
+            ldy #>BreakMsg      ; ,,
+            jsr PrintStr        ; ,,
             jsr RegDisp         ; Show the register display
             jmp (WARM_START)
             
@@ -1799,8 +1798,8 @@ next_r:     ldx #$00
             rts
 
 ; Commonly-Used Characters
-Semicolon:  lda #";"            ; TOP (skip word)
-            .byte $3c
+Semicolon:  lda #";"            
+            .byte $3c           ; TOP (skip word)
 GT:         lda #">"
             .byte $3c           ; TOP (skip word)
 ReverseOn   lda #RVS_ON
@@ -2080,24 +2079,25 @@ DirectMode: ldy CURLIN+1
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
 ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA,T_BIN
-            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_SYM,T_BAS,T_USR,T_USL
+            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_SYM,T_BAS,T_USR
 ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<Register-1,<Execute-1
             .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1,<List-1
             .byte <List-1,<Search-1,<MemCopy-1,<Hex2Base10-1,<Base102Hex-1
-            .byte <InitSym-1,<BASICStage-1,<UserTool-1,<List-1
+            .byte <InitSym-1,<BASICStage-1,<UserTool-1
 ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1,>List-1
             .byte >List-1,>Search-1,>MemCopy-1,>Hex2Base10-1,>Base102Hex-1
-            .byte >InitSym-1,>BASICStage-1,>UserTool-1,>List-1
+            .byte >InitSym-1,>BASICStage-1,>UserTool-1
 
 ; Addresses for error message text
 ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
-; Text display tables                      
-Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00
+; Text display tables  
+Intro:      .asc "BEIGEMAZE.COM/WAX",LF,$00                   
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
+BreakMsg:   .asc LF,"BRK",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CAN",$27,"T RESOLV",$c5
