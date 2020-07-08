@@ -13,4 +13,4 @@
 999 print "{blue}[ok]{black}"
 1000 print"* immediate op syntax"
 1005 print"  {cyan}loading...{black}"
-1000 load"immedtest.prg",8
+1010 load"immedtest.prg",8

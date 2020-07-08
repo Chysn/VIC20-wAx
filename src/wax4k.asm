@@ -62,7 +62,7 @@ T_SRC       = $ad               ; Wedge character / for search
 T_CPY       = "&"               ; Wedge character & for copy
 T_H2T       = "$"               ; Wedge character $ for hex to base 10
 T_T2H       = "#"               ; Wedge character # for base 10 to hex
-T_SYM       = $ac               ; Wedge character * for symbol initialization
+T_SYM       = $ac               ; Wedge character * for symbol table management
 T_BAS       = $ae               ; Wedge character ^ for BASIC stage select
 T_USR       = "'"               ; Wedge character ' for user tool
 LABEL       = $ab               ; Forward relative branch character
@@ -162,29 +162,28 @@ SYMBOL_FL   = SYMBOL_F+MAX_FWD  ;   Forward reference low bytes
 SYMBOL_FH   = SYMBOL_FL+MAX_FWD ;   Forward reference high bytes
 OVERFLOW_F  = SYMBOL_FH+MAX_FWD ; Symbol unresolved reference overflow count
 
-; Assembler workspace
+; wAx workspace
 X_PC        = $03               ; Persistent Counter (2 bytes)
 USER_VECT   = $05               ; User tool vector (2 bytes)
-WORK        = $a3               ; Temporary workspace (2 bytes)
-MNEM        = $a3               ; Current Mnemonic (2 bytes)
-EFADDR      = $a5               ; Program Counter (2 bytes)
-CHARDISP    = $a7               ; Character display for Memory (2 bytes)
-LANG_PTR    = $a7               ; Language Pointer (2 bytes)
-INSTDATA    = $a9               ; Instruction data (2 bytes)
-RANGE_END   = $a9               ; End of range for Save and Copy
-TOOL_CHR    = $ab               ; Current function (T_ASM, T_DIS)
-OPCODE      = $ac               ; Assembly target for hypotesting
-OPERAND     = $ad               ; Operand storage (2 bytes)
-TEMP_CALC   = $af               ; Temporary calculation
-IGNORE_RB   = $af               ; Ignore relative branch range for forward refs
-INSTSIZE    = $b0               ; Instruction size
-SEARCH_C    = $b0               ; Search counter
-IDX_SYM     = $b0               ; Temporary symbol index storage
-IDX_IN      = $b1               ; Buffer index - Input
-IDX_OUT     = $b2               ; Buffer index - Output
+TOOL_CHR    = $a3               ; Current function (T_ASM, T_DIS)
+WORK        = $a4               ; Temporary workspace (2 bytes)
+MNEM        = $a4               ; Current Mnemonic (2 bytes)
+EFADDR      = $a6               ; Program Counter (2 bytes)
+CHARDISP    = $a8               ; Character display for Memory (2 bytes)
+LANG_PTR    = $a8               ; Language Pointer (2 bytes)
+OPCODE      = $aa               ; Assembly target for hypotesting
+OPERAND     = $ab               ; Operand storage (2 bytes)
+IDX_IN      = $ad               ; Buffer index - Input
+IDX_OUT     = $ae               ; Buffer index - Output
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
 INBUFFER    = $0230             ; Input buffer (22 bytes)
-ZP_TMP      = $0246             ; Zeropage Preservation (16 bytes)
+IDX_SYM     = $024e             ; Temporary symbol index storage
+SEARCH_C    = $024f             ; Search counter
+INSTSIZE    = $0250             ; Instruction size
+IGNORE_RB   = $0251             ; Ignore relative branch range for forward refs
+TEMP_CALC   = $0252             ; Temporary calculation
+RANGE_END   = $0253             ; End of range for Save and Copy
+INSTDATA    = $0254             ; Instruction data (2 bytes)
 BREAKPOINT  = $0256             ; Breakpoint data (3 bytes)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -198,10 +197,16 @@ Install:    jsr Rechain         ; Rechain BASIC program
             sta USER_VECT       ; ,,
             lda #>Install       ; ,,
             sta USER_VECT+1     ; ,,
-            lda #<Intro         ; Print register display bar
+            lda #<Intro         ; Print introduction message
             ldy #>Intro         ; ,,
             jsr PrintStr        ; ,,
             jmp (READY)         ; Warm start with READY prompt
+            
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; WAX API JMP TABLE
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;              
+
+            
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MAIN PROGRAM
@@ -226,7 +231,7 @@ exit:       jsr CHRGOT          ; Restore flags for the found character
 ; (5) Reading the first four hexadecimal characters used by all wAx tools and
 ;     setting the Carry flag if there's a valid 16-bit number provided
 ; (6) RTS to route to the selected tool            
-Prepare:    tax                 ; Save A in X so Prepare can set TOOL_CHR
+Prepare:    sta TOOL_CHR        ; Store the tool character
             lda #>Return-1      ; Push the address-1 of Return onto the stack
             pha                 ;   as the destination for RTS of the
             lda #<Return-1      ;   selected tool
@@ -235,13 +240,6 @@ Prepare:    tax                 ; Save A in X so Prepare can set TOOL_CHR
             pha                 ;   tool onto the stack. The RTS below will
             lda ToolAddr_L,y    ;   pull off the address and route execution
             pha                 ;   to the appropriate tool
-            ldy #$00            ; wAx is to be zeropage-neutral, so preserve
--loop:      lda WORK,y          ;   its workspace in temp storage. When this
-            sta ZP_TMP,y        ;   routine is done, the data will be restored
-            iny                 ;   in Return
-            cpy #$10            ;   ,,
-            bne loop            ;   ,,
-            stx TOOL_CHR        ; Store the tool character
             jsr ResetIn         ; Initialize the input index for write
             sta IGNORE_RB       ; Clear Ignore Relative Branch flag
             jsr Transcribe      ; Transcribe from CHRGET to INBUFFER
@@ -260,8 +258,7 @@ main_r:     rts                 ; Pull address-1 off stack and go there
 ; Return in one of two ways--
 ; (1) In direct mode, to a BASIC warm start without READY.
 ; (2) In a program, find the next BASIC command
-Return:     jsr Restore
-            jsr DirectMode      ; If in Direct Mode, warm start without READY.
+Return:     jsr DirectMode      ; If in Direct Mode, warm start without READY.
             bne in_program      ;   ,,
             jmp (WARM_START)    ;   ,,           
 in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command   
@@ -480,7 +477,8 @@ abs_ind:    jsr Comma           ; This is an indexed addressing mode, so
 ; MEMORY EDITOR COMPONENTS
 ; https://github.com/Chysn/wAx/wiki/Memory-Editor
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-MemEditor:  lda #$04            ; The number of allowed bytes is temporarily
+MemEditor:  sta TOOL_CHR        ; Update tool character for Prompt
+            lda #$04            ; The number of allowed bytes is temporarily
             sta CHARAC          ;   stored in CHARAC.
             jsr DirectMode      ; If MemEditor is run in a BASIC program, allow
             beq start_mem       ;   more bytes per line, because we don't need
@@ -517,7 +515,8 @@ TextEdit:   ldy #$00            ; Y=Data Index
             
 ; Binary Editor
 ; If the input starts with a %, get one binary byte and store it in memory                   
-BinaryEdit: jsr BinaryByte      ; Get 8 binary bits
+BinaryEdit: sta TOOL_CHR        ; Update tool character for prompt
+            jsr BinaryByte      ; Get 8 binary bits
             ;bcc edit_r         ; If invalid, errors at BinaryByte
             ldy #$00            ; Store the valid byte to memory
             sta (EFADDR),y      ; ,,
@@ -676,7 +675,6 @@ OutOfRange: ldx #$04            ; ?TOO FAR ERROR
             sta ERROR_PTR
             lda ErrAddr_H,x
             sta ERROR_PTR+1
-            jsr Restore
             jmp CUST_ERR          
 
 ; Get Operand
@@ -879,7 +877,6 @@ Execute:    bcc iterate         ; No address was provided; continue from BRKpt
             lda #<RegDisp-1     ;   SYS tail
             pha                 ;   ,,
             jsr SetupVec        ; Make sure the BRK handler is enabled
-            jsr Restore         ; Restore zeropage workspace
             jmp SYS             ; Call BASIC SYS, after the parameter parsing
 iterate:    pla                 ; Remove return to Return from the stack; it
             pla                 ;   is not needed
@@ -1052,14 +1049,10 @@ MemSave:    bcc save_err        ; Bail if the address is no good
             jsr SAVE            ; ,,
             bcs FileError
             jmp Linefeed
-save_err:   jsr Restore
-            jmp SYNTAX_ERR      ; To ?SYNTAX ERROR      
+save_err:   jmp SYNTAX_ERR      ; To ?SYNTAX ERROR      
 
 ; Show System Disk Error            
-FileError:  pha
-            jsr Restore
-            pla
-            bne show_error      ; Error in A will be $00 if a cassette save is
+FileError:  bne show_error      ; Error in A will be $00 if a cassette save is
             lda #$1e            ;   stopped, so override that to ?BREAK ERROR
 show_error: jmp ERROR_NO 
             
@@ -1251,8 +1244,7 @@ copy_end:   inc X_PC            ; Advance the persistent counter to one byte
             bne copy_r          ;   beyond the end of the copy
             inc X_PC+1          ;   ,,
 copy_r:     rts               
-copy_err:   jsr Restore         ; Something was wrong with an address; show
-            jmp SYNTAX_ERR      ;   SYNTAX ERROR
+copy_err:   jmp SYNTAX_ERR      ;   SYNTAX ERROR
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; NUMERIC CONVERSION COMPONENTS
@@ -1390,7 +1382,6 @@ next_label: pla
             bne loop
             jsr ResetOut        ; Show the value of the persistent counter
             jsr Space           ; ,,
-            jsr Space           ; ,,
             lda #"*"            ; ,,
             jsr CharOut         ; ,,
             jsr Space           ; ,,
@@ -1432,7 +1423,6 @@ fwd_d:      jsr PrintBuff
 
 ; Label List Common            
 LabListCo:  jsr ResetOut
-            jsr Space
             lda #"-"
             jsr CharOut
             lda SYMBOL_D,x
@@ -1672,16 +1662,6 @@ UserTool:	jmp (USER_VECT)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
-; Restore
-; Put back temporary zeropage workspace            
-Restore:    ldx #$00            ; Restore workspace memory to zeropage
--loop:      lda ZP_TMP,x        ;   ,,
-            sta WORK,x          ;   ,,
-            inx                 ;   ,,
-            cpx #$10            ;   ,,
-            bne loop            ;   ,,
-            rts       
-
 ; Look up opcode
 ; Reset Language Table            
 Lookup:     sta INSTDATA        ; INSTDATA is the found opcode
@@ -1871,10 +1851,10 @@ bad_bin:    jmp AsmError
  
 ; Show Effective Address
 ; 16-bit hex address at effective address          
-Address:    lda EFADDR+1        ; Show the address
-            jsr Hex             ; ,,
-            lda EFADDR          ; ,,
-            jmp Hex             ; ,,   
+Address:    lda EFADDR+1
+            jsr Hex
+            lda EFADDR
+            jmp Hex 
 
 ; Show Persistent Counter
 ; 16-bit hex address at persistent counter address          
@@ -2057,8 +2037,13 @@ Prompt:     txa                 ; Based on the incoming X register, advance
             lda #T_ASM          ; The prompt begins with the assembler tool's
             jsr CharOut         ;   wedge character
             jsr PCAddr          ; Show persistent counter
-            lda #CRSRRT         ; Cursor right if other than assembler
-            jsr CharOut         ; ,,
+            lda TOOL_CHR        ; Check the tool character
+            cmp #T_ASM          ; If it's assembler, then add a space
+            bne crsr_over       ; ,,
+            lda #" "            ; ,,
+            .byte $3c           ; TOP (skip word)
+crsr_over:  lda #CRSRRT         ; Cursor right if not assembler tool
+            jsr CharOut
             ldy #$00
 -loop:      lda OUTBUFFER,y     ; Copy the output buffer into KEYBUFF, which
             sta KEYBUFF,y       ;   will simulate user entry
@@ -2094,7 +2079,7 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables  
-Intro:      .asc "BEIGEMAZE.COM/WAX",LF,$00                   
+Intro:      .asc LF,"  BEIGEMAZE.COM/WAX",LF,$00                   
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
 BreakMsg:   .asc LF,"BRK",$00
