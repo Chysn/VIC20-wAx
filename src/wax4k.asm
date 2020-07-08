@@ -46,7 +46,7 @@ MAX_LAB     = 19                ; Maximum number of user labels + 1
 MAX_FWD     = 12                ; Maximum number of forward references
 
 ; Tool Setup
-TOOL_COUNT  = $12               ; How many tools are there?
+TOOL_COUNT  = $13               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
 T_XDI       = ","               ; Wedge character , for extended opcodes
 T_ASM       = "@"               ; Wedge character @ for assembly
@@ -65,6 +65,7 @@ T_T2H       = "#"               ; Wedge character # for base 10 to hex
 T_SYM       = $ac               ; Wedge character * for symbol initialization
 T_BAS       = $ae               ; Wedge character ^ for BASIC stage select
 T_USR       = "'"               ; Wedge character ' for user tool
+T_USL       = $5c               ; Wedge character GPB for user tool list
 LABEL       = $ab               ; Forward relative branch character
 
 ; System resources - Routines
@@ -295,6 +296,8 @@ ListLine:   txa
             beq to_mem          ; ,,
             cmp #T_BIN          ; Binary Dump
             beq to_bin          ; ,,
+            cmp #T_USL          ; User list
+            beq to_user         ; ,,
             jsr Space           ; Space goes after address for Disassembly
             jsr Disasm
             jmp continue
@@ -303,6 +306,8 @@ to_mem:     jsr CharOut         ; Memory editor character goes after address
             jmp continue
 to_bin:     jsr CharOut         ; Binary editor character goes after address
             jsr BinaryDisp      ; Do Binary display
+            jmp continue
+to_user:    jsr UserTool        ; User tool            
 continue:   jsr PrintBuff      
             pla
             tax
@@ -853,7 +858,6 @@ Tester:     ldy #$00
             cmp (EFADDR),y
             bne test_err      
             iny
-            cpy #$08
             bne loop
 test_r:     tya                 ; Update effective address with number of
             clc                 ;   bytes tested, in order to update the
@@ -957,11 +961,8 @@ Break:      pla                 ; Get values from stack and put them in the
             sta SYS_DEST        ;   it in the persistent counter
             pla                 ;   ,,
             sta SYS_DEST+1      ;   ,,
-            pla
-            pla
-            lda #<BreakMsg      ; Print BRK
-            ldy #>BreakMsg      ; ,,
-            jsr PrintStr        ; ,,
+            pla                 ; Take off return address from SYS so we don't
+            pla                 ;   lose stack
             ; Fall through to RegDisp
 
 ; Register Display            
@@ -1650,7 +1651,6 @@ new:        lda #$00            ; Zero out the first few bytes of the stage so
 finish:     jsr Rechain
             jmp (READY)
 bank_r:     jsr ResetOut        ; Provide info about the start of BASIC
-            jsr Space           ; ,,
             jsr HexPrefix       ; ,,
             lda $2c             ; ,,
             jsr Hex             ; ,,
@@ -1935,6 +1935,9 @@ handle_sym: ldy TOOL_CHR        ; The label character is not handled by the
             ldy $83             ; Don't handle symbols if the & is in quotes
             cpy #$06            ;   (as in an immediate operand, or text entry)
             beq x_add           ;   ,,
+            ldy IDX_IN          ; If the label character occurs deep in the
+            cpy #$0d            ;   input, don't handle a symbol. It's in the
+            bcs x_add           ;   memory dump display.            
             lda IDX_IN          ; If - is the first character in the input
             cmp #$04            ;   buffer after the address, defer the
             bne start_exp       ;   symbol for handling by the assembler
@@ -2080,15 +2083,15 @@ DirectMode: ldy CURLIN+1
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
 ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA,T_BIN
-            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_SYM,T_BAS,T_USR
+            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_SYM,T_BAS,T_USR,T_USL
 ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<Register-1,<Execute-1
             .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1,<List-1
             .byte <List-1,<Search-1,<MemCopy-1,<Hex2Base10-1,<Base102Hex-1
-            .byte <InitSym-1,<BASICStage-1,<UserTool-1
+            .byte <InitSym-1,<BASICStage-1,<UserTool-1,<List-1
 ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1,>List-1
             .byte >List-1,>Search-1,>MemCopy-1,>Hex2Base10-1,>Base102Hex-1
-            .byte >InitSym-1,>BASICStage-1,>UserTool-1
+            .byte >InitSym-1,>BASICStage-1,>UserTool-1,>List-1
 
 ; Addresses for error message text
 ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
@@ -2097,8 +2100,7 @@ ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 ; Text display tables                      
 Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
-            .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,$c0,LF,";",$00
-BreakMsg:   .asc LF,"*BRK",$00            
+            .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CAN",$27,"T RESOLV",$c5
