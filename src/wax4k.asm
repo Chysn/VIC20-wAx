@@ -184,7 +184,9 @@ IGNORE_RB   = $0251             ; Ignore relative branch range for forward refs
 TEMP_CALC   = $0252             ; Temporary calculation
 RANGE_END   = $0253             ; End of range for Save and Copy
 INSTDATA    = $0254             ; Instruction data (2 bytes)
-BREAKPOINT  = $0256             ; Breakpoint data (3 bytes)
+BP_LOW      = $0256             ; Breakpoint low byte
+BP_HIGH     = $0257             ; Breakpoint high byte
+BP_BYTE     = $0258             ; Breakpoint byte
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; INSTALLER
@@ -226,11 +228,10 @@ exit:       jsr CHRGOT          ; Restore flags for the found character
 ; command. Prepare for execution by
 ; (1) Setting a return point
 ; (2) Putting the tool's start address-1 on the stack
-; (3) Saving the zeropage workspace for future restoration
-; (4) Transcribing from BASIC or input buffer to the wAx input buffer
-; (5) Reading the first four hexadecimal characters used by all wAx tools and
+; (3) Transcribing from BASIC or input buffer to the wAx input buffer
+; (4) Reading the first four hexadecimal characters used by most wAx tools and
 ;     setting the Carry flag if there's a valid 16-bit number provided
-; (6) RTS to route to the selected tool            
+; (5) RTS to route to the selected tool            
 Prepare:    sta TOOL_CHR        ; Store the tool character
             lda #>Return-1      ; Push the address-1 of Return onto the stack
             pha                 ;   as the destination for RTS of the
@@ -322,7 +323,7 @@ list_stop:  jsr EAtoPC          ; Update persistent counter with effective addr
             sta KEYBUFF+1       ; ,,
             lda #$02            ; ,,
             sta KBSIZE          ; ,,
-list_r:     jmp EnableBP        ; Re-enable breakpoint, if necessary
+list_r:     rts
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; DISASSEMBLER COMPONENTS
@@ -496,7 +497,7 @@ edit_exit:  cpy #$00
             tya
             tax
             jsr Prompt          ; Prompt for the next address
-            jsr ClearBP         ; Clear breakpoint if anything was changed
+            jsr ResetBP
 edit_r:     rts
 
 ; Text Editor
@@ -569,7 +570,7 @@ test:       jsr Hypotest        ; Line is done; hypothesis test for a match
             lda OPERAND+1       ; ,,
             iny                 ; ,,
             sta (EFADDR),y      ; ,,
-nextline:   jsr ClearBP         ; Clear breakpoint on successful assembly
+nextline:   jsr ResetBP         ; Clear breakpoint on successful assembly
             jsr Prompt          ; Prompt for next line if in direct mode
 asm_r:      rts
 
@@ -868,6 +869,8 @@ test_err:   jmp MisError
 ; https://github.com/Chysn/wAx/wiki/Subroutine-Execution
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 Execute:    bcc iterate         ; No address was provided; continue from BRKpt
+            ;sec                ; Already know that Carry is set
+            jsr SetBPByte       ; ,,
             lda EFADDR          ; Set the temporary INT storage to the program
             sta SYS_DEST        ;   counter. This is what SYS uses for its
             lda EFADDR+1        ;   execution address, and I'm using that
@@ -902,7 +905,9 @@ Register:   jsr ResetIn
 register_r: rts
 
 ; Register Display            
-RegDisp:    jsr ResetOut
+RegDisp:    clc                 ; Put the instruction back in place
+            jsr SetBPByte       ; ,,
+            jsr ResetOut
             lda #<Registers     ; Print register display bar
             ldy #>Registers     ; ,,
             jsr PrintStr        ; ,,
@@ -928,18 +933,16 @@ RegDisp:    jsr ResetOut
 ; https://github.com/Chysn/wAx/wiki/Breakpoint-Manager
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 SetBreak:   php
-            jsr ClearBP         ; Clear the old breakpoint, if it exists
+            jsr ResetBP         ; Clear the old breakpoint, if it exists
             plp                 ; If no breakpoint is chosen (e.g., if ! was
             bcc SetupVec        ;   by itself), just clear the breakpoint
             lda EFADDR          ; Add a new breakpoint at the effective address
-            sta BREAKPOINT      ; ,,
+            sta BP_LOW          ; ,,
             lda EFADDR+1        ; ,,
-            sta BREAKPOINT+1    ; ,,
-            ;ldy #$00           ; (Y is already 0 from ClearBP)
-            lda (EFADDR),y      ; Stash it in the Breakpoint data structure,
-            sta BREAKPOINT+2    ;   to be restored on the next break
-            tya                 ; Write BRK to the breakpoint location
-            sta (EFADDR),y      ;   ,,
+            sta BP_HIGH         ; ,,
+            ldy #$00            ; Get the instruction at the effective address
+            lda (EFADDR),y      ; ,,
+            sta BP_BYTE         ; Stash it in the Breakpoint data structure 
             lda #CRSRUP         ; Cursor up to overwrite the command
             jsr CHROUT          ; ,,
             jsr DirectMode      ; When run inside a BASIC program, skip the
@@ -983,50 +986,46 @@ Break:      pla                 ; Get values from stack and put them in the
             jsr RegDisp         ; Show the register display
             jmp (WARM_START)
             
-; Clear Breakpoint   
-; Restore breakpoint byte and zero out breakpoint data         
-ClearBP:    lda BREAKPOINT      ; Get the breakpoint
-            sta CHARAC          ; Stash it in a zeropage location
-            lda BREAKPOINT+1    ; ,,
-            sta CHARAC+1        ; ,,
-            ldy #$00
-            lda (CHARAC),y      ; What's currently at the Breakpoint?
-            bne bp_reset        ; If it's not a BRK, then preserve what's there
-            lda BREAKPOINT+2    ; Otherwise, get the breakpoint byte and
-            sta (CHARAC),y      ;   put it back 
-bp_reset:   sty BREAKPOINT      ; And then clear out the whole
-            sty BREAKPOINT+1    ;   breakpoint data structure
-            sty BREAKPOINT+2    ;   ,,
-            rts
+; Reset Breakpoint
+; Set breakpoint to instruction, if set, and then initialize the
+; breakpoint data structure
+ResetBP:    clc                 ; Set breakpoint to instruction
+            jsr SetBPByte       ; ,,
+            lda #$00            ; Initialize the data structure
+            ldy #$02            ; ,,
+-loop:      sta BP_LOW,y        ; ,,
+            dey                 ; ,,
+            bpl loop            ; ,,
+reset_r:    rts            
 
 ; Breakpoint Indicator
 ; Also restores the breakpoint byte, temporarily
-BreakInd:   ldy #$00            ; Is this a BRK instruction?
-            lda (EFADDR),y      ; ,,
-            bne ind_r           ; If not, do nothing
-            lda BREAKPOINT      ; If it is a BRK, is it our breakpoint?
+BreakInd:   lda BP_BYTE         ; Is the breakpoint even set?
+            beq ind_r           ; ,,
+            lda BP_LOW          ; Is the effective address at the breakpoint?
             cmp EFADDR          ; ,,
             bne ind_r           ; ,,
-            lda BREAKPOINT+1    ; ,,
+            lda BP_HIGH         ; ,,
             cmp EFADDR+1        ; ,,
             bne ind_r           ; ,,
             jsr ReverseOn       ; Reverse on for the breakpoint
-            lda BREAKPOINT+2    ; Temporarily restore the breakpoint byte
-            sta (EFADDR),y      ;   for disassembly purposes
 ind_r:      rts        
                  
-; Enable Breakpoint
-; Used after disassembly, in case the BreakInd turned the breakpoint off
-EnableBP:   lda BREAKPOINT+2
-            beq enable_r
-            lda BREAKPOINT
-            sta CHARAC
-            lda BREAKPOINT+1
-            sta CHARAC+1
-            ldy #$00            ; Write BRK to the breakpoint
-            tya                 ; ,,
-            sta (CHARAC),y      ; ,,
-enable_r:   rts
+; Set Breakpoint Byte
+; To instruction or to BRK, based on the carry flag
+;   Clear = Instruction
+;   Set = BRK
+SetBPByte:  lda BP_BYTE         ; If there's no breakpoint set,
+            beq setbp_r         ;   do nothing
+            bcc set_inst        ; If Carry is clear, set the instruction
+            lda #$00            ; If Carry is set, set BRK
+set_inst:   ldy BP_LOW
+            sty CHARAC
+            ldy BP_HIGH
+            sty CHARAC+1
+            ldy #$00
+            sta (CHARAC),y
+setbp_r:    rts
                                                              
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; MEMORY SAVE AND LOAD COMPONENTS
@@ -1104,7 +1103,7 @@ show_range: jsr ResetOut
 ; Disk Setup
 ; Clear breakpoint, set up logical file, get filename length, return in A
 ; for call to SETNAM            
-FileSetup:  jsr ClearBP         ; Clear breakpoint
+FileSetup:  jsr ResetBP         ; Clear breakpoint
             lda #$42            ; Set up logical file
             ldx DEVICE          ; ,,
             ldy #$00            ; ,,
@@ -2079,7 +2078,7 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables  
-Intro:      .asc LF,"  BEIGEMAZE.COM/WAX",LF,$00                   
+Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00                   
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
 BreakMsg:   .asc LF,"BRK",$00
