@@ -165,7 +165,6 @@ OVERFLOW_F  = SYMBOL_FH+MAX_FWD ; Symbol unresolved reference overflow count
 ; wAx workspace
 X_PC        = $03               ; Persistent Counter (2 bytes)
 USER_VECT   = $05               ; User tool vector (2 bytes)
-TOOL_CHR    = $a3               ; Current function (T_ASM, T_DIS)
 WORK        = $a4               ; Temporary workspace (2 bytes)
 MNEM        = $a4               ; Current Mnemonic (2 bytes)
 EFADDR      = $a6               ; Program Counter (2 bytes)
@@ -175,6 +174,7 @@ OPCODE      = $aa               ; Assembly target for hypotesting
 OPERAND     = $ab               ; Operand storage (2 bytes)
 IDX_OUT     = $ad               ; Buffer index - Output
 IDX_IN      = $ae               ; Buffer index - Input
+TOOL_CHR    = $af               ; Current function (T_ASM, T_DIS)
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
 INBUFFER    = $0230             ; Input buffer (22 bytes)
 IDX_SYM     = $024e             ; Temporary symbol index storage
