@@ -1,0 +1,4 @@
+#!/bin/bash
+
+minipro -p AM2732B@DIP24 -w ../2732/wax4k.bin
+

@@ -173,8 +173,8 @@ CHARDISP    = $a8               ; Character display for Memory (2 bytes)
 LANG_PTR    = $a8               ; Language Pointer (2 bytes)
 OPCODE      = $aa               ; Assembly target for hypotesting
 OPERAND     = $ab               ; Operand storage (2 bytes)
-IDX_IN      = $ad               ; Buffer index - Input
-IDX_OUT     = $ae               ; Buffer index - Output
+IDX_OUT     = $ad               ; Buffer index - Output
+IDX_IN      = $ae               ; Buffer index - Input
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
 INBUFFER    = $0230             ; Input buffer (22 bytes)
 IDX_SYM     = $024e             ; Temporary symbol index storage
@@ -1771,9 +1771,9 @@ not_digit:  cmp #"F"+1          ; Is the character in the range A-F?
 ; Next Program Counter
 ; Advance Program Counter by one byte, and return its value
 NextValue:  inc EFADDR
-            bne next_r
+            bne CurrValue
             inc EFADDR+1
-next_r:     ldx #$00
+CurrValue:  ldx #$00
             lda (EFADDR,x)
             rts
 
@@ -2079,10 +2079,10 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables  
-Intro:      .asc LF,"  BEIGEMAZE.COM/WAX",LF,$00                   
+Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00                   
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
-BreakMsg:   .asc LF,"BRK",$00
+BreakMsg:   .asc LF,RVS_ON,"BRK",RVS_OFF,$00
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CAN",$27,"T RESOLV",$c5
