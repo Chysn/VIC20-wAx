@@ -1,4 +1,3 @@
 #!/bin/bash
 
-minipro -p AM2764A@DIP28 -w ../2764/wax8k.bin
-#minipro -p M2764A@DIP28 -w ../2764/wax8k.bin
+minipro -p AM2764A@DIP28 -w ../2764/wax4k_2764.bin

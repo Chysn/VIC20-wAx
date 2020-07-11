@@ -330,8 +330,7 @@ list_r:     jmp EnableBP        ; Re-enable breakpoint, if necessary
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Disassemble
 ; Disassemble a single instruction at the effective address
-Disasm:     ldy #$00            ; Get the opcode
-            lda (EFADDR),y      ;   ,,
+Disasm:     jsr IncAddr         ; Get opcode
             jsr Lookup          ; Look it up
             bcc Unknown         ; Clear carry indicates an unknown opcode
             jsr DMnemonic       ; Display mnemonic
@@ -340,15 +339,13 @@ Disasm:     ldy #$00            ; Get the opcode
             beq disasm_op       ;   ,,
             jsr Space
 disasm_op:  lda INSTDATA+1      ; Pass addressing mode to operand routine
-            jsr DOperand        ; Display operand
-            jmp NextValue       ; Advance to the next line of code
+            jmp DOperand        ; Display operand
 
 ; Unknown Opcode
 Unknown:    lda #T_MEM          ; Memory entry before an unknown byte
             jsr CharOut         ; ,,
             lda INSTDATA        ; The unknown opcode is still here   
-            jsr Hex             
-            jmp NextValue
+            jmp Hex             
             
 ; Mnemonic Display
 DMnemonic:  lda MNEM+1          ; These locations are going to rotated, so
@@ -433,7 +430,7 @@ DisZP:      pha
 
 ; Disassemble Relative Operand
 DisRel:     jsr HexPrefix
-            jsr NextValue       ; Get the operand of the instruction, advance
+            jsr IncAddr         ; Get the operand of the instruction, advance
                                 ;   the effective address. It might seem weird
                                 ;   to advance the EA when I'm operating on it a
                                 ;   few lines down, but I need to add two
@@ -540,7 +537,7 @@ Assemble:   bcc asm_r           ; Bail if the address is no good
             ldy IDX_IN          ; If we've gone past the first character after
             cpy #$05            ;   the address, no longer pay attention to
             bne op_parts        ;   pre-data stuff
-            cmp #LABEL          ; & = New label
+            cmp #LABEL          ; - = New label
             beq DefLabel        ; ,,
             cmp #T_MEM          ; Colon = Byte entry (route to hex editor)
             beq MemEditor       ; ,,
@@ -705,6 +702,7 @@ reset:      ldy #$06            ; Offset disassembly by 6 bytes for buffer match
             cmp #XTABLE_END     ; If we've reached the end of the table,
             beq bad_code        ;   the assembly candidate is no good
             sta OPCODE          ; Store opcode to hypotesting location
+            jsr IncAddr  
             jsr DMnemonic       ; Add mnemonic to buffer
             ldy #$01            ; Addressing mode is at (LANG_PTR)+1
             lda (LANG_PTR),y    ; Get addressing mode to pass to DOperand
@@ -729,8 +727,7 @@ ch_accum:   lda #$09
             sta IDX_OUT
 run_match:  jsr IsMatch
             bcc reset
-match:      jsr NextValue
-            lda EFADDR          ; Set the INSTSIZE location to the number of
+match:      lda EFADDR          ; Set the INSTSIZE location to the number of
             sec                 ;   bytes that need to be programmed
             sbc #OPCODE         ;   ,,
             sta INSTSIZE        ;   ,,
@@ -750,14 +747,14 @@ bad_code:   clc                 ; Clear carry flag to indicate failure
             rts
             
 ; Compute Relative Branch Offset
-; With branch instruction in EFADDR
-; And taget in OPERAND
+; With branch instruction in EFADDR and target in OPERAND
+; Return offset in Y if valid, or error message if too far
 ComputeRB:  lda EFADDR+1        ; Stash the effective address, as the offset
             pha                 ;   is computed from the start of the next
             lda EFADDR          ;   instruction
             pha                 ;   ,,
-            jsr NextValue       ; EFADDR += 2
-            jsr NextValue       ; ,,
+            jsr IncAddr         ; EFADDR += 2
+            jsr IncAddr         ; ,,
             lda OPERAND         ; Subtract operand from effective address
             sec                 ;   to get offset
             sbc EFADDR          ;   ,,
@@ -819,8 +816,7 @@ next_char:  iny
 ; BINARY DUMP COMPONENT
 ; https://github.com/Chysn/wAx/wiki/Memory-Dump#binary-dump
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-BinaryDisp: ldx #$00            ; Get the byte at the effective address
-            lda (EFADDR,x)      ; ,,
+BinaryDisp: jsr IncAddr         ; Get byte at effetive address
             sta TEMP_CALC       ; Store byte for binary conversion
             lda #%10000000      ; Start with high bit
 -loop:      pha
@@ -837,10 +833,7 @@ is_zero:    lda #"0"
             lsr
             bne loop
             jsr Space
-            ldx #$00
-            lda (EFADDR,x)
-            jsr Hex
-            jmp NextValue
+            jmp Hex
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; ASSERTION TESTER COMPONENT
@@ -1187,7 +1180,7 @@ no_match:   cmp #QUOTE          ; Is this the end of the search?
             jsr CharOut            
             jsr Address
             jsr PrintBuff
-next_check: jsr NextValue
+next_check: jsr IncAddr  
             jmp check_end
             
 ; Setup Hex Search
@@ -1235,7 +1228,7 @@ MemCopy:    bcc copy_err        ; Get parameters as 16-bit hex addresses for
             lda EFADDR          ; ,,
             cmp RANGE_END       ; ,,
             beq copy_end        ; If so, leave the copy tool
-advance:    jsr NextValue       ; If not, advance the effective address and the
+advance:    jsr IncAddr         ; If not, advance the effective address and the
             inc X_PC            ;   target to the next address for more
             bne loop            ;   copying
             inc X_PC+1          ;   ,,
@@ -1640,8 +1633,13 @@ bank_r:     jsr ResetOut        ; Provide info about the start of BASIC
             jsr HexPrefix       ; ,,
             lda $2c             ; ,,
             jsr Hex             ; ,,
-            lda #$00            ; ,,
+            lda $2b             ; ,,
             jsr Hex             ; ,,
+            jsr Semicolon
+            lda $34
+            jsr Hex
+            lda $33
+            jsr Hex
             jmp PrintBuff       ; ,,
 
 ; Rechain BASIC program
@@ -1770,12 +1768,12 @@ not_digit:  cmp #"F"+1          ; Is the character in the range A-F?
             
 ; Next Program Counter
 ; Advance Program Counter by one byte, and return its value
-NextValue:  inc EFADDR
-            bne CurrValue
-            inc EFADDR+1
-CurrValue:  ldx #$00
+IncAddr  :  ldx #$00
             lda (EFADDR,x)
-            rts
+            inc EFADDR
+            bne next_r
+            inc EFADDR+1
+next_r:     rts
 
 ; Commonly-Used Characters
 Semicolon:  lda #";"            
@@ -1865,14 +1863,14 @@ PCAddr:     lda X_PC+1
             
 ; Show 8-bit Parameter           
 Param_8:    jsr HexPrefix
-            jsr NextValue 
+            jsr IncAddr   
             jmp Hex            
             
 ; Show 16-Bit Parameter            
 Param_16:   jsr HexPrefix
-            jsr NextValue 
+            jsr IncAddr   
             pha
-            jsr NextValue 
+            jsr IncAddr   
             jsr Hex
             pla
             jmp Hex
@@ -2079,10 +2077,12 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables  
-Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00                   
+Intro:      .asc LF,"  BEIGEMAZE.COM/WAX",LF,$00                   
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
 BreakMsg:   .asc LF,RVS_ON,"BRK",RVS_OFF,$00
+
+; Error messages
 AsmErrMsg:  .asc "ASSEMBL",$d9
 LabErrMsg:  .asc "SYMBO",$cc
 ResErrMsg:  .asc "CAN",$27,"T RESOLV",$c5
