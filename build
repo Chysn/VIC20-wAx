@@ -2,7 +2,7 @@
 
 ## Build wAx
 xa -l toc/toc2k -o 2716/wax2k.bin src/wax.asm
-printf "\x00\xa0" | cat - 2716/wax2k.bin > vic/wax
+printf "\x00\x60" | cat - 2716/wax2k.bin > vic/wax
 
 rm vic/wax.d64
 c1541 -format wax,8 d64 vic/wax.d64 -write vic/wax
@@ -47,8 +47,4 @@ c1541 vic/wax.d64 -write vic/immedtest.prg
 ##   Test multi-pass assembly
 petcat -w2 -o vic/multitest.prg -- tests/multitest.bas
 c1541 vic/wax.d64 -write vic/multitest.prg
-
-## Build Block 3 2716 binary
-sed 's/\* = \$a000/\* = \$6000/' src/wax.asm > src/wax-blk3.asm
-xa -o 2716/wax2k-blk3.bin src/wax-blk3.asm
 
