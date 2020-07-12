@@ -287,7 +287,7 @@ ListLine:   txa
             jsr BreakInd        ; Indicate breakpoint, if it's here
             lda TOOL_CHR        ; Start each line with the wedge character
             jsr CharOut
-            jsr Address           
+            jsr ShowAddr           
             lda TOOL_CHR        ; What tool is being used?
             cmp #T_MEM          ; Memory Dump
             beq to_mem          ; ,,
@@ -1086,7 +1086,7 @@ show_range: jsr ResetOut
             beq load_r          ;   ,,
             lda #T_DIS          ; Show the loaded range, if from disk
             jsr CharOut         ; ,,
-            jsr PCAddr          ; Show the persistent counter
+            jsr ShowPC          ; Show the persistent counter
             jsr Semicolon       ; Comment so disassembly works
             lda $af             ; Show the end of the loaded range
             jsr Hex             ; ,,
@@ -1148,7 +1148,7 @@ check_end:  pla                 ; Has the effective address high byte advanced?
 srch_stop:  jsr ResetOut        ; Start a new output buffer to indicate the
             lda #"/"            ;   ending search address
             jsr CharOut         ;   ,,
-            jsr Address         ;   ,,
+            jsr ShowAddr        ;   ,,
             jsr PrintBuff       ;   ,,
 srch_r:     rts   
 
@@ -1157,7 +1157,7 @@ srch_r:     rts
 ; address matches the input, indicate the starting address of the match.
 CodeSearch: lda #T_DIS
             jsr CharOut
-            jsr Address
+            jsr ShowAddr
             jsr Semicolon       ; Adds comment so the disassembly works
             jsr Disasm          ; Disassmble the code at the effective address
             jsr IsMatch         ; If it matches the input, show the address
@@ -1178,7 +1178,7 @@ no_match:   cmp #QUOTE          ; Is this the end of the search?
             bne next_check
             lda #T_MEM
             jsr CharOut            
-            jsr Address
+            jsr ShowAddr
             jsr PrintBuff
 next_check: jsr IncAddr  
             jmp check_end
@@ -1229,15 +1229,10 @@ MemCopy:    bcc copy_err        ; Get parameters as 16-bit hex addresses for
             cmp RANGE_END       ; ,,
             beq copy_end        ; If so, leave the copy tool
 advance:    jsr IncAddr         ; If not, advance the effective address and the
-            inc X_PC            ;   target to the next address for more
-            bne loop            ;   copying
-            inc X_PC+1          ;   ,,
-            jmp loop            ;   ,,
-copy_end:   inc X_PC            ; Advance the persistent counter to one byte
-            bne copy_r          ;   beyond the end of the copy
-            inc X_PC+1          ;   ,,
-copy_r:     rts               
-copy_err:   jmp SYNTAX_ERR      ;   SYNTAX ERROR
+            jsr IncPC           ;   persistent counter
+            jmp loop            ;   and copy the next byte
+copy_end:   jmp IncPC           ; Advance persistent counter  
+copy_err:   jmp SYNTAX_ERR      ; ?SYNTAX ERROR if invalid parameters
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; NUMERIC CONVERSION COMPONENTS
@@ -1366,7 +1361,7 @@ LabelList:  ldx #$00
             lda EFADDR+1        ;   ,,
             beq undefd          ; Undefined, but it might be a forward reference
 show_label: jsr LabListCo       ; Add elements common to both listed item
-            jsr Address
+            jsr ShowAddr
             jsr PrintBuff
 next_label: pla
             tax
@@ -1378,7 +1373,7 @@ next_label: pla
             lda #"*"            ; ,,
             jsr CharOut         ; ,,
             jsr Space           ; ,,
-            jsr PCAddr          ; ,,
+            jsr ShowPC          ; ,,
             lda OVERFLOW_F      ; Show the overflow forward reference count
             beq lablist_r       ;   (if any)
             pha                 ;   ,,
@@ -1766,14 +1761,20 @@ not_digit:  cmp #"F"+1          ; Is the character in the range A-F?
             sbc #"A"-$0a        ; The nybble value is 10-15
             rts
             
-; Next Program Counter
-; Advance Program Counter by one byte, and return its value
-IncAddr  :  ldx #$00
+; Increment Effective Address
+; Get the EA byte and advance EA by one
+IncAddr:    ldx #$00
             lda (EFADDR,x)
             inc EFADDR
             bne next_r
             inc EFADDR+1
 next_r:     rts
+
+; Incremenet Persistent Counter
+IncPC:      inc X_PC 
+            bne pc_r 
+            inc X_PC+1
+pc_r:       rts 
 
 ; Commonly-Used Characters
 Semicolon:  lda #";"            
@@ -1849,14 +1850,14 @@ bad_bin:    jmp AsmError
  
 ; Show Effective Address
 ; 16-bit hex address at effective address          
-Address:    lda EFADDR+1
+ShowAddr:   lda EFADDR+1
             jsr Hex
             lda EFADDR
             jmp Hex 
 
 ; Show Persistent Counter
 ; 16-bit hex address at persistent counter address          
-PCAddr:     lda X_PC+1
+ShowPC:     lda X_PC+1
             jsr Hex
             lda X_PC
             jmp Hex
@@ -1943,7 +1944,7 @@ add_only:   beq x_add
 ; Expand External Program Counter
 ; Replace asterisk with the X_PC
 ExpandXPC:  jsr ResetOut
-            jsr PCAddr
+            jsr ShowPC
             ldy #$00
 -loop:      lda OUTBUFFER,y
             jsr AddInput
@@ -2034,7 +2035,7 @@ Prompt:     txa                 ; Based on the incoming X register, advance
             jsr ResetOut        ; Reset the output buffer to generate the prompt
             lda #T_ASM          ; The prompt begins with the assembler tool's
             jsr CharOut         ;   wedge character
-            jsr PCAddr          ; Show persistent counter
+            jsr ShowPC          ; Show persistent counter
             lda TOOL_CHR        ; Check the tool character
             cmp #T_ASM          ; If it's assembler, then add a space
             bne crsr_over       ; ,,
