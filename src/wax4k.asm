@@ -430,25 +430,18 @@ DisZP:      pha
 
 ; Disassemble Relative Operand
 DisRel:     jsr HexPrefix
-            jsr IncAddr         ; Get the operand of the instruction, advance
-                                ;   the effective address. It might seem weird
-                                ;   to advance the EA when I'm operating on it a
-                                ;   few lines down, but I need to add two
-                                ;   bytes to get the offset to the right spot.
-                                ;   One of those bytes is here, and the other
-                                ;   comes from setting the Carry flag before
-                                ;   the addition below
+            jsr IncAddr         ; Get the operand of the instruction
             sta WORK
             and #$80            ; Get the sign of the operand
             beq sign
             ora #$ff            ; Extend the sign out to 16 bits, if negative
 sign:       sta WORK+1          ; Set the high byte to either $00 or $ff
-            lda WORK
-            sec                 ; sec here before adc is not a mistake; I need
-            adc EFADDR          ;   to account for the instruction address
-            sta WORK            ;   (see above)
-            lda WORK+1          ;
-            adc EFADDR+1        ;
+            lda WORK            ; Calculate offset from next instructions
+            clc                 ; ,,
+            adc EFADDR          ; ,,
+            sta WORK            ; ,,
+            lda WORK+1          ; ,,
+            adc EFADDR+1        ; ,,
             jsr Hex             ; No need to save the high byte, just show it
             lda WORK            ; Show the low byte of the computed address
             jmp Hex             ; ,,
