@@ -183,7 +183,8 @@ INSTSIZE    = $0250             ; Instruction size
 IGNORE_RB   = $0251             ; Ignore relative branch range for forward refs
 TEMP_CALC   = $0252             ; Temporary calculation
 RANGE_END   = $0253             ; End of range for Save and Copy
-INSTDATA    = $0254             ; Instruction data (2 bytes)
+INSTDATA    = $0254             ; Instruction opcode
+ADDRMODE    = $0255             ; Instruction addressing mode
 BREAKPOINT  = $0256             ; Breakpoint data (3 bytes)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -338,7 +339,7 @@ Disasm:     jsr IncAddr         ; Get opcode
             cmp #T_SRC          ;   to the operand
             beq disasm_op       ;   ,,
             jsr Space
-disasm_op:  lda INSTDATA+1      ; Pass addressing mode to operand routine
+disasm_op:  lda ADDRMODE        ; Pass addressing mode to operand routine
             jmp DOperand        ; Display operand
 
 ; Unknown Opcode
@@ -811,6 +812,7 @@ next_char:  iny
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 BinaryDisp: jsr IncAddr         ; Get byte at effetive address
             sta TEMP_CALC       ; Store byte for binary conversion
+            pha                 ; Push for use as a hex number
             lda #%10000000      ; Start with high bit
 -loop:      pha
             bit TEMP_CALC
@@ -826,6 +828,7 @@ is_zero:    lda #"0"
             lsr
             bne loop
             jsr Space
+            pla
             jmp Hex
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -1481,7 +1484,7 @@ fwd_used:   lda SYMBOL_FL,x     ; A forward reference for this label has been
             tax
             bcs get_admode      ; ,,
             jmp CannotRes       ; Not a valid instruction; CAN'T RESOLVE ERROR
-get_admode: lda INSTDATA+1      ; Get the addressing mode
+get_admode: lda ADDRMODE        ; Get the addressing mode
             cmp #RELATIVE       ; If it's a relative branch instruction,
             beq load_rel        ;   calculate the branch offset
             cmp #ABSOLUTE       ; Two bytes will be replaced, so make sure
@@ -1664,7 +1667,7 @@ std_table:  cmp #TABLE_END
             bne loop            ;   keep searching.
 found:      iny
             lda (LANG_PTR),y    ; A match was found! Set the addressing mode
-            sta INSTDATA+1      ;   to the instruction data structure
+            sta ADDRMODE        ;   to the instruction data structure
             sec                 ;   and set the carry flag to indicate success
             rts
 not_found:  clc                 ; Reached the end of the language table without
@@ -2071,7 +2074,7 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables  
-Intro:      .asc LF,"  BEIGEMAZE.COM/WAX",LF,$00                   
+Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00                   
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
 BreakMsg:   .asc LF,RVS_ON,"BRK",RVS_OFF,$00
@@ -2427,3 +2430,20 @@ Extended:   .byte $0b,$87       ; ANC
             .byte $43,$29       ; HLT
             .byte $02,$b0       ; * HLT implied
             .byte XTABLE_END,$00; End of 6502 extended table
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
+; wAx API JUMP TABLE
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; This JMP table starts at $7000
+jBuff2Byte: jmp Buff2Byte
+jCharGet:   jmp CharGet
+jCharOut:   jmp CharOut
+jHex:       jmp Hex
+jIncAddr:   jmp IncAddr
+jIncPC:     jmp IncPC
+jLookup:    jmp Lookup
+jPrintBuff: jmp PrintBuff
+jResetIn:   jmp ResetIn
+jResetOut:  jmp ResetOut
+jShowAddr:  jmp ShowAddr
+jShowPC:    jmp ShowPC
