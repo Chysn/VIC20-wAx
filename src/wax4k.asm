@@ -1901,7 +1901,7 @@ xscribe_r:  jmp AddInput        ; Add the final zero, and fix CHRGET...
 handle_sym: ldy TOOL_CHR        ; The label character is not handled by the
             cpy #T_SYM          ;   symbol init tool, because it's used to
             beq x_add           ;   clear the symbol table
-            ldy $83             ; Don't handle symbols if the & is in quotes
+            ldy $83             ; Don't handle symbols if the - is in quotes
             cpy #$06            ;   (as in an immediate operand, or text entry)
             beq x_add           ;   ,,
             ldy IDX_IN          ; If the label character occurs deep in the
