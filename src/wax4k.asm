@@ -46,7 +46,7 @@ MAX_LAB     = 19                ; Maximum number of user labels + 1
 MAX_FWD     = 12                ; Maximum number of forward references
 
 ; Tool Setup
-TOOL_COUNT  = $13               ; How many tools are there?
+TOOL_COUNT  = $14               ; How many tools are there?
 T_DIS       = "."               ; Wedge character . for disassembly
 T_XDI       = ","               ; Wedge character , for extended opcodes
 T_ASM       = "@"               ; Wedge character @ for assembly
@@ -65,6 +65,7 @@ T_T2H       = "#"               ; Wedge character # for base 10 to hex
 T_SYM       = $ac               ; Wedge character * for symbol table management
 T_BAS       = $ae               ; Wedge character ^ for BASIC stage select
 T_USR       = "'"               ; Wedge character ' for user tool
+T_USL       = $5c               ; Wedge character GPB for user list
 LABEL       = $ab               ; Forward relative branch character
 
 ; System resources - Routines
@@ -182,8 +183,7 @@ SEARCH_C    = $0250             ; Search counter
 INSTSIZE    = $0251             ; Instruction size
 IGNORE_RB   = $0252             ; Ignore relative branch range for forward refs
 TEMP_CALC   = $0253             ; Temporary calculation
-RANGE_END   = $0254             ; End of range for Save and Copy
-;OPCODE      = $0255             ; Instruction opcode
+RANGE_END   = $0254             ; End of range for Save and Copy (2 bytes)
 BREAKPOINT  = $0256             ; Breakpoint data (3 bytes)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -293,6 +293,8 @@ ListLine:   txa
             beq to_mem          ; ,,
             cmp #T_BIN          ; Binary Dump
             beq to_bin          ; ,,
+            cmp #T_USL          ; User list tool
+            beq to_usr          ; ,,
             jsr Space           ; Space goes after address for Disassembly
             jsr Disasm
             jmp continue
@@ -301,6 +303,8 @@ to_mem:     jsr CharOut         ; Memory editor character goes after address
             jmp continue
 to_bin:     jsr CharOut         ; Binary editor character goes after address
             jsr BinaryDisp      ; Do Binary display
+            jmp continue
+to_usr:     jsr UserTool            
 continue:   jsr PrintBuff      
             pla
             tax
@@ -1641,14 +1645,14 @@ Rechain:    jsr $c533           ; Re-chain BASIC program to set BASIC
 ; User Tool
 ; https://github.com/Chysn/wAx/wiki/User-Tool
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-UserTool:	jmp (USER_VECT)
+UserTool:   jmp (USER_VECT)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 ; Look up opcode
 ; Reset Language Table            
-Lookup:     sta OPCODE          ; OPCODE   is the found opcode
+Lookup:     sta OPCODE          ; OPCODE is the found opcode
             jsr ResetLang       ; Reset the language table reference
 -loop:      jsr NextInst        ; Get the next 6502 instruction in the table
             ldy TOOL_CHR        ; If the tool is the extended disassembly,
@@ -2053,15 +2057,15 @@ DirectMode: ldy CURLIN+1
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ToolTable contains the list of tools and addresses for each tool
 ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA,T_BIN
-            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_SYM,T_BAS,T_USR
+            .byte T_XDI,T_SRC,T_CPY,T_H2T,T_T2H,T_SYM,T_BAS,T_USR,T_USL
 ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<Register-1,<Execute-1
             .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1,<List-1
             .byte <List-1,<Search-1,<MemCopy-1,<Hex2Base10-1,<Base102Hex-1
-            .byte <InitSym-1,<BASICStage-1,<UserTool-1
+            .byte <InitSym-1,<BASICStage-1,<UserTool-1,<List-1
 ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1,>List-1
             .byte >List-1,>Search-1,>MemCopy-1,>Hex2Base10-1,>Base102Hex-1
-            .byte >InitSym-1,>BASICStage-1,>UserTool-1
+            .byte >InitSym-1,>BASICStage-1,>UserTool-1,>List-1
 
 ; Addresses for error message text
 ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
