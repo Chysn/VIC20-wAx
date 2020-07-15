@@ -177,14 +177,13 @@ IDX_IN      = $ae               ; Buffer index - Input
 TOOL_CHR    = $af               ; Current function (T_ASM, T_DIS)
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
 INBUFFER    = $0230             ; Input buffer (22 bytes)
-IDX_SYM     = $024e             ; Temporary symbol index storage
-SEARCH_C    = $024f             ; Search counter
-INSTSIZE    = $0250             ; Instruction size
-IGNORE_RB   = $0251             ; Ignore relative branch range for forward refs
-TEMP_CALC   = $0252             ; Temporary calculation
-RANGE_END   = $0253             ; End of range for Save and Copy
-INSTDATA    = $0254             ; Instruction opcode
-ADDRMODE    = $0255             ; Instruction addressing mode
+IDX_SYM     = $024f             ; Temporary symbol index storage
+SEARCH_C    = $0250             ; Search counter
+INSTSIZE    = $0251             ; Instruction size
+IGNORE_RB   = $0252             ; Ignore relative branch range for forward refs
+TEMP_CALC   = $0253             ; Temporary calculation
+RANGE_END   = $0254             ; End of range for Save and Copy
+F_OPCODE    = $0255             ; Instruction opcode
 BREAKPOINT  = $0256             ; Breakpoint data (3 bytes)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -334,18 +333,19 @@ list_r:     jmp EnableBP        ; Re-enable breakpoint, if necessary
 Disasm:     jsr IncAddr         ; Get opcode
             jsr Lookup          ; Look it up
             bcc Unknown         ; Clear carry indicates an unknown opcode
+            pha                 ; Store addressing mode for later
             jsr DMnemonic       ; Display mnemonic
             lda TOOL_CHR        ; If the search is being run, go directly
             cmp #T_SRC          ;   to the operand
             beq disasm_op       ;   ,,
             jsr Space
-disasm_op:  lda ADDRMODE        ; Pass addressing mode to operand routine
+disasm_op:  pla                 ; Pass addressing mode to operand routine
             jmp DOperand        ; Display operand
 
 ; Unknown Opcode
 Unknown:    lda #T_MEM          ; Memory entry before an unknown byte
             jsr CharOut         ; ,,
-            lda INSTDATA        ; The unknown opcode is still here   
+            lda F_OPCODE        ; The unknown opcode is still here   
             jmp Hex             
             
 ; Mnemonic Display
@@ -1475,17 +1475,12 @@ fwd_used:   lda SYMBOL_FL,x     ; A forward reference for this label has been
             sta CHARAC          ;   found; store the address in zero page for
             lda SYMBOL_FH,x     ;   updating the code at this address.
             sta CHARAC+1        ;   ,,
-            txa
-            pha
-            ldx #$00            ; Get the byte at the reference address, which
-            lda (CHARAC,x)      ;   should be an instruction opcode
+            ldy #$00            ; Get the byte at the reference address, which
+            lda (CHARAC),y      ;   should be an instruction opcode
             jsr Lookup          ; Look it up
-            pla
-            tax
             bcs get_admode      ; ,,
             jmp CannotRes       ; Not a valid instruction; CAN'T RESOLVE ERROR
-get_admode: lda ADDRMODE        ; Get the addressing mode
-            cmp #RELATIVE       ; If it's a relative branch instruction,
+get_admode: cmp #RELATIVE       ; If it's a relative branch instruction,
             beq load_rel        ;   calculate the branch offset
             cmp #ABSOLUTE       ; Two bytes will be replaced, so make sure
             beq load_abs        ;   this instruction is one of the
@@ -1653,21 +1648,20 @@ UserTool:	jmp (USER_VECT)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 ; Look up opcode
 ; Reset Language Table            
-Lookup:     sta INSTDATA        ; INSTDATA is the found opcode
+Lookup:     sta F_OPCODE        ; F_OPCODE is the found opcode
             jsr ResetLang       ; Reset the language table reference
 -loop:      jsr NextInst        ; Get the next 6502 instruction in the table
-            ldx TOOL_CHR        ; If the tool is the extended disassembly,
-            cpx #T_XDI          ;   use the end of the extended table,
+            ldy TOOL_CHR        ; If the tool is the extended disassembly,
+            cpy #T_XDI          ;   use the end of the extended table,
             bne std_table       ;   otherwise, use the standard 6502 table
             cmp #XTABLE_END     ; If we've reached the end of the table,
             .byte $3c           ; TOP (skip word)
 std_table:  cmp #TABLE_END            
             beq not_found       ;   then the instruction is invalid
-            cmp INSTDATA        ; If the instruction doesn't match the opcode,
+            cmp F_OPCODE        ; If the instruction doesn't match the opcode,
             bne loop            ;   keep searching.
-found:      iny
+found:      ldy #$01
             lda (LANG_PTR),y    ; A match was found! Set the addressing mode
-            sta ADDRMODE        ;   to the instruction data structure
             sec                 ;   and set the carry flag to indicate success
             rts
 not_found:  clc                 ; Reached the end of the language table without
