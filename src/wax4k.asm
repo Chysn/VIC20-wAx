@@ -183,7 +183,7 @@ INSTSIZE    = $0251             ; Instruction size
 IGNORE_RB   = $0252             ; Ignore relative branch range for forward refs
 TEMP_CALC   = $0253             ; Temporary calculation
 RANGE_END   = $0254             ; End of range for Save and Copy
-F_OPCODE    = $0255             ; Instruction opcode
+;OPCODE      = $0255             ; Instruction opcode
 BREAKPOINT  = $0256             ; Breakpoint data (3 bytes)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
@@ -345,7 +345,7 @@ disasm_op:  pla                 ; Pass addressing mode to operand routine
 ; Unknown Opcode
 Unknown:    lda #T_MEM          ; Memory entry before an unknown byte
             jsr CharOut         ; ,,
-            lda F_OPCODE        ; The unknown opcode is still here   
+            lda OPCODE          ; The unknown opcode is still here   
             jmp Hex             
             
 ; Mnemonic Display
@@ -1648,7 +1648,7 @@ UserTool:	jmp (USER_VECT)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 
 ; Look up opcode
 ; Reset Language Table            
-Lookup:     sta F_OPCODE        ; F_OPCODE is the found opcode
+Lookup:     sta OPCODE          ; OPCODE   is the found opcode
             jsr ResetLang       ; Reset the language table reference
 -loop:      jsr NextInst        ; Get the next 6502 instruction in the table
             ldy TOOL_CHR        ; If the tool is the extended disassembly,
@@ -1658,7 +1658,7 @@ Lookup:     sta F_OPCODE        ; F_OPCODE is the found opcode
             .byte $3c           ; TOP (skip word)
 std_table:  cmp #TABLE_END            
             beq not_found       ;   then the instruction is invalid
-            cmp F_OPCODE        ; If the instruction doesn't match the opcode,
+            cmp OPCODE          ; If the instruction doesn't match the opcode,
             bne loop            ;   keep searching.
 found:      ldy #$01
             lda (LANG_PTR),y    ; A match was found! Set the addressing mode
