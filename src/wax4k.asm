@@ -178,6 +178,7 @@ IDX_IN      = $ae               ; Buffer index - Input
 TOOL_CHR    = $af               ; Current function (T_ASM, T_DIS)
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
 INBUFFER    = $0230             ; Input buffer (22 bytes)
+USR_STORE   = $0247             ; User tool storage (8 bytes)
 IDX_SYM     = $024f             ; Temporary symbol index storage
 SEARCH_C    = $0250             ; Search counter
 INSTSIZE    = $0251             ; Instruction size
@@ -802,9 +803,7 @@ show_char:  jsr ReverseOn       ; Reverse on for the characters
             bcs add_char        ; ,,
 alter_char: lda #" "            ; Everything else gets a space
 add_char:   jsr CharOut         ; ,,
-            inc EFADDR
-            bne next_char
-            inc EFADDR+1
+            jsr IncAddr
 next_char:  iny
             cpy #04
             bne loop            
@@ -873,6 +872,7 @@ Execute:    bcc iterate         ; No address was provided; continue from BRKpt
             jmp SYS             ; Call BASIC SYS, after the parameter parsing
 iterate:    pla                 ; Remove return to Return from the stack; it
             pla                 ;   is not needed
+            jsr SetupVec        ; Make sure the BRK handler is enabled
             jmp SYS_BRK         ; SYS with no tail return address
                         
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  

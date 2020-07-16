@@ -1,4 +1,10 @@
-*=$a000
+; wAx Code Instrumention Generator
+; 'addr
+; Create a breakpoint at the specified address, and a code knapsack
+; at $033c.
+;
+; '
+; Restore the code at the breakpoint
 
 ; BASIC Routines
 UND_ERROR   = $c8e3             ; UNDEF'D STATEMENT ERROR
@@ -15,20 +21,12 @@ EFADDR      = $a6               ; Temp zeropage pointer to breakpoint address
 ; (2) Replace SizeOf with a routine that takes an opcode in A and returns
 ;     its size in X, and clears Carry if the opcode is unfound or a relative
 ;     branch instruction
-Lookup      = $6a5a             ; Opcode lookup routine
-ADDRMODE    = $0255             ; Addressing mode
-USER_VECT   = $05               ; User tool vector
-
-; Install for wAx user tool
-Install:    lda #<Main
-            sta USER_VECT
-            lda #>Main
-            sta USER_VECT+1
-            rts
+Lookup      = $7012             ; Opcode lookup routine
 
 ; Main routine entry point
 ; * If setting a breakpoint, its address is in EFADDR vector
 ; * If clearing a breakpoint, the Carry flag is clear
+*=$7800
 Main:       bcs NewKnap         ; A legal address has been provided in $a6/$a7
 restore:    lda BREAKPT         ; Otherwise, restore the breakpoint to the
             sta EFADDR          ;   original code by copying the
@@ -118,6 +116,3 @@ size_r:     rts
 
 ; Size by addressing mode high nybble
 AddrSize:   .byte 0,3,2,2,3,3,3,2,2,2,2,1,0,1
-
-
-            
