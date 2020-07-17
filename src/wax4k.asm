@@ -262,7 +262,9 @@ main_r:     rts                 ; Pull address-1 off stack and go there
 Return:     jsr DirectMode      ; If in Direct Mode, warm start without READY.
             bne in_program      ;   ,,
             jmp (WARM_START)    ;   ,,           
-in_program: jmp NX_BASIC        ; Otherwise, continue to next BASIC command   
+in_program: lda #$00            ; In a program, reset the keyboard buffer size
+            sta KBSIZE          ;   to 0 to avoid any prompts
+            jmp NX_BASIC        ; Otherwise, continue to next BASIC command   
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; COMMON LIST COMPONENT
@@ -321,8 +323,8 @@ continue:   jsr PrintBuff
             cmp #T_BRK          ;   the persistent counter or show a tool
             beq list_r          ;   prompt
 list_stop:  jsr EAtoPC          ; Update persistent counter with effective addr
-            lda TOOL_CHR        ; If the extended disassembler is the tool,
-            sta KEYBUFF         ; Provide a tool for the next page
+            lda TOOL_CHR        ; Provide a tool for the next page in the key-
+            sta KEYBUFF         ;   board buffer.
             lda #CRSRLF         ; ,,
             sta KEYBUFF+1       ; ,,
             lda #$02            ; ,,
@@ -2024,8 +2026,6 @@ Prompt:     txa                 ; Based on the incoming X register, advance
             lda #$00            ;   ,,
             adc EFADDR+1        ;   ,,
             sta X_PC+1          ;   ,,
-            jsr DirectMode      ; If the user is in direct mode, show a prompt,
-            bne prompt_r        ;   otherwise, return to get next command
             jsr ResetOut        ; Reset the output buffer to generate the prompt
             lda #T_ASM          ; The prompt begins with the assembler tool's
             jsr CharOut         ;   wedge character
@@ -2075,7 +2075,7 @@ ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00                   
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
-BreakMsg:   .asc LF,RVS_ON,"BRK",RVS_OFF,$00
+BreakMsg:   .asc LF,"*",RVS_ON,"BRK",RVS_OFF,$00
 
 ; Error messages
 AsmErrMsg:  .asc "ASSEMBL",$d9
