@@ -109,9 +109,8 @@ SizeOf:     jsr Lookup
             lsr                 ;   ,,
             tax                 ; Use that index to get the size from the
             lda AddrSize,x      ;   table
-            beq size_r          ; Size zero is failure; Carry clear via LSR
-            tax                 ; Return the size in X
-            sec                 ; Set carry to indicate success
+            tax                 ; X is the return value
+            cpx #$01            ; Carry set = success, clear = failure
 size_r:     rts            
 
 ; Size by addressing mode high nybble
