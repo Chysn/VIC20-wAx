@@ -1,13 +1,18 @@
 ; wAx ML2BAS Tool
 ; 'start end+1 [R]
-; Convert the 6502 code between start and end into a BASIC
-; program in the current BASIC stage
+; Convert the 6502 code between start and end into a BASIC program in the
+; current BASIC stage. The 6502 code will be appended to the existing program,
+; with line numbers in increments of 5.
 ;
-; The end address should be the byte after the last instruction
-; in the program
+; The specified end address should be the byte after the last instruction
+; in the program.
 ;
-; If R is specified after the end address, use the relocatable
-; "hermit crab" syntax. Otherwise, use absolute addresses
+; If R is specified after the end address, uses the relocatable "hermit crab"
+; syntax. Otherwise, uses absolute addresses.
+;
+; If the disassembly would extend beyond the end of the BASIC stage, the
+; existing BASIC program (if any) is restored, and an OUT OF MEMORY error is
+; thrown.
 
 ; wAx API
 EFADDR      = $a6               ; Effective Address
@@ -31,6 +36,7 @@ Rechain     = $6a50             ; Rechain BASIC program
 ; ML2BAS Workspace
 LINE_NUM    = $0247             ; BASIC Line Number (2 bytes)
 RELOCATE    = $0249             ; Use relocatable "hermit crab" syntax
+FAIL_POINT  = $024a             ; BASIC program end restore point (2 bytes)
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
 IDX_OUT     = $ad               ; Buffer index - Output
 RANGE_END   = $0254             ; End of range for Save and Copy (2 bytes)
@@ -50,15 +56,24 @@ Main:       bcc error           ; Error if the first address is no good
             .byte $3c           ;   ,,
 set_line:   lda #$00            ;   ,,
             sta RELOCATE        ;   ,,
-            lda #$64            ; Start at line 100
-            sta LINE_NUM        ; ,,
-            lda #$00            ; ,,
-            sta LINE_NUM+1      ; ,,
+            sta FAIL_POINT+1    ; Initialize fail point high byte
             lda $2b             ; Set persistent counter with start of
             sta X_PC            ;   BASIC
             lda $2c             ;   ,,
             sta X_PC+1          ;   ,,
-            lda RELOCATE        ; If the code is not relocatable, skip the
+            lda #$64            ; Start at line 100 by default
+            sta LINE_NUM        ; ,,
+            lda #$00            ; ,,
+            sta LINE_NUM+1      ; ,,
+            jsr NextLink        ; Is there an existing BASIC program?
+            bcc found_end       ; If no existing program,
+            jsr FindEnd         ; Find the last line number
+            jsr IncLine         ; Increment it by 5
+            lda X_PC            ; Set fail point, which preserves the existing
+            sta FAIL_POINT      ;   BASIC program if the ML2BAS process results
+            lda X_PC+1          ;   in an out of memory condition.
+            sta FAIL_POINT+1    ;   ,,
+found_end:  lda RELOCATE        ; If the code is not relocatable, skip the
             beq Start           ;   PC setting up front
             jsr LinkBytes       ; Add link bytes to next line
             jsr LineNumber      ; Add line number to first line
@@ -112,7 +127,7 @@ LineNumber: lda LINE_NUM        ; Add the current line number to the
             jsr AddByte         ;   BASIC line 
             lda LINE_NUM+1      ;   ,,
             jsr AddByte         ;   ,,
-            lda #$05            ; Increment the line number by 5
+IncLine:    lda #$05            ; Increment the line number by 5
             clc                 ; ,,
             adc LINE_NUM        ; ,,
             sta LINE_NUM        ; ,,
@@ -137,8 +152,21 @@ ok:         pla
             rts        
 
 ; Perform NEW, then show Out of Memory Error
-OutOfMem:   jsr $c642           ; Perform NEW
+OutOfMem:   lda FAIL_POINT+1    ; Is there an existing program?
+            bne restore         ; If so, restore it instead of NEW
+            jsr $c642           ; Perform NEW
             jmp $c435           ; Out of Memory Error + Warm Start                        
+restore:    lda FAIL_POINT      ; Reset the bytes at the previous
+            sta $07             ;   program end address to $00,
+            lda FAIL_POINT+1    ;   essentially reversing everything
+            sta $08             ;   this process did, and the rechain
+            ldy #$00            ;   the BASIC program so it's like
+            tya                 ;   nothing ever happened.
+            sta ($07),y         ;   ,,
+            iny                 ;   ,, 
+            sta ($07),y         ;   ,,
+            jsr Rechain         ;   ,,
+            jmp $c435           ; Out of Memory Error + Warm Start
 
 ; End Program / End Line
 ; End the BASIC line or program
@@ -155,4 +183,35 @@ AddBuffer:  ldy #$00
             iny
             cpy IDX_OUT
             bne loop
-buffer_out: rts            
+buffer_out: rts 
+
+; Find End of Program
+FindEnd:    jsr NextLink        ; Get the next BASIC line location
+            bcs get_line        ; If a line was found, advance line number and
+            rts                 ;   link pointer and try again; else, return
+get_line:   iny                 ; Get the line number and update it
+            lda (X_PC),y        ;   it      
+            sta LINE_NUM        ;   ,,
+            iny                 ;   ,,
+            lda (X_PC),y        ;   ,,
+            sta LINE_NUM+1      ;   ,,
+            lda $07             ; Get the next link pointer and update X_PC
+            sta X_PC            ;   ,,
+            lda $08             ;   ,,
+            sta X_PC+1          ; Keep looking for the end
+            jmp FindEnd
+
+NextLink:   ldy #$00            ; Set locations $07 and $08 to the next
+            lda (X_PC),y        ; BASIC line pointer. If both are $00, then
+            sta $07             ; we're at the end of the BASIC program,
+            iny                 ; otherwise, the BASIC program continues
+            lda (X_PC),y        ; at the specified address
+            sta $08             ; ,,
+            sec                 ; Set Carry if the link isn't $00/$00
+            lda $07             ; ,,
+            bne next_r          ; ,,
+            lda $08             ; ,,
+            bne next_r          ; ,,
+            clc                 ; Otherwise clear it to indicate end of program
+next_r:     rts
+            

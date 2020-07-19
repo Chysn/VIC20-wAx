@@ -221,11 +221,10 @@ exit:       jsr CHRGOT          ; Restore flags for the found character
 ; command. Prepare for execution by
 ; (1) Setting a return point
 ; (2) Putting the tool's start address-1 on the stack
-; (3) Saving the zeropage workspace for future restoration
-; (4) Transcribing from BASIC or input buffer to the wAx input buffer
-; (5) Reading the first four hexadecimal characters used by all wAx tools and
+; (3) Transcribing from BASIC or input buffer to the wAx input buffer
+; (4) Reading the first four hexadecimal characters used by all wAx tools and
 ;     setting the Carry flag if there's a valid 16-bit number provided
-; (6) RTS to route to the selected tool            
+; (5) RTS to route to the selected tool            
 Prepare:    sta TOOL_CHR        ; Store the tool character
             lda #>Return-1      ; Push the address-1 of Return onto the stack
             pha                 ;   as the destination for RTS of the
