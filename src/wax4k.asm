@@ -1571,7 +1571,7 @@ addfwd_r:   rts
 BASICStage: jsr ResetIn         ; Reset the input buffer index
             sta EFADDR          ; Set default end page
             jsr Buff2Byte       ; Get the first hex byte
-            bcc show_range      ; If no valid address was provided, show range
+            bcc st_range        ; If no valid address was provided, show range
             sta EFADDR+1        ; This is the stage's starting page number
             jsr Buff2Byte       ; But the default can be overridden if a valid
             bcc ch_length       ;   starting page is provided
@@ -1617,14 +1617,14 @@ new:        lda #$00            ; Zero out the first few bytes of the stage so
             bpl loop            ;   causes problems.
 finish:     jsr Rechain
             jmp (READY)
-show_range: jsr ResetOut        ; Show the start and end pages of the current
+st_range:   jsr ResetOut        ; Show the start and end pages of the current
             jsr HexPrefix       ;   BASIC stage
-            lda $2c             ; ,,
-            jsr Hex             ; ,,
-            jsr Semicolon       ; ,,
-            lda $34             ; ,,
-            jsr Hex             ; ,,
-            jmp PrintBuff       ; ,,
+            lda $2c             ;   ,,
+            jsr Hex             ;   ,,
+            jsr Space           ;   ,,
+            lda $34             ;   ,,
+            jsr Hex             ;   ,,
+            jmp PrintBuff       ;   ,,
 
 ; Rechain BASIC program
 Rechain:    jsr $c533           ; Re-chain BASIC program to set BASIC
