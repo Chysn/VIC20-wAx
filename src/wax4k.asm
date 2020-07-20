@@ -1076,12 +1076,16 @@ cassette:   ldy #$01            ; ,, (load to header location)
 load_r:     rts
 show_range: jsr ResetOut
             jsr Linefeed
-            ldx DEVICE          ; If the device numbr is 1, skip the start/end
-            cpx #$01            ;   display
-            beq load_r          ;   ,,
             lda #T_DIS          ; Show the loaded range, if from disk
             jsr CharOut         ; ,,
-            jsr ShowPC          ; Show the persistent counter
+            ldx DEVICE          ; If the device numbr is 1, skip the start/end
+            cpx #$01            ;   display
+            bne disk
+            ldx $033d           ; Update the persistent counter with the start
+            stx X_PC            ;   of memory loaded from cassette
+            ldx $033e           ;   ,,
+            stx X_PC+1          ;   ,,
+disk:       jsr ShowPC          ; Show the persistent counter
             jsr Semicolon       ; Comment so disassembly works
             lda $af             ; Show the end of the loaded range
             jsr Hex             ; ,,
@@ -1411,8 +1415,7 @@ LabListCo:  jsr ResetOut
             lda SYMBOL_D,x
             and #$7f
             jsr CharOut
-            jsr Space
-            rts
+            jmp Space
             
 ; Symbol is Defined
 ; Zero flag is clear if symbol is defined
@@ -1568,7 +1571,7 @@ addfwd_r:   rts
 BASICStage: jsr ResetIn         ; Reset the input buffer index
             sta EFADDR          ; Set default end page
             jsr Buff2Byte       ; Get the first hex byte
-            bcc bank_r          ; If no valid address was provided, show start
+            bcc show_range      ; If no valid address was provided, show range
             sta EFADDR+1        ; This is the stage's starting page number
             jsr Buff2Byte       ; But the default can be overridden if a valid
             bcc ch_length       ;   starting page is provided
@@ -1614,17 +1617,13 @@ new:        lda #$00            ; Zero out the first few bytes of the stage so
             bpl loop            ;   causes problems.
 finish:     jsr Rechain
             jmp (READY)
-bank_r:     jsr ResetOut        ; Provide info about the start of BASIC
-            jsr HexPrefix       ; ,,
+show_range: jsr ResetOut        ; Show the start and end pages of the current
+            jsr HexPrefix       ;   BASIC stage
             lda $2c             ; ,,
             jsr Hex             ; ,,
-            lda $2b             ; ,,
+            jsr Semicolon       ; ,,
+            lda $34             ; ,,
             jsr Hex             ; ,,
-            jsr Semicolon
-            lda $34
-            jsr Hex
-            lda $33
-            jsr Hex
             jmp PrintBuff       ; ,,
 
 ; Rechain BASIC program
@@ -2065,10 +2064,10 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables  
-Intro:      .asc LF,"BEIGEMAZE.COM/WAX",LF,$00                   
+Intro:      .asc LF,"  BEIGEMAZE.COM/WAX",LF,$00                   
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
-BreakMsg:   .asc LF,"*",RVS_ON,"BRK",RVS_OFF,$00
+BreakMsg:   .asc LF,RVS_ON,"BRK",RVS_OFF,$00
 
 ; Error messages
 AsmErrMsg:  .asc "ASSEMBL",$d9

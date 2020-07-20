@@ -1,7 +1,7 @@
 ; wAx Code Instrumention Generator
 ; 'addr
 ; Create a breakpoint at the specified address, and a code knapsack
-; at $033c.
+; at $03ef
 ;
 ; '
 ; Restore the code at the breakpoint
@@ -10,7 +10,7 @@
 UND_ERROR   = $c8e3             ; UNDEF'D STATEMENT ERROR
 
 ; Knapsack Generator
-KNAPSACK    = $033c             ; Knapsack storage (10 bytes)
+KNAPSACK    = $03ef             ; Knapsack storage (10 bytes)
 BREAKPT     = KNAPSACK+10       ; Breakpoint address (2 bytes)
 KNAPSIZE    = BREAKPT+2         ; Knapsack size (1 byte)
 EFADDR      = $a6               ; Temp zeropage pointer to breakpoint address
