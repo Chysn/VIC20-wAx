@@ -31,7 +31,7 @@ ShowAddr    = $701e             ; Write Effective Address to output buffer
 ShowPC      = $7021             ; Write Persistent Counter to output buffer
 
 Disasm      = $60fb             ; Disassemble to output buffer
-Rechain     = $6a50             ; Rechain BASIC program
+Rechain     = $6a4f             ; Rechain BASIC program
 
 ; ML2BAS Workspace
 LINE_NUM    = $0247             ; BASIC Line Number (2 bytes)
