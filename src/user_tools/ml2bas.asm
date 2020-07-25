@@ -54,9 +54,11 @@ Main:       bcc error           ; Error if the first address is no good
             cmp #"R"            ;   use the "hermit crab" syntax instead of
             beq set_mod         ;   absolute addresses
             cmp #"H"            ; If there's an H at the end of the command,            
-            beq set_mod         ;   this will create hex dump lines instead of
-            lda #$00            ;   code
-set_mod:    sta MODIFIER        ;   ,,
+            beq set_mod         ;   this will create hex dump lines
+            cmp #"T"            ; If there's a T at the end of the command,
+            beq set_mod         ;   this will create assertion tests
+            lda #$00 
+set_mod:    sta MODIFIER
             sta FAIL_POINT+1    ; Initialize fail point high byte
             lda $2b             ; Set persistent counter with start of
             sta X_PC            ;   BASIC
@@ -79,7 +81,7 @@ found_end:  lda MODIFIER        ; If the code is not relocatable, skip the
             jsr LinkBytes       ; Add link bytes to next line
             jsr LineNumber      ; Add line number to first line
             lda #$ac            ; Add PC set tool
-            jsr AddByte         ; ,,
+            jsr AddByte         ; Add the selected tool to the buffer
             jsr ResetOut        ; Add the start address to the output buffer
             jsr ShowAddr        ; ,,
             jsr AddBuffer       ; Add the output buffer to the BASIC line
@@ -99,11 +101,15 @@ done:       jsr EndProgram      ; Add $00,$00 to the the program
 in_range:   jsr LinkBytes
             jsr LineNumber
             lda #"@"            ; Add the assemble tool
-            jsr AddByte         ; ,,
+            ldy MODIFIER        ; If the modifier is T (assertion test), then
+            cpy #"T"            ;   switch the tool over to =
+            bne show_tool       ;   ,,
+            lda #$b2            ;   ,,
+show_tool:  jsr AddByte         ; Add the selected tool to the buffer
             lda MODIFIER        ; If the user requested relocatable code,
             beq show_addr       ;   add the * instead of the address
             lda #$ac            ;   ,,
-            jsr AddByte         ;   ,,
+            jsr AddByte         ; ,,
             jmp code_part       ;   ,,
 show_addr:  jsr ResetOut        ; Add the current address to the BASIC line
             jsr ShowAddr        ; ,,
@@ -114,6 +120,8 @@ code_part:  lda #" "            ; Space after address or hermit crab
             lda MODIFIER        ; If the disassembly is in relocate mode,
             beq gen_code        ;   
             cmp #"H"            ;   check for hex dump modifier and
+            beq HexDump         ;   handle that, if necessary. Otherwise, check
+            cmp #"T"            ;   for assertion test modified and
             beq HexDump         ;   handle that, if necessary. Otherwise, check
             jsr CheckRel        ;   for relative branch. If so, disassemble the
             bcs code2buff       ;   instruction as two bytes.
@@ -126,9 +134,12 @@ code2buff:  jsr AddBuffer       ;   add it to the BASIC LINE
 ; Add up to six hex bytes to the current BASIC line buffer
 HexDump:    lda #$06            ; Reset a byte counter; we'll add up to six
             sta $08             ;   bytes per BASIC line
+            lda MODIFIER        ; If the modifier is assertion testing,
+            cmp #"T"            ;   don't add a colon to the buffer
+            beq add_hex         ;   ,,
             lda #":"            ; Add a colon to specify hex entry
-            jsr AddByte         ; ,,
--loop:      jsr IncAddr         ; Add the hex data to the buffer
+            jsr AddByte         ; Add the wedge character to the buffer
+add_hex:    jsr IncAddr         ; Add the hex data to the buffer
             jsr Hex             ; ,,
             lda EFADDR+1        ; Is the effective address in 
             cmp RANGE_END+1     ;   the code range?
@@ -138,7 +149,7 @@ HexDump:    lda #$06            ; Reset a byte counter; we'll add up to six
             bcs code2buff       ; If not, finish the line
 next_byte:  dec $08
             lda $08
-            bne loop
+            bne add_hex
             beq code2buff
 
 ; Add Link Bytes
