@@ -32,10 +32,11 @@ ShowPC      = $7021             ; Write Persistent Counter to output buffer
 
 Disasm      = $60fb             ; Disassemble to output buffer
 Rechain     = $6a4f             ; Rechain BASIC program
+DMnemonic   = $611e             ; Display mnemonic
 
 ; ML2BAS Workspace
 LINE_NUM    = $0247             ; BASIC Line Number (2 bytes)
-RELOCATE    = $0249             ; Use relocatable "hermit crab" syntax
+MODIFIER    = $0249             ; Relocate or 
 FAIL_POINT  = $024a             ; BASIC program end restore point (2 bytes)
 OUTBUFFER   = $0218             ; Output buffer (24 bytes)
 IDX_OUT     = $ad               ; Buffer index - Output
@@ -51,11 +52,11 @@ Main:       bcc error           ; Error if the first address is no good
             sta RANGE_END       ; ,,
             jsr CharGet         ; If there's an R at the end of the command,
             cmp #"R"            ;   use the "hermit crab" syntax instead of
-            bne set_line        ;   absolute addresses
-            lda #$ac            ;   ,,
-            .byte $3c           ;   ,,
-set_line:   lda #$00            ;   ,,
-            sta RELOCATE        ;   ,,
+            beq set_mod         ;   absolute addresses
+            cmp #"H"            ; If there's an H at the end of the command,            
+            beq set_mod         ;   this will create hex dump lines instead of
+            lda #$00            ;   code
+set_mod:    sta MODIFIER        ;   ,,
             sta FAIL_POINT+1    ; Initialize fail point high byte
             lda $2b             ; Set persistent counter with start of
             sta X_PC            ;   BASIC
@@ -73,7 +74,7 @@ set_line:   lda #$00            ;   ,,
             sta FAIL_POINT      ;   BASIC program if the ML2BAS process results
             lda X_PC+1          ;   in an out of memory condition.
             sta FAIL_POINT+1    ;   ,,
-found_end:  lda RELOCATE        ; If the code is not relocatable, skip the
+found_end:  lda MODIFIER        ; If the code is not relocatable, skip the
             beq Start           ;   PC setting up front
             jsr LinkBytes       ; Add link bytes to next line
             jsr LineNumber      ; Add line number to first line
@@ -87,11 +88,11 @@ found_end:  lda RELOCATE        ; If the code is not relocatable, skip the
 error:      jmp $cf08           ; ?SYNTAX ERROR, warm start
             
 Start:      lda EFADDR+1        ; Is the effective address in 
-            cmp RANGE_END+1     ;   the compare range?
+            cmp RANGE_END+1     ;   the code range?
             bcc in_range        ;   ,,
             lda EFADDR          ;   ,,
             cmp RANGE_END       ;   ,,
-            bcc in_range        ; If so, check for byte match
+            bcc in_range        ; If so, continue
 done:       jsr EndProgram      ; Add $00,$00 to the the program
             jsr Rechain         ; Rechain BASIC program 
             jmp ($c002)         ; READY.
@@ -99,20 +100,46 @@ in_range:   jsr LinkBytes
             jsr LineNumber
             lda #"@"            ; Add the assemble tool
             jsr AddByte         ; ,,
-            lda RELOCATE        ; If the user requested relocatable code,
+            lda MODIFIER        ; If the user requested relocatable code,
             beq show_addr       ;   add the * instead of the address
+            lda #$ac            ;   ,,
             jsr AddByte         ;   ,,
-            jmp space           ;   ,,
+            jmp code_part       ;   ,,
 show_addr:  jsr ResetOut        ; Add the current address to the BASIC line
             jsr ShowAddr        ; ,,
             jsr AddBuffer       ; ,,
-space:      lda #" "            ; And then a space
+code_part:  lda #" "            ; Space after address or hermit crab
             jsr AddByte         ; ,,
-            jsr ResetOut        ; Disassemble the current code to an
-            jsr Disasm          ;   empty output buffer and then add it to
-            jsr AddBuffer       ;   the BASIC LINE
+            jsr ResetOut        ; Reset output for the code portion
+            lda MODIFIER        ; If the disassembly is in relocate mode,
+            beq gen_code        ;   
+            cmp #"H"            ;   check for hex dump modifier and
+            beq HexDump         ;   handle that, if necessary. Otherwise, check
+            jsr CheckRel        ;   for relative branch. If so, disassemble the
+            bcs code2buff       ;   instruction as two bytes.
+gen_code:   jsr Disasm          ; Disassemble code to empty output buffer and
+code2buff:  jsr AddBuffer       ;   add it to the BASIC LINE
             jsr EndLine         ; End the line
             jmp Start           ; Check for the next line of code
+
+; Hex Dump Line
+; Add up to six hex bytes to the current BASIC line buffer
+HexDump:    lda #$06            ; Reset a byte counter; we'll add up to six
+            sta $08             ;   bytes per BASIC line
+            lda #":"            ; Add a colon to specify hex entry
+            jsr AddByte         ; ,,
+-loop:      jsr IncAddr         ; Add the hex data to the buffer
+            jsr Hex             ; ,,
+            lda EFADDR+1        ; Is the effective address in 
+            cmp RANGE_END+1     ;   the code range?
+            bcc next_byte       ;   ,,
+            lda EFADDR          ;   ,,
+            cmp RANGE_END       ;   ,,
+            bcs code2buff       ; If not, finish the line
+next_byte:  dec $08
+            lda $08
+            bne loop
+            beq code2buff
 
 ; Add Link Bytes
 ; We're not trying to keep track of the starting addresses of each line,
@@ -212,6 +239,27 @@ NextLink:   ldy #$00            ; Set locations $07 and $08 to the next
             bne next_r          ; ,,
             lda $08             ; ,,
             bne next_r          ; ,,
-            clc                 ; Otherwise clear it to indicate end of program
+clc_r:      clc                 ; Otherwise clear it to indicate end of program
 next_r:     rts
-            
+         
+; Check Relative Instruction
+; for relocatable byte syntax            
+CheckRel:   ldx #$00            ; Check the instruction at the effective address
+            lda (EFADDR,x)      ; ,,
+            jsr Lookup          ; If it doesn't exist, exit
+            bcc clc_r           ; ,,
+            cmp #$c0            ; Is the instruction relative mode?
+            bne clc_r           ; If not, exit
+            lda #":"            ; Add a colon to indicate that bytes follow
+            jsr CharOut         ; ,,
+            jsr IncAddr         ; Add the instruction opcode to the buffer
+            jsr Hex             ; ,,
+            lda #" "            ; Add a space between the instruction and the
+            jsr CharOut         ;   operand
+            jsr IncAddr         ; Add the operand to the buffer
+            jsr Hex             ; ,,
+            lda #";"            ; Show the mnemonic for the instruction as
+            jsr CharOut         ;   a comment, for the reader's benefit
+            jsr DMnemonic       ;   ,,
+            sec                 ; Set Carry to indicate that a relative
+            rts                 ;   instruction was handled            
