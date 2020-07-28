@@ -1287,12 +1287,12 @@ InitSym:    lda INBUFFER
             beq init_clear      ; ,,
             jsr RefreshPC       ; If no valid address is provided, just leave
             bcc init_r          ;   X_PC as it was
+            lda #$00            ; Reset forward reference overflow counter
+            sta OVERFLOW_F      ; ,,
 EAtoPC:     lda EFADDR          ; Initialize persistent counter with effective
             sta X_PC            ;   address
             lda EFADDR+1        ;   ,,
             sta X_PC+1          ;   ,,
-            lda #$00            ; Reset forward reference overflow counter
-            sta OVERFLOW_F      ; ,,
             rts
 init_clear: lda #$00            ; Initialize bytes for the symbol table
             ldy #ST_SIZE-1      ;   See the Symbol Table section at the top for
