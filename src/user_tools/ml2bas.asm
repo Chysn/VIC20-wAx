@@ -1,5 +1,5 @@
 ; wAx ML2BAS Tool
-; 'start end+1 [R]
+; 'start end+1 [R,H,T]
 ; Convert the 6502 code between start and end into a BASIC program in the
 ; current BASIC stage. The 6502 code will be appended to the existing program,
 ; with line numbers in increments of 5.
@@ -9,6 +9,12 @@
 ;
 ; If R is specified after the end address, uses the relocatable "hermit crab"
 ; syntax. Otherwise, uses absolute addresses.
+;
+; If H is specified after the end address, creates hex data entry lines
+; instead of 6502 code.
+;
+; If T is specified after the end address, creates assertion test data
+; instead of 6502 code.
 ;
 ; If the disassembly would extend beyond the end of the BASIC stage, the
 ; existing BASIC program (if any) is restored, and an OUT OF MEMORY error is
@@ -59,7 +65,8 @@ Main:       bcc error           ; Error if the first address is no good
             beq set_mod         ;   this will create assertion tests
             lda #$00 
 set_mod:    sta MODIFIER
-            sta FAIL_POINT+1    ; Initialize fail point high byte
+            lda #$00            ; Initialize fail point high byte
+            sta FAIL_POINT+1    ; ,,
             lda $2b             ; Set persistent counter with start of
             sta X_PC            ;   BASIC
             lda $2c             ;   ,,
@@ -86,6 +93,7 @@ found_end:  lda MODIFIER        ; If the code is not relocatable, skip the
             jsr ShowAddr        ; ,,
             jsr AddBuffer       ; Add the output buffer to the BASIC line
             jsr EndLine         ; Finish the first BASIC line
+            
             jmp Start           ; Start adding lines of 6502 code
 error:      jmp $cf08           ; ?SYNTAX ERROR, warm start
             
@@ -108,8 +116,10 @@ in_range:   jsr LinkBytes
 show_tool:  jsr AddByte         ; Add the selected tool to the buffer
             lda MODIFIER        ; If the user requested relocatable code,
             beq show_addr       ;   add the * instead of the address
+            cmp #"T"            ;   ,,
+            beq show_addr       ;   ,,
             lda #$ac            ;   ,,
-            jsr AddByte         ; ,,
+            jsr AddByte         ;   ,,
             jmp code_part       ;   ,,
 show_addr:  jsr ResetOut        ; Add the current address to the BASIC line
             jsr ShowAddr        ; ,,
@@ -132,11 +142,13 @@ code2buff:  jsr AddBuffer       ;   add it to the BASIC LINE
 
 ; Hex Dump Line
 ; Add up to six hex bytes to the current BASIC line buffer
-HexDump:    lda #$06            ; Reset a byte counter; we'll add up to six
-            sta $08             ;   bytes per BASIC line
+HexDump:    lda #$04            ; Reset a byte counter; we'll add up to six
+            sta $08             ;   bytes per BASIC line (see below)
             lda MODIFIER        ; If the modifier is assertion testing,
             cmp #"T"            ;   don't add a colon to the buffer
             beq add_hex         ;   ,,
+            inc $08             ; If the modifier is not assertion testing,
+            inc $08             ;   use six bytes instead of 4
             lda #":"            ; Add a colon to specify hex entry
             jsr AddByte         ; Add the wedge character to the buffer
 add_hex:    jsr IncAddr         ; Add the hex data to the buffer

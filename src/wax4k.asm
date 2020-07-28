@@ -475,7 +475,7 @@ MemEditor:  sta TOOL_CHR        ; Update tool character for Prompt
             beq start_mem       ;   more bytes per line, because we don't need
             lda #$08            ;   to worry about intrference with the PETSCII
             sta CHARAC          ;   display.
-start_mem:  ldy #$00            ; This is Assemble's entry point for .byte
+start_mem:  ldy #$00
 -loop:      jsr Buff2Byte
             bcc edit_exit       ; Bail out on the first non-hex byte
             sta (EFADDR),y      
