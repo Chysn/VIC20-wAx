@@ -97,16 +97,12 @@ found_end:  lda MODIFIER        ; If the code is not relocatable, skip the
             jmp Start           ; Start adding lines of 6502 code
 error:      jmp $cf08           ; ?SYNTAX ERROR, warm start
             
-Start:      lda EFADDR+1        ; Is the effective address in 
-            cmp RANGE_END+1     ;   the code range?
-            bcc in_range        ;   ,,
-            lda EFADDR          ;   ,,
-            cmp RANGE_END       ;   ,,
-            bcc in_range        ; If so, continue
+Start:      jsr CheckRange
+            bcc range_ok
 done:       jsr EndProgram      ; Add $00,$00 to the the program
             jsr Rechain         ; Rechain BASIC program 
             jmp ($c002)         ; READY.
-in_range:   jsr LinkBytes
+range_ok:   jsr LinkBytes
             jsr LineNumber
             lda #"@"            ; Add the assemble tool
             ldy MODIFIER        ; If the modifier is T (assertion test), then
@@ -153,11 +149,7 @@ HexDump:    lda #$04            ; Reset a byte counter; we'll add up to six
             jsr AddByte         ; Add the wedge character to the buffer
 add_hex:    jsr IncAddr         ; Add the hex data to the buffer
             jsr Hex             ; ,,
-            lda EFADDR+1        ; Is the effective address in 
-            cmp RANGE_END+1     ;   the code range?
-            bcc next_byte       ;   ,,
-            lda EFADDR          ;   ,,
-            cmp RANGE_END       ;   ,,
+            jsr CheckRange      ; Is the counter still in range?
             bcs code2buff       ; If not, finish the line
 next_byte:  dec $08
             lda $08
@@ -202,7 +194,14 @@ ok:         pla
             rts        
 
 ; Perform NEW, then show Out of Memory Error
-OutOfMem:   lda FAIL_POINT+1    ; Is there an existing program?
+OutOfMem:   jsr ResetOut        ; Show the current address, so the user
+            lda #"$"            ;   knows where we ran out of BASIC
+            jsr CharOut         ;   memory
+            jsr ShowAddr        ;   ,,
+            lda #$0d            ;   ,,
+            jsr CharOut         ;   ,,
+            jsr PrintBuff       ;   ,,
+            lda FAIL_POINT+1    ; Is there an existing program?
             bne restore         ; If so, restore it instead of NEW
             jsr $c642           ; Perform NEW
             jmp $c435           ; Out of Memory Error + Warm Start                        
@@ -285,4 +284,18 @@ CheckRel:   ldx #$00            ; Check the instruction at the effective address
             jsr CharOut         ;   a comment, for the reader's benefit
             jsr DMnemonic       ;   ,,
             sec                 ; Set Carry to indicate that a relative
-            rts                 ;   instruction was handled            
+            rts                 ;   instruction was handled   
+
+; Check Range
+; Check to see if X_PC is greater than or equal to Range End      
+CheckRange: lda RANGE_END+1
+            cmp EFADDR+1
+            bcc out_range
+            bne in_range
+            lda EFADDR
+            cmp RANGE_END
+            bcc in_range
+out_range:  sec
+            rts
+in_range:   clc
+            rts

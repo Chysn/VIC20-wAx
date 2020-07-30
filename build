@@ -8,8 +8,9 @@ rm vic/wax.d64
 c1541 -format wax,8 d64 vic/wax.d64 -write vic/wax
 
 ## Build wAx 4k
-xa -l toc/toc4k -o 2732/wax4k.bin src/wax4k.asm
-printf "\x00\x60" | cat - 2732/wax4k.bin > vic/wax4k
+xa -l toc/toc4k -o 2764/wax4k.bin src/wax4k.asm
+cat 2764/wax4k.bin | head -c 4096 > 2732/wax4k.bin
+printf "\x00\x60" | cat - 2764/wax4k.bin > vic/wax4k
 c1541 vic/wax.d64 -write vic/wax4k
 head -c 2048 2732/wax4k.bin > 2716/wax4k-L.bin
 tail -c 2048 2732/wax4k.bin > 2716/wax4k-H.bin

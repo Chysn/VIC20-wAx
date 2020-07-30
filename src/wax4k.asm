@@ -2437,3 +2437,4 @@ jResetIn:   jmp ResetIn
 jResetOut:  jmp ResetOut
 jShowAddr:  jmp ShowAddr
 jShowPC:    jmp ShowPC
+jEAtoPC:    jmp EAtoPC
