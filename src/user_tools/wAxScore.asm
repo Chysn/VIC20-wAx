@@ -118,6 +118,9 @@ addr_ok:    lda #$08            ; Set volume
 ;           f7 (Whole)
 ; Notes     Q,2,W,3,E,R,5,T,6,Y,7,U,I
 ; Rests     Space
+; Effect PH ENTER
+; Octave+   +
+; Octave-   -
 ; Back      Back Arrow
 ; End       STOP
 Record:     lda #QUARTER        ; Starting duration
@@ -126,7 +129,12 @@ Record:     lda #QUARTER        ; Starting duration
             jsr IsNote          ; Is it a note or rest?
             bcs add_note
             cmp #8              ; Back arrow
-            beq undo
+            bne ch_cmd
+            jmp Undo
+ch_cmd:     cmp #61             ; Minus
+            beq octave_d
+            cmp #5              ; Plus
+            beq octave_u
             cmp #15             ; RETURN
             beq effect
             cmp #39             ; f1 - Eighth note
@@ -148,22 +156,12 @@ Record:     lda #QUARTER        ; Starting duration
             jsr ShowData        ; ,,
             jsr IncAddr         ; Increment effective address
             jmp EAtoPC          ; Update the persistent counter and exit
-; Go back to previous note to correct it                        
-undo:       lda EFADDR
-            sec
-            sbc #$01
-            sta EFADDR
-            bcs show_prev
-            dec EFADDR+1
-show_prev:  jsr ResetOut        ; Show the previous address to verify back
-            lda #"U"            ;   action
-            jsr CharOut         ;   ,,
-            jsr ShowAddr        ;   ,,
-            jsr PrintBuff       ;   ,,
-            jsr EAtoPC
-            jmp loop
-; Add an effect placeholder            
+; Add an effect placeholder or effect command        
 effect:     lda #$0f            ; Enter an effect placeholder into
+            .byte $3c           ; TOP (skip word)
+octave_u:   lda #$1f
+            .byte $3c
+octave_d:   lda #$2f            
             jmp add_note+3      ;   memory
 ; Set a note duration            
 set8:       lda #EIGHTH
@@ -206,7 +204,23 @@ Player:     jsr ShowData        ; Show the note about to be played
             jmp Player          ; Play next note
 player_r:   lda #$00            ; Turn off the playing voice
             sta VOICEH          ; ,,
-            rts            
+            rts 
+    
+; Undo        
+; Go back to previous note to correct it                        
+Undo:       lda EFADDR
+            sec
+            sbc #$01
+            sta EFADDR
+            bcs show_prev
+            dec EFADDR+1
+show_prev:  jsr ResetOut        ; Show the previous address to verify undo
+            lda #"U"            ;   action
+            jsr CharOut         ;   ,,
+            jsr ShowAddr        ;   ,,
+            jsr PrintBuff       ;   ,,
+            jsr EAtoPC
+            jmp loop                       
  
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; SUBROUTINES
@@ -301,5 +315,5 @@ ShowData:   jsr ResetOut        ; Show the data as it's entered
 Degree:     .byte 32,48,56,9,1,49,10,2,50,58,11,3,51,12
 
 ; Degree to Note Value
-; From Personal Computing on the VIC-20, Appendix F
-Note:       .byte 0,135,143,147,151,159,163,167,175,179,183,187,191,195
+; Determined by electronic tuner
+Note:       .byte 0,133,139,146,152,158,164,169,173,178,182,187,190,194
