@@ -34,9 +34,9 @@
 ; Note durations can be dotted by setting the bit to the right. For example,
 ; 0011 represents a dotted quarter note.
 ;
-; The low nybble is the note number of a diatonic degree from 1 to 13. wAxScore
+; The low nybble is the note number of a chromatic degree from 1 to 13. wAxScore
 ; format does not actually specify the temperament; that's determined by the
-; table that defines relationships between diatonic degrees and note values.
+; table that defines relationships between chromatic degrees and note values.
 ;
 ; A low nybble value of zero indicates a rest for the specified duration. If
 ; low and high nybble are both 0 ($00), it indicates the end of the score.
@@ -226,7 +226,7 @@ GetKey:     lda $c5             ; Make sure any previous keys are released first
 ; Clear Carry and return original key code in A if it's something else
 IsNote:     pha                 ; Save the original keypress
             ldx #$0d            ; Loop through 13 notes and 1 rest key to see
--loop:      cmp Degree,x        ;   if it matches one of the diatonic degrees
+-loop:      cmp Degree,x        ;   if it matches one of the chromatic degrees
             beq found_deg       ;   ,,
             dex                 ;   ,,
             bpl loop            ;   ,,
@@ -234,7 +234,7 @@ IsNote:     pha                 ; Save the original keypress
             clc                 ;   so pull the original key and send back to
             rts                 ;   look for other key presses
 found_deg:  pla                 ; Found degree; pull original key and discard
-            txa                 ; A is now the diatonic degree
+            txa                 ; A is now the chromatic degree
             sec                 ; Set Carry to indicate note or rest was found
             rts
 
@@ -254,7 +254,7 @@ PlayNote:   ldx #$00
             beq end_score
             pha
             and #$0f            ; Mask away the duration
-            tax                 ; X is the diatonic degree
+            tax                 ; X is the chromatic degree
             lda Note,x
             tay
             pla
