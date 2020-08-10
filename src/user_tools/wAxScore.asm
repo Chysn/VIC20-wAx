@@ -18,8 +18,12 @@
 ;         f5 - Half Note
 ;         f7 - Whole Note
 ;          . - Dot the current duration (may be done multiple times)
-; Effects RETURN (for an effect placeholder, see below)
-; Undo    Left-Arrow
+; Effects RETURN (No Effect)
+;         Plus (Octave Up)
+;         Minus (Octave Down)
+;         Colon (Legato On)
+;         Semicolon (Legato Off) 
+; Undo    DEL KEY
 ; Finish  STOP KEY
 ;
 ; *** THE WAXSCORE FORMAT ***
@@ -44,18 +48,17 @@
 ; A low nybble value of $f indicates that the high nybble contains an effect.
 ; It is optional for wAxScore players to interpret effects, but they must treat
 ; effects as zero-duration. Effects include the following:
-;   * $0    No effect (effect placeholder)
-;   * $1    Octave Up
-;   * $2    Octave Down
-;   * $3    Legato On (voice is not set to 0 at end of Play)
-;   * $4    Legato Off
+;   * $0    No effect - IMPLEMENTED HERE
+;   * $1    Octave Up - IMPLEMENTED HERE
+;   * $2    Octave Down - IMPLEMENTED HERE
+;   * $3    Legato On - IMPLEMENTED HERE
+;   * $4    Legato Off - IMPLEMENTED HERE
 ;   * $5    Crescendo (volume ++)
 ;   * $6    Decrescendo (volume --)
 ;   * $7    Accellerando (tempo ++)
 ;   * $8    Ritardando (tempo --)
 ;   * $9-$f User effects
-; Note that the player in this plug-in does not implement any of these effects
-; (except for $0), but effects may be implemented in IRQ players based on need
+; Note that effects may be implemented in IRQ players based on need
 ; or available memory. Pressing RETURN during Record will enter $0f for an 
 ; effect placeholder, which you can fill in with wAx's data entry tools.
 ;
@@ -83,14 +86,14 @@ ShowPC      = $7021             ; Write persistent counter to output buffer
 
 ; System Resources
 TIME_L      = $a2               ; Jiffy counter low
-VOICEH      = $900c             ; High sound register
-VOICEM      = $900b             ; Mid sound register
-VOICEL      = $900a             ; Low sound register
-NOISE       = $900d             ; Noise register
+VOICE       = $900b
 VOLUME      = $900e             ; Sound volume register/aux color
 
 ; User Tool Storage
 DURATION    = $0247             ; Current duration
+OCTAVE      = $0248             ; Current octave (0,1)
+LEGATO      = $0249             ; Legato On (if bit 7)
+RECORD      = $024a             ; Record mode on
 
 ; Constants
 WHOLE       = $80               ; Whole note
@@ -106,37 +109,36 @@ Main:       bcs addr_ok         ; Bail if no valid address was provided
             rts                 ; ,,
 addr_ok:    lda #$08            ; Set volume
             sta VOLUME          ; ,,
+            lda #$00            ; Initialize
+            sta LEGATO          ;   Legato
+            sta OCTAVE          ;   Octave Number
             jsr CharGet         ; Check for Record mode
             cmp #"R"            ; ,,
             beq Record          ; ,,
             jmp Player          ; Otherwise, play at address
 
 ; Record Score
-; Duration  f1 (Eighth)
-;           f3 (Quarter)
-;           f5 (Half)
-;           f7 (Whole)
-; Notes     Q,2,W,3,E,R,5,T,6,Y,7,U,I
-; Rests     Space
-; Effect PH ENTER
-; Octave+   +
-; Octave-   -
-; Back      Back Arrow
-; End       STOP
+; See above for key bindings
 Record:     lda #QUARTER        ; Starting duration
             sta DURATION        ; ,,
+            lda #$80            ; Set recording flag
+            sta RECORD          ; ,,
 -loop:      jsr GetKey          ; Get keypress
-            jsr IsNote          ; Is it a note or rest?
+proc_key:   jsr IsNote          ; Is it a note or rest?
             bcs add_note
-            cmp #8              ; Back arrow
-            bne ch_cmd
-            jmp Undo
-ch_cmd:     cmp #61             ; Minus
-            beq octave_d
-            cmp #5              ; Plus
-            beq octave_u
-            cmp #15             ; RETURN
-            beq effect
+            cmp #7              ; DEL - Undo
+            bne ch_cmd          ; ,,
+            jmp Undo            ; ,,
+ch_cmd:     cmp #5              ; Minus - Octave Down
+            beq octave_d        ; ,,
+            cmp #61             ; Plus - Octave Up
+            beq octave_u        ; ,,
+            cmp #45             ; Colon - Legato On
+            beq legato_on       ; ,,
+            cmp #22             ; Semicolon - Legato Off
+            beq legato_off      ; ,,
+            cmp #15             ; RETURN - Effect Placeholder
+            beq effect          ; ,,
             cmp #39             ; f1 - Eighth note
             beq set8            ; ,,
             cmp #47             ; f3 - Quarter note
@@ -157,12 +159,17 @@ ch_cmd:     cmp #61             ; Minus
             jsr IncAddr         ; Increment effective address
             jmp EAtoPC          ; Update the persistent counter and exit
 ; Add an effect placeholder or effect command        
-effect:     lda #$0f            ; Enter an effect placeholder into
+effect:     lda #$0f            ; Enter an effect placeholder into memory
             .byte $3c           ; TOP (skip word)
-octave_u:   lda #$1f
+octave_u:   lda #$1f            ; Octave up
             .byte $3c
-octave_d:   lda #$2f            
-            jmp add_note+3      ;   memory
+octave_d:   lda #$2f            ; octave down
+            .byte $3c
+legato_on:  lda #$3f            ; Legato on
+            .byte $3c
+legato_off: lda #$4f            ; Legato off
+            jmp add_note+3
+            
 ; Set a note duration            
 set8:       lda #EIGHTH
             .byte $3c           ; TOP (skip word)
@@ -186,12 +193,15 @@ add_note:   ora DURATION
             sta (EFADDR,x)
             jsr ShowData        ; Show note data
             jsr PlayNote        ; Play the note at the selected duration
+            lda #$00            ; Turn off the voice
+            sta VOICE           ; ,,
             jsr IncAddr         ; Increment the address
             jsr EAtoPC          ; Update the persistent counter and go back
             jmp loop
 
 ; Simple wAxScore player
-Player:     jsr ShowData        ; Show the note about to be played
+Player:     lsr RECORD          ; Turn off recording flag
+            jsr ShowData        ; Show the note about to be played
             jsr PlayNote        ; Play it
             php
             jsr IncAddr         ; Increment the address
@@ -203,7 +213,7 @@ Player:     jsr ShowData        ; Show the note about to be played
             beq player_r        ; ,,
             jmp Player          ; Play next note
 player_r:   lda #$00            ; Turn off the playing voice
-            sta VOICEH          ; ,,
+            sta VOICE           ; ,,
             rts 
     
 ; Undo        
@@ -253,9 +263,29 @@ found_deg:  pla                 ; Found degree; pull original key and discard
             rts
 
 ; Delay A Jiffies
-Delay:      clc
+Delay:      ldy $c5
+            clc
             adc TIME_L
--loop:      cmp TIME_L
+-loop:      cpy $c5             ; Has the key pressed changed?
+            beq ch_time         ; If not, keep the delay going
+            ldy $c5             ; Has the key been lifted (#$40)?
+            cpy #$40            ; ,,
+            beq ch_time         ; If so, keep the delay going
+            bit RECORD          ; If a new key is pressed, are we in record
+            bpl ch_time         ; If not, keep the delay going
+            pla                 ; Bypassing the rest of the delay process, so
+            pla                 ;   remove return address for Delay from stack
+            pla                 ; And also the return address for PlayNote
+            pla                 ; ,,
+            tya                 ; Put the key on the stack
+            pha                 ; ,,
+            lda #$00            ; Turn off the voice
+            sta VOICE           ; ,,
+            jsr IncAddr         ; Increment the address
+            jsr EAtoPC          ; Update the persistent counter
+            pla                 ; Get back the last key pressed, and process
+            jmp proc_key        ;   new key as a command
+ch_time:    cmp TIME_L
             bne loop
             rts
 
@@ -269,11 +299,15 @@ PlayNote:   ldx #$00
             pha
             and #$0f            ; Mask away the duration
             tax                 ; X is the chromatic degree
-            lda Note,x
-            tay
+            lda OCTAVE          ; Choose the note table based on the
+            bne oct1            ;   selected octave
+            lda Oct0,x          ;   ,,
+            jmp play            ;   ,,
+oct1:       lda Oct1,x          ;   ,,
+play:       tay
             pla
-            cpx #$0f            ; This is an effect, so do nothing, but return
-            beq play_r          ;   with Carry set
+            cpx #$0f            ; This is an effect, so process it
+            beq wsEffect        ; ,,
             and #$f0            ; Mask away the degree, leaving A as the
                                 ;   duration. Now, with a quarter note having a
                                 ;   value of 32, simply treating that as a
@@ -285,14 +319,42 @@ PlayNote:   ldx #$00
             ldx TIME_L          ; Sync to the start of the next jiffy, within a
 -loop:      cpx TIME_L          ;   few cycles
             beq loop            ;   ,,
-            sty VOICEH          ; Play the voice
+            sty VOICE           ; Play the voice
             jsr Delay           ; Delay A jiffies, see above for why
+            bit LEGATO          ; If Legato is on, do not turn off the voice
+            bmi play_r          ; ,,
             lda #$00            ; Stop the voice
-            sta VOICEH          ; ,,
+            sta VOICE           ; ,,
 play_r:     sec
             rts
-end_score:  clc                 ; Nothing left to play; clear Carry and return
+end_score:  lda #$00            ; Turn off the voice
+            sta VOICE           ; ,,
+            clc                 ; Nothing left to play; clear Carry and return
             rts                 ; ,,
+            
+; Process Effect
+; in high nybble of A
+wsEffect:   and #$f0
+            cmp #$00            ; No effect
+            bne ch_oct_up
+            jmp play_r
+ch_oct_up:  cmp #$10            ; Octave Up
+            bne ch_oct_dn
+            inc OCTAVE
+            jmp play_r
+ch_oct_dn:  cmp #$20            ; Octave Down
+            bne ch_leg_on
+            dec OCTAVE
+            jmp play_r
+ch_leg_on:  cmp #$30            ; Legato On
+            bne ch_leg_off
+            lda #$80
+            sta LEGATO
+            jmp play_r
+ch_leg_off: cmp #$40            ; Legato Off
+            bne play_r
+            lsr LEGATO
+            jmp play_r        
 
 ; Show Note Data
 ; At the effective address
@@ -314,6 +376,7 @@ ShowData:   jsr ResetOut        ; Show the data as it's entered
 ;                SPC Q     W   E  R    T     Y    U  I
 Degree:     .byte 32,48,56,9,1,49,10,2,50,58,11,3,51,12
 
-; Degree to Note Value
+; Degree to Note Value Tables
 ; Determined by electronic tuner
-Note:       .byte 0,133,139,146,152,158,164,169,173,178,182,187,190,194
+Oct0:       .byte 0,133,139,146,152,158,164,169,173,178,182,187,190,194
+Oct1:       .byte 0,194,197,201,204,207,209,212,214,217,219,221,223,225
