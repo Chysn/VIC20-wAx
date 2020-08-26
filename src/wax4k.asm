@@ -1631,7 +1631,7 @@ Rechain:    jsr $c533           ; Re-chain BASIC program to set BASIC
             lda $22             ;   pointers as a courtesy to the user
             ;clc                ;   ,, ($c533 always exits with Carry clear)
             adc #$02            ;   ,,
-            sta $2D             ;   ,,
+            sta $2d             ;   ,,
             lda $23             ;   ,,
             jmp $C655           ;   ,,
             
@@ -1865,8 +1865,8 @@ Param_16:   jsr HexPrefix
             jmp Hex
 
 ; Transcribe to Buffer
-; Get a character from the input buffer and transcribe it to the
-; input buffer. If the character is a BASIC token, then possibly
+; Get a character from the BASIC input buffer and transcribe it to the
+; wAx input buffer. If the character is a BASIC token, then possibly
 ; explode it into individual characters.
 Transcribe: jsr CHRGET          ; Get character from input buffer
             cmp #$00            ; If it's 0, then quit transcribing and return

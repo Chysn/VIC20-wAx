@@ -16,3 +16,4 @@ ResetIn     = $7018             ; Reset input buffer index
 ResetOut    = $701b             ; Reset output buffer index
 ShowAddr    = $701e             ; Write effective address to output buffer
 ShowPC      = $7021             ; Write persistent counter to output buffer
+Store       = $0247             ; Plug-in storage (8 bytes)
