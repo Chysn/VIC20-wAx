@@ -300,7 +300,7 @@ to_mem:     jsr CharOut         ; Memory editor character goes after address
 to_bin:     jsr CharOut         ; Binary editor character goes after address
             jsr BinaryDisp      ; Do Binary display
             jmp continue
-to_usr:     jsr UserTool            
+to_usr:     jsr PlugIn            
 continue:   jsr PrintBuff      
             pla
             tax
@@ -1636,10 +1636,10 @@ Rechain:    jsr $c533           ; Re-chain BASIC program to set BASIC
             jmp $C655           ;   ,,
             
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
-; User Tool
-; https://github.com/Chysn/wAx/wiki/User-Tool
+; User Plug-In
+; https://github.com/Chysn/wAx/wiki/User-Plug-In
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-UserTool:   jmp (USER_VECT)
+PlugIn:     jmp (USER_VECT)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  
 ; SUBROUTINES
@@ -2053,11 +2053,11 @@ ToolTable:	.byte T_DIS,T_ASM,T_MEM,T_REG,T_EXE,T_BRK,T_TST,T_SAV,T_LOA,T_BIN
 ToolAddr_L: .byte <List-1,<Assemble-1,<List-1,<Register-1,<Execute-1
             .byte <SetBreak-1,<Tester-1,<MemSave-1,<MemLoad-1,<List-1
             .byte <List-1,<Search-1,<MemCopy-1,<Hex2Base10-1,<Base102Hex-1
-            .byte <InitSym-1,<BASICStage-1,<UserTool-1,<List-1
+            .byte <InitSym-1,<BASICStage-1,<PlugIn-1,<List-1
 ToolAddr_H: .byte >List-1,>Assemble-1,>List-1,>Register-1,>Execute-1
             .byte >SetBreak-1,>Tester-1,>MemSave-1,>MemLoad-1,>List-1
             .byte >List-1,>Search-1,>MemCopy-1,>Hex2Base10-1,>Base102Hex-1
-            .byte >InitSym-1,>BASICStage-1,>UserTool-1,>List-1
+            .byte >InitSym-1,>BASICStage-1,>PlugIn-1,>List-1
 
 ; Addresses for error message text
 ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
