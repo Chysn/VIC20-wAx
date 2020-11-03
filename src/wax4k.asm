@@ -268,7 +268,7 @@ List:       bcs addr_ok         ; If the provided address is OK, disassemble
             sta EFADDR          ;  persistent counter to continue listing
             lda X_PC+1          ;  after the last address
             sta EFADDR+1        ;  ,,
-            jmp check_dir       ;  ,,
+            bcc check_dir       ;  ,,
 addr_ok:    lda INBUFFER+4      ; If there's stuff after the list command,
             beq check_dir       ;   treat it as an assemble command by routing
             jmp Assemble        ;   to Assemble
@@ -355,15 +355,12 @@ DMnemonic:  lda MNEM+1          ; These locations are going to rotated, so
             pha                 ;   ,,
             ldx #$03            ; Three characters...
 -loop:      lda #$00
-            sta CHARAC
             ldy #$05            ; Each character encoded in five bits, shifted
-shift_l:    lda #$00            ;   as a 24-bit register into CHARAC, which
-            asl MNEM+1          ;   winds up as a ROT0 code (A=1 ... Z=26)
-            rol MNEM            ;   ,,
-            rol CHARAC          ;   ,,
+shift_l:    asl MNEM+1          ;   as a 24-bit register into Accumulator, which
+            rol MNEM            ;   winds up as a ROT0 code (A=1 ... Z=26)
+            rol                 ;   ,,
             dey
             bne shift_l
-            lda CHARAC
             ;clc                ; Carry is clear from the last ROL
             adc #"@"            ; Get the PETSCII character
             jsr CharOut
@@ -1369,6 +1366,7 @@ next_label: pla
             bne loop
             jsr ResetOut        ; Show the value of the persistent counter
             jsr Space           ; ,,
+            jsr Space           ; ,,
             lda #"*"            ; ,,
             jsr CharOut         ; ,,
             jsr Space           ; ,,
@@ -1410,6 +1408,7 @@ fwd_d:      jsr PrintBuff
 
 ; Label List Common            
 LabListCo:  jsr ResetOut
+            jsr Space
             lda #"-"
             jsr CharOut
             lda SYMBOL_D,x
@@ -2064,7 +2063,7 @@ ErrAddr_L:  .byte <AsmErrMsg,<MISMATCH,<LabErrMsg,<ResErrMsg,<RBErrMsg
 ErrAddr_H:  .byte >AsmErrMsg,>MISMATCH,>LabErrMsg,>ResErrMsg,>RBErrMsg
 
 ; Text display tables  
-Intro:      .asc LF,"  BEIGEMAZE.COM/WAX",LF,$00                   
+Intro:      .asc LF,"  BEIGEMAZE.COM/WAX  ",LF,$00                   
 Registers:  .asc LF,$b0,"A",$c0,$c0,"X",$c0,$c0,"Y",$c0,$c0
             .asc "P",$c0,$c0,"S",$c0,$c0,"PC",$c0,$c0,LF,";",$00
 BreakMsg:   .asc LF,RVS_ON,"BRK",RVS_OFF,$00
